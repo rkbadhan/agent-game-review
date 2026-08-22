@@ -24,6 +24,14 @@ test = ["pytest", "httpx>=0.24"]
 model-anthropic = ["anthropic>=0.40", "python-dotenv>=1.0"]
 model-openai = ["openai>=1.40", "python-dotenv>=1.0"]
 
+# Contributor dev environment (PEP 735). `uv sync` installs this group by
+# default, so one command gives the full deterministic + HTTP test suite. It
+# mirrors the `api` + `test` extras; the model SDKs stay opt-in (`uv sync
+# --all-extras` or `--extra model-anthropic`). `pip install .[api,test]` remains
+# the equivalent for the non-uv path.
+[dependency-groups]
+dev = ["pytest", "httpx>=0.24", "fastapi>=0.100", "uvicorn>=0.23"]
+
 # Explicit discovery: the flat layout has sibling `tests/` and `fixtures/`
 # directories, so auto-discovery would refuse to guess. Ship the SPA asset as
 # package data so `agr serve` works from an installed wheel, not just a checkout.

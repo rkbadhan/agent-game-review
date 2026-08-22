@@ -16,7 +16,7 @@ the interpretation stays bounded by evidence rather than free to hallucinate.
 ## Quick start (about five minutes)
 
 ```bash
-pip install .[api]
+pip install .[api]        # or: uv pip install .[api]
 agr demo
 # open http://127.0.0.1:8000
 ```
@@ -79,9 +79,22 @@ extras add capabilities:
 
 ## Development
 
+The repo is a [uv](https://docs.astral.sh/uv/) project with a committed
+`uv.lock`, so contributors get a reproducible environment in one command:
+
 ```bash
-pip install .[api]
-python -m pytest        # run the test suite
+uv sync                 # create .venv from the lockfile (dev group: pytest + api deps)
+uv run pytest           # run the test suite
+uv run agr demo         # try the demo from the synced env
+
+uv sync --all-extras    # add the optional model-reviewer SDKs when you need them
+```
+
+Prefer plain pip? That works too — the project is a standard PEP 621 package:
+
+```bash
+pip install .[api,test]
+python -m pytest
 ```
 
 ## Project layout

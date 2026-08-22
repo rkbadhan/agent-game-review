@@ -17,15 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.11"
+          enable-cache: true
 
-      - name: Install test dependencies
-        # fastapi + httpx back the optional read-API HTTP tests; the read-model
-        # tests are stdlib and run even if these are absent (they importorskip).
-        run: python -m pip install --upgrade pip pytest fastapi httpx
+      - name: Install dependencies (from uv.lock)
+        # The `dev` group supplies pytest + the fastapi/httpx HTTP-test deps; the
+        # read-model tests are stdlib and run regardless. Model SDKs stay opt-in.
+        run: uv sync --frozen
 
       - name: Run tests
-        run: python -m pytest
+        run: uv run pytest
