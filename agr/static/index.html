@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Game Review</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="appbar">
+  <button class="icon-button mobile-toggle" id="queue-toggle" aria-label="Open run queue">☰</button>
+  <div class="brand"><div class="brand-mark"></div><span>Agent Game Review</span></div>
+  <div class="crumbs"><span id="crumb-sweep">Sweep</span><span>›</span><strong id="crumb-task">Select a run</strong></div>
+  <div class="app-actions">
+    <button class="icon-button appbar-action" id="versions-button"
+            title="Compare two versions on a matched task slice (V)">Compare versions</button>
+    <button class="icon-button appbar-action" id="glossary-button"
+            title="Glossary of review terms (G)">Glossary</button>
+    <button class="icon-button" id="help-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
+    <button class="icon-button" id="theme-toggle" aria-label="Toggle light/dark" title="Toggle theme">◐</button>
+    <div class="avatar" id="reviewer-avatar" title="Reviewer">RK</div>
+  </div>
+</header>
+
+<div class="workspace">
+  <aside class="queue" id="queue">
+    <div class="queue-head">
+      <p class="eyebrow">Runs inbox</p>
+      <div id="sweep-summary"></div>
+    </div>
+    <div class="queue-tools" id="queue-controls"></div>
+    <div id="run-list"></div>
+  </aside>
+
+  <button class="resizer" id="queue-resizer" aria-label="Resize the runs inbox"
+          aria-orientation="vertical" title="Drag to resize · double-click to reset"></button>
+
+  <main class="review-space" id="main">
+    <div class="empty" id="placeholder" style="margin-top:60px">Select a run to begin the review.</div>
+  </main>
+
+  <button class="resizer" id="evidence-resizer" aria-label="Resize the evidence panel"
+          aria-orientation="vertical" title="Drag to resize · double-click to reset"></button>
+
+  <aside class="evidence-panel" id="evidence-panel">
+    <button class="evidence-tab" id="evidence-tab" aria-label="Toggle evidence panel">Evidence</button>
+    <div id="evidence-body"><div class="panel-dim">Evidence for the selected moment appears here.</div></div>
+  </aside>
+</div>
+
+<div class="drawer" id="trace-drawer" aria-hidden="true">
+  <div class="drawer-shade" data-close-trace></div>
+  <section class="drawer-panel" aria-label="Full trace">
+    <div class="drawer-header">
+      <div><h2>Full trace</h2><p>Immutable source · synchronized panels</p></div>
+      <button class="button" style="margin-left:auto" data-close-trace>Close</button>
+    </div>
+    <div class="drawer-body" id="trace-body"></div>
+  </section>
+</div>
+
+<div class="modal-shade" id="correct-modal" aria-hidden="true">
+  <section class="modal">
+    <h2>Correct this moment</h2>
+    <p>Choose a better label. The generated record stays intact; your correction is saved as a new review revision.</p>
+    <div class="relabel-grid" id="relabel-grid"></div>
+    <div class="modal-actions">
+      <button class="button subtle" id="add-detail">Add detail →</button>
+      <button class="button" data-close-modal>Cancel</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-shade" id="correction-modal" aria-hidden="true">
+  <section class="modal modal-wide">
+    <h2>Full structured correction</h2>
+    <p>The generated value sits beside each field. Tokens are validated against the active
+       taxonomy, and a corrected factual claim must cite its evidence. Saving creates a new
+       annotation revision — the generated record stays intact and inspectable.</p>
+    <div id="correction-fields"></div>
+    <div class="corr-error" id="correction-error"></div>
+    <div class="modal-actions">
+      <button class="button" data-close-modal>Cancel</button>
+      <button class="button primary" id="correction-save">Save correction</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-shade" id="help-modal" aria-hidden="true">
+  <section class="modal">
+    <h2>Review shortcuts</h2>
+    <p>Move quickly without sacrificing evidence checks.</p>
+    <div class="shortcut-grid">
+      <kbd>[ / ]</kbd><span>Previous / next review chapter</span>
+      <kbd>J / K</kbd><span>Next / previous key moment</span>
+      <kbd>E</kbd><span>Focus evidence for this moment</span>
+      <kbd>D</kbd><span>Open disposition menu</span>
+      <kbd>N</kbd><span>Open next unhandled run</span>
+      <kbd>T</kbd><span>Open full trace</span>
+      <kbd>C</kbd><span>Toggle the reviewer diff (two reviews of this run)</span>
+      <kbd>V</kbd><span>Compare two versions on a matched task slice</span>
+      <kbd>G</kbd><span>Open the glossary of review terms</span>
+      <kbd>?</kbd><span>Show this guide</span>
+      <kbd>Esc</kbd><span>Close the active layer</span>
+    </div>
+    <div class="modal-actions"><button class="button primary" data-close-modal>Done</button></div>
+  </section>
+</div>
+
+<div class="modal-shade" id="glossary-modal" aria-hidden="true">
+  <section class="modal modal-wide">
+    <h2>Glossary</h2>
+    <p>Plain-language definitions of the review terms. The interface leads with these
+       labels; the backend keeps its precise vocabulary behind them.</p>
+    <div id="glossary-body" class="glossary"></div>
+    <div class="modal-actions"><button class="button primary" data-close-modal>Done</button></div>
+  </section>
+</div>
+
+<div class="modal-shade" id="intro-modal" aria-hidden="true">
+  <section class="modal">
+    <h2>Reading a review</h2>
+    <p>Four ideas carry the whole surface. You can reopen them any time from
+       <strong>Glossary</strong> in the top bar.</p>
+    <dl class="intro-list">
+      <dt>Review mode</dt>
+      <dd>Whether this run got only mechanically derived facts (<em>Deterministic</em>),
+          added AI interpretation (<em>AI-enriched</em>), or too little was captured to
+          review at all (<em>Not reviewable</em>).</dd>
+      <dt>Evidence grade</dt>
+      <dd>How well a moment's facts are grounded — <em>Strong</em>, <em>Moderate</em>, or
+          <em>Limited</em> — based on how complete the capture was.</dd>
+      <dt>Attribution</dt>
+      <dd>How far a cause is actually established: a linked event is on the evidence path,
+          not proven to have changed the outcome. Only replay can claim that.</dd>
+      <dt>Fact vs. interpretation</dt>
+      <dd>Each moment block names its own source. Validated facts and source events are
+          observed; likely impact and better actions are interpretation, and a
+          deterministic review leaves them blank rather than inventing them.</dd>
+    </dl>
+    <div class="modal-actions">
+      <button class="button subtle" id="intro-glossary">Open glossary</button>
+      <button class="button primary" id="intro-dismiss">Got it</button>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+
+<!-- The single-page app is split into one module per concern so each UI
+     phase has its own file. They are classic scripts that share top-level
+     bindings, so load order follows the original section order; boot.js
+     runs the app once everything above it has defined its globals. -->
+<script src="/static/js/core.js"></script>
+<script src="/static/js/instrumentation.js"></script>
+<script src="/static/js/vocabulary.js"></script>
+<script src="/static/js/state.js"></script>
+<script src="/static/js/ui-utils.js"></script>
+<script src="/static/js/inbox.js"></script>
+<script src="/static/js/run.js"></script>
+<script src="/static/js/render.js"></script>
+<script src="/static/js/chapters.js"></script>
+<script src="/static/js/timeline.js"></script>
+<script src="/static/js/moments.js"></script>
+<script src="/static/js/disposition.js"></script>
+<script src="/static/js/evidence.js"></script>
+<script src="/static/js/panels.js"></script>
+<script src="/static/js/compare.js"></script>
+<script src="/static/js/versions.js"></script>
+<script src="/static/js/source.js"></script>
+<script src="/static/js/trace.js"></script>
+<script src="/static/js/correct.js"></script>
+<script src="/static/js/keyboard.js"></script>
+<script src="/static/js/boot.js"></script>
+</body>
+</html>

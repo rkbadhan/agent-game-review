@@ -1,0 +1,106 @@
+{
+  "run_id": "chess_best_move__seed42",
+  "task_id": "chess-best-move",
+  "schema_version": "gold-0.1",
+  "annotations": [
+    {
+      "annotator": "annotator_a",
+      "moments": [
+        {
+          "moment_id": "m_incomplete_move_set",
+          "anchor_type": "omission",
+          "anchor_step_ids": ["s8"],
+          "polarity": "negative",
+          "behaviour_tags": ["stopped_enumeration", "premature_submission", "lost_requirement"],
+          "affected_checks": ["C3"],
+          "affected_requirements": ["R3"],
+          "evidence_span_step_ids": ["s4", "s5", "s6", "s8"],
+          "attribution_ceiling": "dependency_linked",
+          "opportunity_ability": "requirement_enumeration",
+          "opportunity_window_step_ids": ["s4", "s8"],
+          "root_cause_candidates": [
+            {"locus": "agent_scaffold", "rank": 1, "rationale": "The engine output at s4 lists both winning moves (g2e4, e2e4); the agent committed to only g2e4 at s5 and submitted at s8 without revisiting the requirement to include every winning move."},
+            {"locus": "base_model", "rank": 2, "rationale": "A single rollout cannot isolate the base model from the scaffold; hypothesized only."}
+          ],
+          "acceptable_better_actions": [
+            "Write both g2e4 and e2e4 to /solution.txt, one per line, before submitting.",
+            "Re-read the requirement to include every winning move after seeing two in the engine output."
+          ],
+          "critical": true
+        }
+      ],
+      "no_decisive_moment": false,
+      "task_verifier_concerns": []
+    },
+    {
+      "annotator": "annotator_b",
+      "moments": [
+        {
+          "moment_id": "m_incomplete_move_set",
+          "anchor_type": "omission",
+          "anchor_step_ids": ["s8"],
+          "polarity": "negative",
+          "behaviour_tags": ["stopped_enumeration", "premature_submission"],
+          "affected_checks": ["C3"],
+          "affected_requirements": ["R3"],
+          "evidence_span_step_ids": ["s4", "s8"],
+          "attribution_ceiling": "dependency_linked",
+          "root_cause_candidates": [
+            {"locus": "agent_policy", "rank": 1, "rationale": "The runtime policy treated the first winning move as sufficient."}
+          ],
+          "acceptable_better_actions": [
+            "Write every winning move to /solution.txt before submitting."
+          ],
+          "critical": true
+        },
+        {
+          "moment_id": "m_premature_commitment",
+          "anchor_type": "decision",
+          "anchor_step_ids": ["s5"],
+          "polarity": "negative",
+          "behaviour_tags": ["premature_commitment"],
+          "affected_checks": ["C3"],
+          "affected_requirements": ["R3"],
+          "evidence_span_step_ids": ["s4", "s5"],
+          "attribution_ceiling": "hypothesized",
+          "root_cause_candidates": [
+            {"locus": "agent_policy", "rank": 1, "rationale": "At s5 the agent narrated 'the best move is g2e4', collapsing a multi-move answer to one."}
+          ],
+          "acceptable_better_actions": [
+            "Note that the engine reported two winning moves and keep both as candidates."
+          ],
+          "critical": false
+        }
+      ],
+      "no_decisive_moment": false,
+      "task_verifier_concerns": []
+    }
+  ],
+  "adjudicated": {
+    "annotator": "adjudicator",
+    "moments": [
+      {
+        "moment_id": "m_incomplete_move_set",
+        "anchor_type": "omission",
+        "anchor_step_ids": ["s8"],
+        "polarity": "negative",
+        "behaviour_tags": ["stopped_enumeration", "premature_submission", "lost_requirement"],
+        "affected_checks": ["C3"],
+        "affected_requirements": ["R3"],
+        "evidence_span_step_ids": ["s4", "s5", "s6", "s8"],
+        "attribution_ceiling": "dependency_linked",
+        "opportunity_ability": "requirement_enumeration",
+        "opportunity_window_step_ids": ["s4", "s8"],
+        "root_cause_candidates": [
+          {"locus": "agent_scaffold", "rank": 1, "rationale": "Both winning moves were visible at s4; only one was written and the run submitted at s8 with the multi-move requirement unmet."}
+        ],
+        "acceptable_better_actions": [
+          "Write both g2e4 and e2e4 to /solution.txt before submitting."
+        ],
+        "critical": true
+      }
+    ],
+    "no_decisive_moment": false,
+    "task_verifier_concerns": []
+  }
+}

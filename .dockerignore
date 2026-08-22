@@ -1,0 +1,19 @@
+# Keep the build context small and reproducible.
+.git
+.github
+.benchmarks
+.agr-store
+.agr-demo
+.agr-*
+site
+docs
+tests
+archive
+*.md
+!README.md
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.venv
+venv

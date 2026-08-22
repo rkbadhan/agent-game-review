@@ -1,0 +1,82 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "tb2-fix-failing-test-0001",
+  "trajectory_id": "traj-tb2-fix-failing-test-0001",
+  "agent": {
+    "name": "pi-coding-agent",
+    "version": "0.4.0",
+    "model_name": "gpt-oss"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": "2026-08-06T12:00:00Z",
+      "source": "user",
+      "message": "The test suite in /app fails. Make `pytest` pass without changing the tests."
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-08-06T12:00:03Z",
+      "source": "agent",
+      "model_name": "gpt-oss",
+      "reasoning_content": "First reproduce the failure, then read the module under test.",
+      "message": "I'll run the tests to see what's failing.",
+      "tool_calls": [
+        {
+          "tool_call_id": "tc-1",
+          "function_name": "bash",
+          "arguments": {"command": "cd /app && pytest -q"}
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "tc-1",
+            "content": "E   assert add(2, 2) == 4\nE   AssertionError: 5 != 4\n1 failed in 0.12s",
+            "extra": {"exit_code": 1}
+          }
+        ]
+      },
+      "metrics": {"prompt_tokens": 820, "completion_tokens": 64, "cost_usd": 0.0}
+    },
+    {
+      "step_id": 3,
+      "timestamp": "2026-08-06T12:00:09Z",
+      "source": "agent",
+      "model_name": "gpt-oss",
+      "message": "The bug is an off-by-one in add(). Fixing it.",
+      "tool_calls": [
+        {
+          "tool_call_id": "tc-2",
+          "function_name": "edit_file",
+          "arguments": {"path": "/app/calc.py", "old": "return a + b + 1", "new": "return a + b"}
+        },
+        {
+          "tool_call_id": "tc-3",
+          "function_name": "bash",
+          "arguments": {"command": "cd /app && pytest -q"}
+        }
+      ],
+      "observation": {
+        "results": [
+          {"source_call_id": "tc-2", "content": "edited /app/calc.py", "extra": {"exit_code": 0}},
+          {"source_call_id": "tc-3", "content": "1 passed in 0.10s", "extra": {"exit_code": 0}}
+        ]
+      },
+      "metrics": {"prompt_tokens": 910, "completion_tokens": 48, "cost_usd": 0.0}
+    },
+    {
+      "step_id": 4,
+      "timestamp": "2026-08-06T12:00:14Z",
+      "source": "agent",
+      "model_name": "gpt-oss",
+      "message": "Tests pass now. The off-by-one in add() is fixed."
+    }
+  ],
+  "final_metrics": {
+    "total_prompt_tokens": 1730,
+    "total_completion_tokens": 112,
+    "total_cost_usd": 0.0,
+    "total_steps": 4
+  }
+}

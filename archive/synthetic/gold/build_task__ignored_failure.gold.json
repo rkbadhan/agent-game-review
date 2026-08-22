@@ -1,0 +1,36 @@
+{
+  "run_id": "build_task__ignored_failure",
+  "task_id": "build-app",
+  "schema_version": "gold-0.1",
+  "annotations": [
+    {
+      "annotator": "annotator_a",
+      "moments": [
+        {
+          "moment_id": "m_ignored_build_failure",
+          "anchor_type": "external",
+          "anchor_step_ids": ["s3", "s5"],
+          "polarity": "negative",
+          "behaviour_tags": ["ignored_error", "premature_submission", "incomplete_execution"],
+          "affected_checks": ["C1"],
+          "affected_requirements": [],
+          "evidence_span_step_ids": ["s2", "s3", "s5"],
+          "attribution_ceiling": "dependency_linked",
+          "opportunity_ability": "error_recovery",
+          "opportunity_window_step_ids": ["s3", "s5"],
+          "root_cause_candidates": [
+            {"locus": "tool", "rank": 1, "rationale": "The build tool failed at s3; the failure is the proximate cause of the unmet check C1."},
+            {"locus": "agent_scaffold", "rank": 2, "rationale": "The agent observed the failure and submitted at s5 without attempting recovery — the scaffold did not force a re-plan on a failed prerequisite."}
+          ],
+          "acceptable_better_actions": [
+            "Diagnose the build failure at s3 and retry with a corrected invocation before submitting.",
+            "Abort submission while a required build step is failing."
+          ],
+          "critical": true
+        }
+      ],
+      "no_decisive_moment": false,
+      "task_verifier_concerns": []
+    }
+  ]
+}

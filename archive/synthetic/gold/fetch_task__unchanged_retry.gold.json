@@ -1,0 +1,36 @@
+{
+  "run_id": "fetch_task__unchanged_retry",
+  "task_id": "fetch-data",
+  "schema_version": "gold-0.1",
+  "annotations": [
+    {
+      "annotator": "annotator_a",
+      "moments": [
+        {
+          "moment_id": "m_repeated_unchanged_fetch",
+          "anchor_type": "decision",
+          "anchor_step_ids": ["s2", "s4"],
+          "polarity": "negative",
+          "behaviour_tags": ["repeated_unchanged_action", "inefficient_execution"],
+          "affected_checks": [],
+          "affected_requirements": [],
+          "evidence_span_step_ids": ["s2", "s3", "s4", "s5"],
+          "attribution_ceiling": "dependency_linked",
+          "opportunity_ability": "efficient_execution",
+          "opportunity_window_step_ids": ["s2", "s5"],
+          "root_cause_candidates": [
+            {"locus": "agent_policy", "rank": 1, "rationale": "The identical fetch at s2 and s4 returned no new information between them; the second attempt was not preceded by any strategy change."}
+          ],
+          "acceptable_better_actions": [
+            "Change the request (parameters, endpoint, or backoff) before retrying rather than repeating the identical call."
+          ],
+          "critical": false
+        }
+      ],
+      "no_decisive_moment": false,
+      "task_verifier_concerns": [
+        "The run passed despite the redundant retry, so this moment had no material effect on the outcome; it is a low-value efficiency concern, not a decisive failure."
+      ]
+    }
+  ]
+}

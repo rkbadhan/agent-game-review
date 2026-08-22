@@ -1,0 +1,54 @@
+{
+  "atif_version": "1.7",
+  "source_type": "harbor",
+  "capture_completeness": "complete",
+  "run": {
+    "logical_run_id": "solve_task__recovered",
+    "task_id": "compute-answer",
+    "model": "demo-model-a",
+    "agent": "terminal-agent",
+    "harness_version": "harbor-0.9",
+    "task_version": "compute-answer@1",
+    "verifier_version": "verifier-v1",
+    "seed": 7,
+    "started_at": "2026-07-18T11:00:00Z",
+    "finished_at": "2026-07-18T11:03:00Z"
+  },
+  "capabilities": {
+    "messages": "complete",
+    "tool_calls": "complete",
+    "tool_results": "complete",
+    "filesystem": "complete",
+    "process_state": "unavailable",
+    "network_state": "unavailable",
+    "compaction_boundary": "complete",
+    "pre_post_compaction_context": "complete",
+    "sidecar_state": "final_only",
+    "verifier_code": "complete"
+  },
+  "task": {
+    "instruction": "Compute the answer and write it to /out.txt.",
+    "artifacts": [{"path": "/out.txt", "kind": "text"}]
+  },
+  "steps": [
+    {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "Compute the answer to /out.txt"},
+    {"step_id": "s2", "kind": "model_output", "actor": "main_agent", "content": "I'll run the solver script."},
+    {"step_id": "s3", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python solve.py"},
+    {"step_id": "s4", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 1, "content": "ModuleNotFoundError: No module named numpy"},
+    {"step_id": "s5", "kind": "strategy_change", "actor": "main_agent", "content": "Install the missing dependency, then rerun."},
+    {"step_id": "s6", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "pip install numpy"},
+    {"step_id": "s7", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 0, "content": "Successfully installed numpy"},
+    {"step_id": "s8", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python solve.py"},
+    {"step_id": "s9", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 0, "content": "answer=42 written to /out.txt"},
+    {"step_id": "s10", "kind": "artifact_observation", "actor": "environment", "artifact_path": "/out.txt", "content": "42"},
+    {"step_id": "s11", "kind": "final_submission", "actor": "main_agent", "content": "Submitting."},
+    {"step_id": "s12", "kind": "run_finished", "actor": "harness", "content": "run complete"}
+  ],
+  "verifier": {
+    "raw_output": "C1 pass; C2 pass",
+    "checks": [
+      {"check_id": "C1", "name": "Artifact exists at /out.txt", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:10"], "contract_item_ids": ["R1"]},
+      {"check_id": "C2", "name": "Answer is correct", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:20"], "contract_item_ids": ["R2"]}
+    ]
+  }
+}

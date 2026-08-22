@@ -1,0 +1,19 @@
+.agr-store/
+.agr-demo/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+build/
+dist/
+*.whl
+
+# Local secrets — the committed reference is .env.example, never .env itself.
+.env
+.env.*
+!.env.example
+
+# Archived store snapshot — derived data, regenerable by re-ingesting the fixtures
+archive/synthetic/agr-store/
+.benchmarks

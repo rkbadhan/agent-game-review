@@ -1,0 +1,62 @@
+{
+  "atif_version": "1.7",
+  "source_type": "harbor",
+  "capture_completeness": "complete",
+  "run": {
+    "logical_run_id": "greeting_report__seed7",
+    "task_id": "greeting-report",
+    "model": "demo-model-a",
+    "agent": "terminal-agent",
+    "harness_version": "harbor-0.9",
+    "task_version": "greeting-report@1",
+    "verifier_version": "verifier-v1",
+    "seed": 7,
+    "started_at": "2026-07-19T09:00:00Z",
+    "finished_at": "2026-07-19T09:02:30Z"
+  },
+  "capabilities": {
+    "messages": "complete",
+    "tool_calls": "complete",
+    "tool_results": "complete",
+    "filesystem": "checkpoint_only",
+    "verifier_code": "complete"
+  },
+  "task": {
+    "instruction": "Write a polite greeting to /out.txt and a short summary to /summary.txt.",
+    "artifacts": [
+      {"path": "/out.txt", "kind": "text"},
+      {"path": "/summary.txt", "kind": "text"}
+    ],
+    "requirements": [
+      {"id": "R1", "description": "Create the greeting artifact at /out.txt", "source_type": "stated_requirement", "importance": "required", "verification_mode": "artifact_exists", "target": "/out.txt", "source_pointers": ["instruction:line_1"]},
+      {"id": "R2", "description": "The greeting must be polite", "source_type": "stated_requirement", "importance": "required", "verification_mode": "tone", "source_pointers": ["instruction:line_1"]},
+      {"id": "R3", "description": "The greeting must be terse (no summary section)", "source_type": "inferred_assumption", "importance": "required", "polarity": "forbid", "target": "/out.txt", "source_pointers": ["instruction:line_1"]}
+    ],
+    "environment": {
+      "preconditions": [
+        {"id": "E1", "description": "A writable working directory is available", "importance": "informational", "source_pointers": ["environment:workdir"]}
+      ]
+    },
+    "reference_solution": {
+      "assumptions": [
+        {"id": "A1", "description": "The reference greeting uses the exact template 'Hello, world.'", "source_pointers": ["reference_solution:line_2"]}
+      ]
+    }
+  },
+  "steps": [
+    {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "Write a polite greeting to /out.txt and a short summary to /summary.txt."},
+    {"step_id": "s2", "kind": "model_output", "actor": "main_agent", "content": "I will write a greeting to /out.txt."},
+    {"step_id": "s3", "kind": "tool_call", "actor": "main_agent", "tool": "write_file", "path": "/out.txt", "data": "Hey."},
+    {"step_id": "s4", "kind": "artifact_observation", "actor": "environment", "artifact_path": "/out.txt", "content": "Hey."},
+    {"step_id": "s5", "kind": "final_submission", "actor": "main_agent", "content": "Submitting."},
+    {"step_id": "s6", "kind": "run_finished", "actor": "harness", "content": "run complete"}
+  ],
+  "verifier": {
+    "raw_output": "C1 pass; C2 FAIL; C3 pass",
+    "checks": [
+      {"check_id": "C1", "name": "Artifact exists at /out.txt", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:10"], "contract_item_ids": ["R1"]},
+      {"check_id": "C2", "name": "Greeting is at most 20 characters", "status": "failed", "expected": ["<=20"], "observed": ["4"], "source": "instrumented_assertion", "source_pointers": ["verifier.py:18"], "contract_item_ids": []},
+      {"check_id": "C3", "name": "Run terminated cleanly", "status": "passed", "source": "native_structured", "source_pointers": ["trial.json:exit_code"], "contract_item_ids": ["R1"]}
+    ]
+  }
+}

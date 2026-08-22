@@ -1,0 +1,13 @@
+{
+  "trial_name": "fix-failing-test.1",
+  "task_id": "fix-failing-test",
+  "agent_name": "pi-coding-agent",
+  "reward": 1.0,
+  "exception": null,
+  "timings": {
+    "environment_setup": 4.1,
+    "agent_setup": 0.8,
+    "agent_execution": 14.2,
+    "verifier": 1.3
+  }
+}

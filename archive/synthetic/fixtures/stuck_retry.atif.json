@@ -1,0 +1,49 @@
+{
+  "atif_version": "1.7",
+  "source_type": "harbor",
+  "capture_completeness": "complete",
+  "run": {
+    "logical_run_id": "fetch_task__unchanged_retry",
+    "task_id": "fetch-data",
+    "model": "demo-model-a",
+    "agent": "terminal-agent",
+    "harness_version": "harbor-0.9",
+    "task_version": "fetch-data@1",
+    "verifier_version": "verifier-v1",
+    "seed": 9,
+    "started_at": "2026-07-18T12:00:00Z",
+    "finished_at": "2026-07-18T12:01:30Z"
+  },
+  "capabilities": {
+    "messages": "complete",
+    "tool_calls": "complete",
+    "tool_results": "complete",
+    "filesystem": "complete",
+    "process_state": "unavailable",
+    "network_state": "unavailable",
+    "compaction_boundary": "complete",
+    "pre_post_compaction_context": "complete",
+    "sidecar_state": "final_only",
+    "verifier_code": "complete"
+  },
+  "task": {
+    "instruction": "Fetch the data and write it to /out.txt.",
+    "artifacts": [{"path": "/out.txt", "kind": "text"}]
+  },
+  "steps": [
+    {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "Fetch data to /out.txt"},
+    {"step_id": "s2", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python flaky_fetch.py"},
+    {"step_id": "s3", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 1, "content": "TimeoutError: request timed out"},
+    {"step_id": "s4", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python flaky_fetch.py"},
+    {"step_id": "s5", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 0, "content": "data fetched and written to /out.txt"},
+    {"step_id": "s6", "kind": "artifact_observation", "actor": "environment", "artifact_path": "/out.txt", "content": "data"},
+    {"step_id": "s7", "kind": "final_submission", "actor": "main_agent", "content": "Submitting."},
+    {"step_id": "s8", "kind": "run_finished", "actor": "harness", "content": "run complete"}
+  ],
+  "verifier": {
+    "raw_output": "C1 pass",
+    "checks": [
+      {"check_id": "C1", "name": "Artifact exists at /out.txt", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:10"], "contract_item_ids": ["R1"]}
+    ]
+  }
+}
