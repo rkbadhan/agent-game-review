@@ -1,0 +1,32 @@
+{
+  "run_id": "solve_task__recovered",
+  "task_id": "compute-answer",
+  "schema_version": "gold-0.1",
+  "annotations": [
+    {
+      "annotator": "annotator_a",
+      "moments": [
+        {
+          "moment_id": "m_recovery_via_strategy_change",
+          "anchor_type": "recovery",
+          "anchor_step_ids": ["s4", "s7"],
+          "polarity": "positive",
+          "behaviour_tags": ["good_recovery", "effective_replan"],
+          "affected_checks": [],
+          "affected_requirements": [],
+          "evidence_span_step_ids": ["s4", "s5", "s6", "s7"],
+          "attribution_ceiling": "dependency_linked",
+          "opportunity_ability": "error_recovery",
+          "opportunity_window_step_ids": ["s4", "s7"],
+          "root_cause_candidates": [
+            {"locus": "agent_scaffold", "rank": 1, "rationale": "After the tool failure at s4 the agent changed strategy at s5 and the retried action at s6 succeeded at s7 — a genuine strategy change, not an unchanged retry."}
+          ],
+          "acceptable_better_actions": [],
+          "critical": false
+        }
+      ],
+      "no_decisive_moment": false,
+      "task_verifier_concerns": []
+    }
+  ]
+}

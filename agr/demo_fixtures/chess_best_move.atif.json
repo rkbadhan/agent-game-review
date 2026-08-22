@@ -1,0 +1,68 @@
+{
+  "atif_version": "1.7",
+  "source_type": "harbor",
+  "capture_completeness": "complete",
+  "run": {
+    "logical_run_id": "chess_best_move__seed42",
+    "task_id": "chess-best-move",
+    "model": "demo-model-a",
+    "agent": "terminal-agent",
+    "harness_version": "harbor-0.9",
+    "task_version": "chess-best-move@3",
+    "verifier_version": "verifier-v1",
+    "seed": 42,
+    "started_at": "2026-07-18T10:30:00Z",
+    "finished_at": "2026-07-18T10:34:12Z"
+  },
+  "capabilities": {
+    "messages": "complete",
+    "tool_calls": "complete",
+    "tool_results": "complete",
+    "filesystem": "checkpoint_only",
+    "process_state": "unavailable",
+    "network_state": "unavailable",
+    "compaction_boundary": "complete",
+    "pre_post_compaction_context": "partial",
+    "sidecar_state": "final_only",
+    "verifier_code": "complete"
+  },
+  "task": {
+    "instruction": "Analyse the position and write EVERY winning move to /solution.txt, one per line. Multiple winning moves may exist; you must include all of them.",
+    "artifacts": [{"path": "/solution.txt", "kind": "text"}],
+    "requirements": [
+      {"id": "R1", "description": "Create the solution artifact at /solution.txt", "source_type": "stated_requirement", "importance": "required", "verification_mode": "artifact_exists", "target": "/solution.txt", "source_pointers": ["instruction:line_1"]},
+      {"id": "R2", "description": "The solution artifact is non-empty", "source_type": "stated_requirement", "importance": "required", "verification_mode": "non_empty", "source_pointers": ["instruction:line_1"]},
+      {"id": "R3", "description": "Include every winning move when multiple exist", "source_type": "stated_requirement", "importance": "required", "verification_mode": "set_equality", "source_pointers": ["instruction:line_1"]},
+      {"id": "R4", "description": "Each line is a legal move token", "source_type": "stated_requirement", "importance": "required", "verification_mode": "token_shape", "source_pointers": ["instruction:line_1"]},
+      {"id": "R5", "description": "No duplicate move lines", "source_type": "stated_requirement", "importance": "optional", "verification_mode": "distinct_lines", "source_pointers": ["instruction:line_1"]},
+      {"id": "R6", "description": "The run terminates cleanly", "source_type": "environment_precondition", "importance": "required", "verification_mode": "clean_exit", "source_pointers": ["environment"]}
+    ],
+    "contract_confirmation": {
+      "confirmed_by": "reviewer@example",
+      "confirmed_at": "2026-07-18T12:00:00Z",
+      "confirm_all": true
+    }
+  },
+  "steps": [
+    {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "Write every winning move to /solution.txt"},
+    {"step_id": "s2", "kind": "model_output", "actor": "main_agent", "content": "Plan: run the engine, collect all winning moves, write them to /solution.txt."},
+    {"step_id": "s3", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "stockfish < position.fen"},
+    {"step_id": "s4", "kind": "tool_result", "actor": "tool", "tool": "shell", "exit_code": 0, "content": "winning moves: g2e4 e2e4 (both forced mate in 2)"},
+    {"step_id": "s5", "kind": "model_output", "actor": "main_agent", "content": "The best move is g2e4. I will write that to the solution file."},
+    {"step_id": "s6", "kind": "tool_call", "actor": "main_agent", "tool": "write_file", "path": "/solution.txt", "data": "g2e4"},
+    {"step_id": "s7", "kind": "artifact_observation", "actor": "environment", "artifact_path": "/solution.txt", "content": "g2e4"},
+    {"step_id": "s8", "kind": "final_submission", "actor": "main_agent", "content": "Submitting the solution."},
+    {"step_id": "s9", "kind": "run_finished", "actor": "harness", "content": "run complete"}
+  ],
+  "verifier": {
+    "raw_output": "C1 pass; C2 pass; C3 FAIL expected{g2e4,e2e4} observed{g2e4}; C4 pass; C5 pass; C6 pass",
+    "checks": [
+      {"check_id": "C1", "name": "Artifact exists at /solution.txt", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:10"], "contract_item_ids": ["R1"]},
+      {"check_id": "C2", "name": "Artifact is non-empty", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:14"], "contract_item_ids": ["R2"]},
+      {"check_id": "C3", "name": "All winning moves included", "status": "failed", "expected": ["g2e4", "e2e4"], "observed": ["g2e4"], "source": "instrumented_assertion", "source_pointers": ["verifier.py:20"], "contract_item_ids": ["R3"]},
+      {"check_id": "C4", "name": "Each line is a legal move token", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:26"], "contract_item_ids": ["R4"]},
+      {"check_id": "C5", "name": "No duplicate lines", "status": "passed", "source": "instrumented_assertion", "source_pointers": ["verifier.py:31"], "contract_item_ids": ["R5"]},
+      {"check_id": "C6", "name": "Run terminated cleanly", "status": "passed", "source": "native_structured", "source_pointers": ["trial.json:exit_code"], "contract_item_ids": ["R6"]}
+    ]
+  }
+}

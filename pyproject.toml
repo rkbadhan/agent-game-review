@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-game-review"
+version = "0.1.0"
+description = "Deterministic core for Agent Game Review (post-hoc behavioural review of agent runs)."
+requires-python = ">=3.10"
+
+[project.scripts]
+agr = "agr.cli:main"
+
+# The core has no third-party runtime dependencies. Everything below is optional:
+# `pip install .[api]` pulls in the HTTP transport; `.[test]` adds the client the
+# HTTP tests use; `.[model-anthropic]` / `.[model-openai]` add a provider SDK for
+# the Stage F model reviewer. The deterministic core and its tests never import
+# any of them — the read-model and reviewer-envelope tests are pure stdlib.
+[project.optional-dependencies]
+api = ["fastapi>=0.100", "uvicorn>=0.23"]
+test = ["pytest", "httpx>=0.24"]
+# The model extras bundle python-dotenv so `agr review` auto-loads a .env file
+# (credentials); the deterministic core still needs no third-party dependency.
+model-anthropic = ["anthropic>=0.40", "python-dotenv>=1.0"]
+model-openai = ["openai>=1.40", "python-dotenv>=1.0"]
+
+# Explicit discovery: the flat layout has sibling `tests/` and `fixtures/`
+# directories, so auto-discovery would refuse to guess. Ship the SPA asset as
+# package data so `agr serve` works from an installed wheel, not just a checkout.
+[tool.setuptools]
+packages = ["agr"]
+
+[tool.setuptools.package-data]
+agr = ["static/*.html", "demo_fixtures/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

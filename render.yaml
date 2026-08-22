@@ -1,0 +1,12 @@
+# Render blueprint for the live evidence-browser demo.
+# One-click deploy: push this repo, then in Render pick "New +" -> "Blueprint"
+# and select this file. Render builds the Dockerfile and injects $PORT.
+services:
+  - type: web
+    name: agr-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # Render sets $PORT itself; AGR_HOST=0.0.0.0 is baked into the image.
+    healthCheckPath: /healthz
+    autoDeploy: true

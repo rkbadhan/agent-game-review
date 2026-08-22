@@ -1,0 +1,14 @@
+{
+  "run_id": "greeting_file__clean_pass",
+  "task_id": "write-greeting",
+  "schema_version": "gold-0.1",
+  "annotations": [
+    {
+      "annotator": "annotator_a",
+      "moments": [],
+      "no_decisive_moment": true,
+      "no_moment_rationale": "A clean pass: the agent wrote the exact required greeting to /out.txt in one direct action and submitted; every check passed and no decision, omission, recovery, or external event rises to a decisive moment.",
+      "task_verifier_concerns": []
+    }
+  ]
+}
