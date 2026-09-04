@@ -30,6 +30,9 @@ EVENT_TYPES = {
     "context_compaction",
     "final_submission",
     "verifier_check",
+    "run_completed",
+    "run_timed_out",
+    "run_failed",
     "run_finished",
 }
 
@@ -54,6 +57,12 @@ CAPTURE_COMPLETENESS = {"incomplete", "partial", "complete", "corrected"}
 # ``counterfactually_supported`` requires replay evidence that this package
 # does not produce.
 ATTRIBUTION_LEVELS = ("hypothesized", "dependency_linked", "direct", "counterfactually_supported")
+
+# Step provenance (spec §6.3): how a step came to exist. ``observed`` steps
+# record something the source actually captured; ``derived`` steps are computed
+# from observed ones; ``synthetic`` steps are adapter-written bookkeeping that
+# no source ever contained (e.g. a harness terminal marker).
+PROVENANCE_LEVELS = {"observed", "derived", "synthetic"}
 
 # --- Task contract vocabularies (spec §3.1, §6.4, §6.5) ----------------------
 

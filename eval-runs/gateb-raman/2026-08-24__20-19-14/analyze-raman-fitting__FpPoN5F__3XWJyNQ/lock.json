@@ -1,0 +1,40 @@
+{
+    "schema_version": 2,
+    "task": {
+        "name": "analyze-raman-fitting__FpPoN5F",
+        "type": "local",
+        "digest": "sha256:73beb94177dbfac3487015e6fe7f945a31503383f1bec034b718b79a174e5d58",
+        "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-6mn7gfni\\analyze-raman-fitting__FpPoN5F"
+    },
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/accounts/fireworks/models/kimi-k3",
+        "skills": [],
+        "resume_trajectory": false,
+        "extra_allowed_hosts": [],
+        "kwargs": {},
+        "env": {
+            "OPENAI_API_KEY": "fw_9****3zy",
+            "OPENAI_BASE_URL": "https://api.fireworks.ai/inference/v1"
+        },
+        "mcp_servers": []
+    },
+    "bridge_inputs": {},
+    "skills": [],
+    "environment": {
+        "type": "docker",
+        "force_build": false,
+        "delete": true,
+        "cpu_enforcement_policy": "auto",
+        "memory_enforcement_policy": "auto",
+        "extra_docker_compose": [],
+        "kwargs": {},
+        "extra_allowed_hosts": []
+    },
+    "verifier": {
+        "disable": false,
+        "environment_mode": "shared"
+    }
+}

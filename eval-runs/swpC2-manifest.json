@@ -1,0 +1,11 @@
+[
+  {
+    "task": "polyglot-c-py",
+    "agent": "terminus2",
+    "attempt": 1,
+    "temp": 0.0,
+    "job_name": "swpC2-polyglot-c-py-a1",
+    "pid": 9228,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\swpC2-polyglot-c-py-a1.log"
+  }
+]

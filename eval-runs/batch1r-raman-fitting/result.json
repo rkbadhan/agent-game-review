@@ -1,0 +1,43 @@
+{
+    "id": "22886788-ed9e-4f37-a10d-1447f15df0c8",
+    "started_at": "2026-08-23T23:05:58.759604",
+    "updated_at": "2026-08-23T23:23:30.197503",
+    "finished_at": "2026-08-23T23:23:30.197503",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 1,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "mini-swe-agent__stealth/ox-alpha__adhoc": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "raman-fitting__FpPoN5F"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "raman-fitting__FpPoN5F"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 517045,
+        "n_cache_tokens": 454272,
+        "n_output_tokens": 27429,
+        "cost_usd": 0.0
+    }
+}

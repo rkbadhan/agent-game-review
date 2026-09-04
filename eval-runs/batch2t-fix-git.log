@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/fix-git -a terminus-2 -m openrouter/stealth/ox-alpha --job-name batch2t-fix-git -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:04:52 0:00:00
+adhoc • terminus-2 • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 4m 52s
+Results written to eval-runs\batch2t-fix-git\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\batch2t-fix-git`
+

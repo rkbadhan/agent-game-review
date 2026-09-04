@@ -1,0 +1,11 @@
+[
+  {
+    "task": "raman-fitting",
+    "agent": "terminus2",
+    "attempt": 1,
+    "temp": 0.0,
+    "job_name": "swpA2-raman-fitting-a1",
+    "pid": 21544,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\swpA2-raman-fitting-a1.log"
+  }
+]

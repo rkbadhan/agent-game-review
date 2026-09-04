@@ -1,0 +1,36 @@
+Traceback (most recent call last):
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\trial\single_step.py", line 77, in _run_agent
+    await self._run_agent_phase(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\trial\trial.py", line 545, in _run_agent_phase
+    await asyncio.wait_for(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\installed\base.py", line 179, in wrapper
+    return await fn(self, instruction, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\installed\mini_swe_agent.py", line 789, in run
+    await self.exec_as_agent(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\installed\base.py", line 898, in exec_as_agent
+    return await self._exec(
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\installed\base.py", line 865, in _exec
+    raise self._classify_exec_error(command, result)
+harbor.agents.installed.base.NonZeroAgentExitCodeError: Command failed (exit 1): if [ -f "$HOME/.local/bin/env" ]; then . "$HOME/.local/bin/env"; else export PATH="$HOME/.local/bin:$PATH"; fi; mini-swe-agent --yolo --model=openai/stealth/ox-alpha --task='You need to create a file called "/app/solution.txt" with the word found in "secret_file.txt" in the "secrets.7z" archive.
+' --output=/logs/agent/mini-swe-agent.trajectory.json --cost-limit 0 -c mini -c model.model_kwargs.extra_headers.X-Session-ID=crack-7z-hash__aNeynGE__agent --exit-immediately 2>&1 </dev/null | tee /logs/agent/mini-swe-agent.txt
+stdout: This is mini-swe-agent version 2.4.6.
+Check the v2 migration guide at https://klieret.short.gy/mini-v2-migration
+Loading global config from '/root/.config/mini-swe-agent/.env'
+Warning: Input is not a terminal (fd=0).
+Building agent config from specs: ... [37274 chars truncated] ...  )                                                         │
+│    416 │   │   elif original_exception.status_code == 404:                   │
+│ ❱  417 │   │   │   raise NotFoundError(                                      │
+│    418 │   │   │   │   message=f"NotFoundError: {exception_provider} -       │
+│        {message}",                                                           │
+│    419 │   │   │   │   model=model,                                          │
+│    420 │   │   │   │   llm_provider=custom_llm_provider,                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NotFoundError: litellm.NotFoundError: NotFoundError: OpenAIException - Model not
+found, inaccessible, and/or not deployed
+
+stderr: None

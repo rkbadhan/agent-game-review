@@ -1,0 +1,125 @@
+{
+    "id": "334402ee-61ba-42b7-8f6d-358f1db33edc",
+    "task_name": "terminal-bench/nginx-request-logging",
+    "trial_name": "nginx-request-logging__h6dA2go",
+    "trial_uri": "file:///C:/Users/Rahul%20Badhan/Documents/GitHub/eval-game/eval-runs/swpB-nginx-request-logging-a2/nginx-request-logging__h6dA2go",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "nginx-request-logging",
+        "ref": "latest"
+    },
+    "source": null,
+    "task_checksum": "913305d8f286ff121b30e4893217142190b27f12952343f22c0999dd2a4d725e",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/nginx-request-logging",
+            "ref": "latest",
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "nginx-request-logging__h6dA2go",
+        "trials_dir": "eval-runs\\swpB-nginx-request-logging-a2",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "mini-swe-agent",
+            "import_path": null,
+            "model_name": "openai/stealth/ox-alpha",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {
+                "config": {
+                    "model": {
+                        "temperature": 0.3
+                    }
+                }
+            },
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "6e2cc974-72d6-4d84-a0e0-74a758cbe3fb",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "mini-swe-agent",
+        "version": "2.4.6",
+        "model_info": {
+            "name": "stealth/ox-alpha",
+            "provider": "openai"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 0,
+        "n_cache_tokens": 0,
+        "n_output_tokens": 0,
+        "cost_usd": 0.0,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.0
+        }
+    },
+    "verifier_environment_mode": "shared",
+    "exception_info": null,
+    "started_at": "2026-08-24T14:13:34.435871Z",
+    "finished_at": "2026-08-24T14:15:58.447440Z",
+    "environment_setup": {
+        "started_at": "2026-08-24T14:13:34.514010Z",
+        "finished_at": "2026-08-24T14:13:43.593027Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-24T14:13:43.593027Z",
+        "finished_at": "2026-08-24T14:15:01.570654Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-24T14:15:01.570654Z",
+        "finished_at": "2026-08-24T14:15:21.787987Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-24T14:15:21.797046Z",
+        "finished_at": "2026-08-24T14:15:43.857168Z"
+    },
+    "step_results": null
+}

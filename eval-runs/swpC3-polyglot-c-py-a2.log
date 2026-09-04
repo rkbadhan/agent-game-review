@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/polyglot-c-py -a terminus-2 -m openrouter/stealth/ox-alpha --agent-kwarg temperature=0.3 --job-name swpC3-polyglot-c-py-a2 -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:09:26 0:00:00
+adhoc • terminus-2 • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 9m 26s
+Results written to eval-runs\swpC3-polyglot-c-py-a2\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\swpC3-polyglot-c-py-a2`
+

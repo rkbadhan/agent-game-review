@@ -1,0 +1,26 @@
+{
+    "jobs_dir": "eval-runs\\gateb-raman2",
+    "quiet": true,
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/accounts/fireworks/models/kimi-k3",
+            "kwargs": {
+                "config": {
+                    "model": {
+                        "drop_params": true
+                    }
+                }
+            },
+            "env": {
+                "OPENAI_API_KEY": "fw_9****3zy",
+                "OPENAI_BASE_URL": "https://api.fireworks.ai/inference/v1"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-e8vz9_ia\\analyze-raman-fitting__FpPoN5F"
+        }
+    ]
+}

@@ -727,6 +727,54 @@ def cmd_eval(args) -> int:
     return 0
 
 
+def _review_one(store: Store, run_id: str, reviewer):
+    """Run the model-enriched pipeline over a run's latest capture (raises on failure)."""
+    capture_id = store.latest_capture_id(run_id)
+    if capture_id is None:
+        raise KeyError(f"run {run_id!r} not found in store")
+    doc = store.read_source(run_id, capture_id)
+    return analyze(doc, store, reviewer=reviewer)
+
+
+def _review_all(store: Store, reviewer, settings: dict, force: bool = False) -> int:
+    """Review every run in the store with one reviewer; per-run failures don't stop the sweep."""
+    from . import read
+    run_ids = [entry["run_id"] for entry in read.list_runs(store)]
+    if not run_ids:
+        print(f"no runs in store {store.root!r} — ingest something first", file=sys.stderr)
+        return 1
+    done = skipped = failed = 0
+    for run_id in run_ids:
+        if not force and _already_enriched(store, run_id):
+            print(f"  · {run_id} — skipped (already model-enriched; use --force to redo)")
+            skipped += 1
+            continue
+        try:
+            analysis = _review_one(store, run_id, reviewer)
+        except Exception as exc:  # noqa: BLE001 - one bad run must not kill the batch
+            print(f"  ✗ {run_id} — model reviewer failed: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+        moments = len(getattr(analysis, "review_moments", []) or [])
+        print(f"  ✓ {run_id} — {moments} moment(s) · reviewer {reviewer.reviewer_key}")
+        done += 1
+    print(f"\nreviewed {done} · skipped {skipped} · failed {failed} "
+          f"(provider {settings['provider']}, model {getattr(reviewer, 'model', '?')})")
+    if failed and not done:
+        print("check credentials (ANTHROPIC_API_KEY / OPENAI_API_KEY) and connectivity",
+              file=sys.stderr)
+        return 4
+    return 0
+
+
+def _already_enriched(store: Store, run_id: str) -> bool:
+    """Does the run's latest capture already carry a model-enriched review slot?"""
+    capture_id = store.latest_capture_id(run_id)
+    if capture_id is None:
+        return False
+    return any(key.startswith("model") for key in store.list_reviews(run_id, capture_id))
+
+
 def cmd_review(args) -> int:
     """Run the Stage F model reviewer over a run (spec §8.7).
 
@@ -737,21 +785,34 @@ def cmd_review(args) -> int:
     provider extra and credentials; both failures exit cleanly with a hint.
     """
     store = Store(args.store)
-    capture_id = store.latest_capture_id(args.run_id)
-    if capture_id is None:
-        print(f"run {args.run_id!r} not found in store {args.store!r}", file=sys.stderr)
-        return 1
-    doc = store.read_source(args.run_id, capture_id)
     from .model_reviewer import make_reviewer
-    # Model resolves --model > AGR_REVIEW_MODEL > the provider's default.
-    model = args.model or os.environ.get("AGR_REVIEW_MODEL")
+    from .userconfig import resolve_review_settings
+
+    # Settings resolve --flag > $AGR_REVIEW_MODEL / $OPENAI_BASE_URL > saved
+    # `agr config` file > the provider's built-in default.
+    settings = resolve_review_settings(args.provider, args.model, args.base_url)
     try:
-        reviewer = make_reviewer(args.provider, model, args.base_url)
+        reviewer = make_reviewer(settings["provider"], settings["model"], settings["base_url"])
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except Exception as exc:  # noqa: BLE001 - auth/network error while constructing the client
+        print(f"model reviewer failed: {exc}", file=sys.stderr)
+        print("check credentials (ANTHROPIC_API_KEY / OPENAI_API_KEY) and connectivity",
+              file=sys.stderr)
+        return 4
+
+    if getattr(args, "all", False):
+        return _review_all(store, reviewer, settings, force=getattr(args, "force", False))
+
+    if not args.run_id:
+        print("nothing to review: give a run_id or use --all for the whole store", file=sys.stderr)
+        return 1
     try:
-        analysis = analyze(doc, store, reviewer=reviewer)
+        analysis = _review_one(store, args.run_id, reviewer)
+    except KeyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
         print(f"cannot run model reviewer: {exc}", file=sys.stderr)
         return 3
@@ -761,6 +822,74 @@ def cmd_review(args) -> int:
               file=sys.stderr)
         return 4
     _print_show(analysis)
+    return 0
+
+
+def cmd_config(args) -> int:
+    """Show / save / validate the model-reviewer settings used by `agr review`.
+
+    One-time setup so `agr review <id>` and `agr review --all` work without
+    flags: `agr config --provider openai --model <id> --base-url <url>`.
+    `--test` makes one real completion call against the effective settings
+    (flag > env > saved file) and reports exactly what it reached.
+    """
+    from .userconfig import clear_config, config_path, load_config, resolve_review_settings, save_config
+
+    if args.clear:
+        if clear_config():
+            print(f"cleared saved reviewer settings ({config_path()})")
+        else:
+            print("no saved reviewer settings to clear")
+        return 0
+
+    saving = any(v is not None for v in (args.provider, args.model, args.base_url))
+    if saving:
+        if args.provider is not None and args.provider not in ("anthropic", "openai"):
+            print(f"unknown provider {args.provider!r}; choose from ['anthropic', 'openai']",
+                  file=sys.stderr)
+            return 2
+        cfg = save_config(args.provider, args.model, args.base_url)
+        print(f"saved reviewer settings to {config_path()}")
+    else:
+        cfg = load_config()
+
+    effective = resolve_review_settings(args.provider, args.model, args.base_url)
+    print(f"\nreviewer settings (effective, flag > env > {config_path()} > provider default):")
+    print(f"  provider: {effective['provider']}")
+    print(f"  model:    {effective['model'] or '(provider default)'}")
+    print(f"  base_url: {effective['base_url'] or '(provider default)'}")
+    if saving and cfg.get("updated_at"):
+        print(f"  saved:    {cfg['updated_at']}")
+
+    if not args.test:
+        return 0
+
+    # One real completion call — validates SDK install, credentials, endpoint,
+    # and model id in a single cheap round trip.
+    from .model_reviewer import make_reviewer
+    try:
+        reviewer = make_reviewer(effective["provider"], effective["model"], effective["base_url"])
+    except ValueError as exc:
+        print(f"\nconfiguration error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - auth/network error while constructing the client
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        print("hints: check the API key env (ANTHROPIC_API_KEY / OPENAI_API_KEY), "
+              "the base_url, and that the model id exists at that endpoint", file=sys.stderr)
+        return 4
+    print(f"\ntesting {effective['provider']} · {effective['model'] or '(default model)'}")
+    try:
+        reviewer._complete("You are a connectivity test.",
+                           '{"self_test": "reply with the JSON object {"ok": true}"}')
+    except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
+        print(f"MISSING SDK: {exc}", file=sys.stderr)
+        return 3
+    except Exception as exc:  # noqa: BLE001 - auth/network/model errors surface here
+        print(f"FAILED: {exc}", file=sys.stderr)
+        print("hints: check the API key env (ANTHROPIC_API_KEY / OPENAI_API_KEY), "
+              "the base_url, and that the model id exists at that endpoint", file=sys.stderr)
+        return 4
+    print("OK — the reviewer endpoint is reachable and the model responded.")
     return 0
 
 
@@ -918,17 +1047,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     prv = sub.add_parser(
         "review", help="run the Stage F model reviewer over a run (needs a 'model-*' extra + key)")
-    prv.add_argument("run_id", help="logical run id")
-    prv.add_argument("--provider", default="anthropic", choices=["anthropic", "openai"],
-                     help="model provider (default: anthropic)")
+    prv.add_argument("run_id", nargs="?", default=None,
+                     help="logical run id (omit when --all)")
+    prv.add_argument("--all", action="store_true",
+                     help="review every run in the store (skips runs already model-enriched)")
+    prv.add_argument("--force", action="store_true",
+                     help="with --all: re-review runs that already carry a model review")
+    prv.add_argument("--provider", default=None, choices=["anthropic", "openai"],
+                     help="model provider (default: saved 'agr config' provider, else anthropic)")
     prv.add_argument("--model", default=None,
-                     help="model id (default: $AGR_REVIEW_MODEL, else the provider's "
-                          "default, e.g. claude-opus-4-8)")
+                     help="model id (default: $AGR_REVIEW_MODEL, else saved 'agr config' "
+                          "model, else the provider's default, e.g. claude-opus-4-8)")
     prv.add_argument("--base-url", default=None,
                      help="OpenAI/Anthropic-compatible endpoint URL (use any model: "
                           "OpenRouter, Together, a local vLLM/Ollama server, …). "
                           "Falls back to OPENAI_BASE_URL for --provider openai.")
     prv.set_defaults(func=cmd_review)
+
+    pcfg = sub.add_parser(
+        "config", help="show / save / validate the reviewer settings used by 'agr review'")
+    pcfg.add_argument("--provider", default=None, choices=["anthropic", "openai"],
+                      help="save this provider for future 'agr review' runs")
+    pcfg.add_argument("--model", default=None,
+                      help="save this model id for future 'agr review' runs")
+    pcfg.add_argument("--base-url", default=None,
+                      help="save this endpoint URL (OpenRouter, Ollama, vLLM, …)")
+    pcfg.add_argument("--test", action="store_true",
+                      help="make one real completion call with the effective settings")
+    pcfg.add_argument("--clear", action="store_true", help="delete the saved settings")
+    pcfg.set_defaults(func=cmd_config)
 
     pv = sub.add_parser("serve", help="serve the read API over HTTP (needs the 'api' extra)")
     pv.add_argument("--host", default=os.environ.get("AGR_HOST", "127.0.0.1"),

@@ -204,6 +204,9 @@ def _enriched_payload(review):
             "kind": m["kind"],
             "polarity": m["polarity"],
             "affected_checks": m["affected_checks"],
+            # Stage G requires at least one validating fact — mirror the
+            # deterministic facts so the enriched card stays grounded.
+            "structured_facts": [f for f in m.get("validated_facts", []) if not f.get("validation") == "failed"],
             "behaviour_tags": ["failed_to_replan"],
             "better_action": "Re-check the build after fixing the import.",
             "root_cause_candidates": [{"locus": "agent_decision", "rationale": "did not retry"}],

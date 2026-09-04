@@ -46,7 +46,7 @@ REVIEWER_VERSION = "reviewer-det-0.1"
 # attribution language capped (Stage H), and its cards selected (Stage I). The
 # version stamps model-enriched review moments so a verdict is auditable against
 # the prompt/schema that produced it.
-MODEL_REVIEWER_VERSION = "reviewer-model-0.1"
+MODEL_REVIEWER_VERSION = "reviewer-model-0.2"
 
 # Redaction and untrusted-content isolation applied before any model-facing text
 # (spec §7.4, §16.1). The redaction map records what was removed and why, stamped

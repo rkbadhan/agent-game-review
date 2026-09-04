@@ -1,0 +1,11 @@
+[
+  {
+    "task": "nginx-request-logging",
+    "agent": "terminus2",
+    "attempt": 2,
+    "temp": 0.3,
+    "job_name": "swpB2-nginx-request-logging-a2",
+    "pid": 1808,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\swpB2-nginx-request-logging-a2.log"
+  }
+]

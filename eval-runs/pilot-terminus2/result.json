@@ -1,0 +1,43 @@
+{
+    "id": "028a6c4f-ce2e-4677-a797-a0b80360079d",
+    "started_at": "2026-08-23T19:18:02.700563",
+    "updated_at": "2026-08-23T19:53:06.957381",
+    "finished_at": "2026-08-23T19:53:06.957381",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 1,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "terminus-2__stealth/ox-alpha__adhoc": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "make-mips-interpreter__mU7gNZv"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "make-mips-interpreter__mU7gNZv"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 469053,
+        "n_cache_tokens": 364416,
+        "n_output_tokens": 36149,
+        "cost_usd": null
+    }
+}

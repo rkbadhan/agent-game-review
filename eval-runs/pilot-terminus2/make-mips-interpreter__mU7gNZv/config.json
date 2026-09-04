@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/make-mips-interpreter",
+        "ref": "latest"
+    },
+    "trial_name": "make-mips-interpreter__mU7gNZv",
+    "trials_dir": "eval-runs\\pilot-terminus2",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha"
+    },
+    "job_id": "028a6c4f-ce2e-4677-a797-a0b80360079d"
+}

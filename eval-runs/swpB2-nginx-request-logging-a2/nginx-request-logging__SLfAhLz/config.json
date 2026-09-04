@@ -1,0 +1,16 @@
+{
+    "task": {
+        "name": "terminal-bench/nginx-request-logging",
+        "ref": "latest"
+    },
+    "trial_name": "nginx-request-logging__SLfAhLz",
+    "trials_dir": "eval-runs\\swpB2-nginx-request-logging-a2",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha",
+        "kwargs": {
+            "temperature": 0.3
+        }
+    },
+    "job_id": "ed5d1648-005e-4e80-b305-6eb2ee7250ac"
+}

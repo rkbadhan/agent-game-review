@@ -4,7 +4,11 @@
   "title": "ATIF ingestion document (agr contract)",
   "description": "The concrete ATIF-shaped JSON document that agr ingests (spec §7.2). This is the target an adapter author converts a harness log into. It is intentionally minimal: only the fields the deterministic core reads are constrained here. Vocabularies are generated from code and guarded by tests/test_atif_schema.py so this file cannot drift from agr/events.py and agr/schema.py.",
   "type": "object",
-  "required": ["atif_version", "run", "steps"],
+  "required": [
+    "atif_version",
+    "run",
+    "steps"
+  ],
   "additionalProperties": true,
   "properties": {
     "atif_version": {
@@ -18,44 +22,104 @@
     "capture_completeness": {
       "type": "string",
       "description": "How complete this capture is (spec §6.1/§7.3). Defaults to \"complete\" when omitted.",
-      "enum": ["incomplete", "partial", "complete", "corrected"]
+      "enum": [
+        "incomplete",
+        "partial",
+        "complete",
+        "corrected"
+      ]
     },
     "capabilities": {
       "type": "object",
       "description": "Per-capability observability level the source actually provides. Anything omitted defaults to \"unavailable\" — missing observability is stated, never assumed present. Detectors that depend on an unavailable capability report \"not evaluated\" instead of guessing.",
       "propertyNames": {
         "enum": [
-          "messages", "tool_calls", "tool_results", "filesystem",
-          "process_state", "network_state", "compaction_boundary",
-          "pre_post_compaction_context", "sidecar_state", "verifier_code"
+          "messages",
+          "tool_calls",
+          "tool_results",
+          "filesystem",
+          "process_state",
+          "network_state",
+          "compaction_boundary",
+          "pre_post_compaction_context",
+          "sidecar_state",
+          "verifier_code"
         ]
       },
       "additionalProperties": {
         "type": "string",
         "description": "Observability level, weakest to strongest.",
-        "enum": ["unavailable", "final_only", "checkpoint_only", "partial", "complete"]
+        "enum": [
+          "unavailable",
+          "final_only",
+          "checkpoint_only",
+          "partial",
+          "complete"
+        ]
       }
     },
     "run": {
       "type": "object",
       "description": "Run identity. logical_run_id and task_id must be supplied externally — the core will not invent them.",
-      "required": ["logical_run_id", "task_id"],
+      "required": [
+        "logical_run_id",
+        "task_id"
+      ],
       "additionalProperties": true,
       "properties": {
-        "logical_run_id": {"type": "string", "minLength": 1, "description": "Stable identity for this logical run. Re-ingesting the same bytes under this id is idempotent; different bytes create a linked capture revision."},
-        "task_id": {"type": "string", "minLength": 1, "description": "Benchmark/task identity this run attempted."},
-        "model": {"type": "string"},
-        "agent": {"type": "string"},
-        "harness_version": {"type": "string"},
-        "task_version": {"type": "string"},
-        "verifier_version": {"type": "string"},
-        "seed": {"type": ["integer", "string"]},
-        "started_at": {"type": "string"},
-        "finished_at": {"type": "string"},
-        "sweep_id": {"type": "string", "description": "Sweep this run belongs to (spec §4.3.1, §7.1). Names a comparison side (§4.16); supply it when runs are grouped into a sweep."},
-        "configuration_id": {"type": "string", "description": "Pinned configuration identity (spec §4.16). Names a comparison side; supply it when comparing configurations."},
-        "environment_image_digest": {"type": "string", "description": "Environment image digest, e.g. \"sha256:...\" (spec §12.3). An exact-match key for version comparison; absence is reported as an unresolved key, never treated as equal."},
-        "task_parameters": {"type": "object", "description": "Structured task parameters (spec §12.3). An exact-match key for version comparison; absence is an unresolved key, not equality by omission."}
+        "logical_run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identity for this logical run. Re-ingesting the same bytes under this id is idempotent; different bytes create a linked capture revision."
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Benchmark/task identity this run attempted."
+        },
+        "model": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "harness_version": {
+          "type": "string"
+        },
+        "task_version": {
+          "type": "string"
+        },
+        "verifier_version": {
+          "type": "string"
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        },
+        "sweep_id": {
+          "type": "string",
+          "description": "Sweep this run belongs to (spec §4.3.1, §7.1). Names a comparison side (§4.16); supply it when runs are grouped into a sweep."
+        },
+        "configuration_id": {
+          "type": "string",
+          "description": "Pinned configuration identity (spec §4.16). Names a comparison side; supply it when comparing configurations."
+        },
+        "environment_image_digest": {
+          "type": "string",
+          "description": "Environment image digest, e.g. \"sha256:...\" (spec §12.3). An exact-match key for version comparison; absence is reported as an unresolved key, never treated as equal."
+        },
+        "task_parameters": {
+          "type": "object",
+          "description": "Structured task parameters (spec §12.3). An exact-match key for version comparison; absence is an unresolved key, not equality by omission."
+        }
       }
     },
     "steps": {
@@ -64,33 +128,83 @@
       "description": "The trajectory as ordered steps. Every step_id must be unique. Each step's kind must be in the controlled vocabulary below — the event timeline maps exactly these and rejects anything else.",
       "items": {
         "type": "object",
-        "required": ["step_id", "kind"],
+        "required": [
+          "step_id",
+          "kind"
+        ],
         "additionalProperties": true,
         "properties": {
-          "step_id": {"type": "string", "minLength": 1, "description": "Unique within this document."},
+          "step_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique within this document."
+          },
           "kind": {
             "type": "string",
             "description": "Step kind. Controlled vocabulary (agr/events.py:KIND_TO_EVENT). An unknown kind is rejected at ingest.",
             "enum": [
-              "task_received", "model_output", "plan_declared", "tool_call",
-              "tool_result", "environment_observation", "artifact_observation",
-              "process_started", "process_observed", "error_observed", "retry",
-              "strategy_change", "context_compaction", "final_submission",
-              "run_finished"
+              "task_received",
+              "model_output",
+              "plan_declared",
+              "tool_call",
+              "tool_result",
+              "environment_observation",
+              "artifact_observation",
+              "process_started",
+              "process_observed",
+              "error_observed",
+              "retry",
+              "strategy_change",
+              "context_compaction",
+              "final_submission",
+              "run_finished",
+              "run_completed",
+              "run_timed_out",
+              "run_failed"
             ]
           },
           "actor": {
             "type": "string",
             "description": "Who produced the step (e.g. \"main_agent\", \"tool\", \"harness\", \"environment\"). Optional; defaults to \"unknown\" if omitted. Free text — not a controlled vocabulary."
           },
-          "content": {"type": "string", "description": "Human-readable text payload, copied verbatim into the derived event."},
-          "data": {"description": "Structured payload (e.g. bytes written by a tool_call)."},
-          "path": {"type": "string"},
-          "artifact_path": {"type": "string"},
-          "tool": {"type": "string"},
-          "exit_code": {"type": ["integer", "string"]},
-          "summary": {"type": "string"},
-          "cost": {"type": "object", "description": "Optional per-step cost accounting, carried through untouched."}
+          "content": {
+            "type": "string",
+            "description": "Human-readable text payload, copied verbatim into the derived event."
+          },
+          "data": {
+            "description": "Structured payload (e.g. bytes written by a tool_call)."
+          },
+          "path": {
+            "type": "string"
+          },
+          "artifact_path": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "cost": {
+            "type": "object",
+            "description": "Optional per-step cost accounting, carried through untouched."
+          },
+          "provenance": {
+            "type": "string",
+            "description": "How this step came to exist. observed = recorded from the source; derived = computed from observed steps; synthetic = adapter-written bookkeeping no source contained.",
+            "enum": [
+              "observed",
+              "derived",
+              "synthetic"
+            ]
+          }
         }
       }
     },
@@ -99,11 +213,27 @@
       "description": "Optional structured task declaration used to build the draft contract (spec §8.2). The free-text instruction is retained as a source pointer, never parsed by the deterministic core. Omit fields that aren't declared by the source rather than inventing them.",
       "additionalProperties": true,
       "properties": {
-        "instruction": {"type": "string"},
-        "artifacts": {"type": "array", "items": {"type": "object"}},
-        "requirements": {"type": "array", "items": {"type": "object"}},
-        "reference_solution": {"type": "object"},
-        "contract_confirmation": {"type": "object"}
+        "instruction": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "reference_solution": {
+          "type": "object"
+        },
+        "contract_confirmation": {
+          "type": "object"
+        }
       }
     },
     "verifier": {
@@ -111,20 +241,56 @@
       "description": "Optional verifier sidecar. Supplied externally — with no verifier the run ingests with no verifier evidence (spec §7.2). Every check maps to contract items and carries an explicit source.",
       "additionalProperties": true,
       "properties": {
-        "raw_output": {"type": "string"},
+        "raw_output": {
+          "type": "string"
+        },
         "checks": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["check_id", "status"],
+            "required": [
+              "check_id",
+              "status"
+            ],
             "additionalProperties": true,
             "properties": {
-              "check_id": {"type": "string"},
-              "name": {"type": "string"},
-              "status": {"type": "string", "enum": ["passed", "failed", "skipped", "error", "unknown"]},
-              "source": {"type": "string", "enum": ["native_structured", "instrumented_assertion", "code_inspection", "output_interpretation"]},
-              "source_pointers": {"type": "array", "items": {"type": "string"}},
-              "contract_item_ids": {"type": "array", "items": {"type": "string"}}
+              "check_id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed",
+                  "skipped",
+                  "error",
+                  "unknown"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "native_structured",
+                  "instrumented_assertion",
+                  "code_inspection",
+                  "output_interpretation"
+                ]
+              },
+              "source_pointers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "contract_item_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

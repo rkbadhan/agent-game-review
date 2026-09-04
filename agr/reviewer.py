@@ -118,8 +118,9 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
 
     Returns the facts annotated with ``validation`` ("passed"/"failed") and the
     ``recomputed`` value. A fact type the envelope does not know how to recompute
-    is marked ``unrecomputable`` and treated as non-blocking (it is neither a
-    validated fact nor a false one).
+    is marked ``unrecomputable``; a moment whose facts are ALL unrecomputable is
+    ungrounded and fails Stage G (a semantic claim must carry at least one fact
+    deterministic code actually verified).
     """
     check_by_id = {c.check_id: c for c in ctx.checks}
     event_ids = {e.event_id for e in ctx.events}
@@ -133,6 +134,7 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
         e.event_id: action_signature(e) for e in ctx.events if e.event_type == "tool_call"
     }
     strat_after = _strategy_change_between(ctx.events)
+    terminal_type = _terminal_event_type(ctx.events)
 
     out: list[dict] = []
     for fact in candidate.structured_facts:
@@ -141,7 +143,8 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
         if ftype == "requirement_status":
             check = check_by_id.get(fact.get("check_id"))
             recomputed = check.status if check else None
-            claimed_failed = fact.get("status_at_submission") == "failed"
+            # "status" accepted as an alias for "status_at_submission".
+            claimed_failed = (fact.get("status_at_submission") or fact.get("status")) == "failed"
             passed = check is not None and (check.status == "failed") == claimed_failed
         elif ftype == "absence":
             artifact = fact.get("declared_artifact")
@@ -168,6 +171,21 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             # Fall back to bare existence when no episode indexes this failure.
             if ep is None:
                 passed = fev in event_ids
+        elif ftype == "event_support":
+            # Semantic-moment grounding: every named event must exist AND the
+            # quoted span must actually appear in that event's text (normalised).
+            quotes = fact.get("quotes") or []
+            recomputed = []
+            for q in quotes:
+                eid = q.get("event_id")
+                ev = next((e for e in ctx.events if e.event_id == eid), None)
+                matched = ev is not None and _norm_text(q.get("quote", "")) in _norm_text(ev.text())
+                recomputed.append({"event_id": eid, "matched": matched,
+                                   "event_present": ev is not None})
+            passed = bool(quotes) and all(r["matched"] for r in recomputed)
+        elif ftype == "termination":
+            passed = terminal_type == fact.get("expected")
+            recomputed = terminal_type
         else:
             annotated["validation"] = "unrecomputable"
             out.append(annotated)
@@ -176,6 +194,25 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
         annotated["recomputed"] = recomputed
         out.append(annotated)
     return out
+
+
+def _norm_text(s: str) -> str:
+    """Normalise for quote matching: lowercase, collapse whitespace."""
+    return " ".join((s or "").lower().split())
+
+
+# Event types that can terminate a run (adapter 0.4 semantics).
+_TERMINAL_EVENT_TYPES = {
+    "final_submission", "run_completed", "run_timed_out", "run_failed", "run_finished",
+}
+
+
+def _terminal_event_type(events: list[DerivedEvent]) -> str | None:
+    """The run's terminal event type, or None if no terminal event exists."""
+    for e in reversed(events):
+        if e.event_type in _TERMINAL_EVENT_TYPES:
+            return e.event_type
+    return None
 
 
 def _strategy_change_between(events: list[DerivedEvent]) -> dict:
@@ -191,8 +228,16 @@ def _strategy_change_between(events: list[DerivedEvent]) -> dict:
 
 
 def _facts_valid(validated: list[dict]) -> bool:
-    """A candidate survives Stage G unless a *recomputable* fact is false."""
-    return not any(f.get("validation") == "failed" for f in validated)
+    """A candidate survives Stage G only if grounded: at least one *passed*
+    recomputable fact, and no recomputable fact false.
+
+    An all-unrecomputable candidate asserts things no deterministic code could
+    verify — it is ungrounded by definition and fails (spec §8.8: "if it does
+    not recompute, the claim is dropped").
+    """
+    if any(f.get("validation") == "failed" for f in validated):
+        return False
+    return any(f.get("validation") == "passed" for f in validated)
 
 
 def _fact_errors(validated: list[dict]) -> list[dict]:
@@ -293,6 +338,18 @@ def render(fact: dict, ceiling: str, polarity: str) -> str:
                 f"change at {fact.get('resolution_event')}."
             )
         return f"A tool failure at {fact.get('failure_event')} was left unresolved before submission{link}."
+    if ftype == "event_support":
+        evs = [q.get("event_id") for q in (fact.get("quotes") or []) if q.get("event_id")]
+        return f"Grounded in quoted run evidence ({', '.join(evs)}){link}."
+    if ftype == "termination":
+        expected = fact.get("expected", "unknown")
+        label = {
+            "run_timed_out": "The run reached its time limit",
+            "run_failed": "The run ended in an error",
+            "run_completed": "The run ended without a submission signal",
+            "final_submission": "The agent submitted",
+        }.get(expected, f"The run terminated via {expected}")
+        return f"{label}."
     return fact.get("type", "candidate")
 
 

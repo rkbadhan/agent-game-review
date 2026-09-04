@@ -1,0 +1,20 @@
+[
+  {
+    "task": "crack-7z-hash",
+    "job_name": "batch1r-crack-7z-hash",
+    "pid": 18508,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch1r-crack-7z-hash.log"
+  },
+  {
+    "task": "raman-fitting",
+    "job_name": "batch1r-raman-fitting",
+    "pid": 6796,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch1r-raman-fitting.log"
+  },
+  {
+    "task": "prove-plus-comm",
+    "job_name": "batch1r-prove-plus-comm",
+    "pid": 7372,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch1r-prove-plus-comm.log"
+  }
+]

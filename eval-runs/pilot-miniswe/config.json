@@ -1,0 +1,16 @@
+{
+    "job_name": "pilot-miniswe",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha"
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/make-mips-interpreter",
+            "ref": "latest"
+        }
+    ]
+}

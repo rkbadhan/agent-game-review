@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/raman-fitting",
+        "ref": "latest"
+    },
+    "trial_name": "raman-fitting__jCu2BAS",
+    "trials_dir": "eval-runs\\raman-r2-raman-fitting",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "b36c61ba-35b3-4e95-b236-072a6f7651b9"
+}

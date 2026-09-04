@@ -1,0 +1,119 @@
+{
+    "id": "df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+    "task_name": "terminal-bench/prove-plus-comm",
+    "trial_name": "prove-plus-comm__UfS8uMD",
+    "trial_uri": "file:///C:/Users/Rahul%20Badhan/Documents/GitHub/eval-game/eval-runs/batch1r-prove-plus-comm/prove-plus-comm__UfS8uMD",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "prove-plus-comm",
+        "ref": "latest"
+    },
+    "source": null,
+    "task_checksum": "77604ed7016a102179b1ca9ae9810fe6cd1b29de53de342e7f7a6f286de8cb82",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/prove-plus-comm",
+            "ref": "latest",
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "prove-plus-comm__UfS8uMD",
+        "trials_dir": "eval-runs\\batch1r-prove-plus-comm",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "mini-swe-agent",
+            "import_path": null,
+            "model_name": "openai/stealth/ox-alpha",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "855c2cab-3a38-4ec5-8c6a-ee80c370bebf",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "mini-swe-agent",
+        "version": "2.4.6",
+        "model_info": {
+            "name": "stealth/ox-alpha",
+            "provider": "openai"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 21097,
+        "n_cache_tokens": 14528,
+        "n_output_tokens": 2052,
+        "cost_usd": 0.0,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "verifier_environment_mode": "shared",
+    "exception_info": null,
+    "started_at": "2026-08-23T17:36:27.446536Z",
+    "finished_at": "2026-08-23T17:41:23.253245Z",
+    "environment_setup": {
+        "started_at": "2026-08-23T17:36:27.654395Z",
+        "finished_at": "2026-08-23T17:37:28.282557Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-23T17:37:28.282557Z",
+        "finished_at": "2026-08-23T17:39:09.611464Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-23T17:39:09.611464Z",
+        "finished_at": "2026-08-23T17:40:53.126725Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-23T17:40:53.203303Z",
+        "finished_at": "2026-08-23T17:41:06.937306Z"
+    },
+    "step_results": null
+}

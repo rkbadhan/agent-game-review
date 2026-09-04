@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/crack-7z-hash",
+        "ref": "latest"
+    },
+    "trial_name": "crack-7z-hash__6nSnEWX",
+    "trials_dir": "eval-runs\\batch2t-crack-7z-hash",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha"
+    },
+    "job_id": "f0d28c7d-366d-4c86-be7f-68d361cccb74"
+}

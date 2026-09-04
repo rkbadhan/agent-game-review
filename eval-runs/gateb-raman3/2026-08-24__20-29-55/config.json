@@ -1,0 +1,19 @@
+{
+    "jobs_dir": "eval-runs\\gateb-raman3",
+    "quiet": true,
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha",
+            "env": {
+                "OPENAI_API_KEY": "sk-o****816",
+                "OPENAI_BASE_URL": "https://openrouter.ai/api/v1"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-h3u4dktd\\analyze-raman-fitting__FpPoN5F"
+        }
+    ]
+}

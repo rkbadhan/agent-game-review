@@ -1,0 +1,16 @@
+{
+    "task": {
+        "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-h3u4dktd\\analyze-raman-fitting__FpPoN5F"
+    },
+    "trial_name": "analyze-raman-fitting__FpPoN5F__BovxnrG",
+    "trials_dir": "eval-runs\\gateb-raman3\\2026-08-24__20-29-55",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha",
+        "env": {
+            "OPENAI_API_KEY": "sk-o****816",
+            "OPENAI_BASE_URL": "https://openrouter.ai/api/v1"
+        }
+    },
+    "job_id": "5e398567-7b5a-414a-a435-68a8d71b5958"
+}

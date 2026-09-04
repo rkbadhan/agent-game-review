@@ -1,0 +1,249 @@
+[?2004hroot@f1680473aa50:/app# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@f1680473aa50:/app# clear
+[?2004l[H[J[3J[?2004hroot@f1680473aa50:/app# mkdir -p /app/polyglot && cat > /app/polyglot/main.py.c <<'EOF'
+[?2004l[?2004h> #if 0
+[?2004l[?2004h> import sys
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def fibonacci(n):
+[?2004l[?2004h>     a, b = 0, 1
+[?2004l[?2004h>     for _ in range(n):
+[?2004l[?2004h>         a, b = b, a + b
+[?2004l[?2004h>     return a
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def run():
+[?2004l[?2004h>     if len(sys.argv) != 2:
+[?2004l[?2004h>         print("Usage: " + sys.argv[0] + " N", file=sys.stderr)
+[?2004l[?2004h>         return 1
+[?2004l[?2004h>     try:
+[?2004l[?2004h>         n = int(sys.argv[1], 10)
+[?2004l[?2004h>     except ValueError:
+[?2004l[?2004h>         print("N must be a nonnegative decimal integer", file=sys.stderr)
+[?2004l[?2004h>         return 1
+[?2004l[?2004h>     if n < 0:
+[?2004l[?2004h>         print("N must be a nonnegative decimal integer", file=sys.stderr)
+[?2004l[?2004h>         return 1
+[?2004l[?2004h>     print(fibonacci(n))
+[?2004l[?2004h>     return 0
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> raise SystemExit(run())
+[?2004l[?2004h> r"""
+[?2004l[?2004h> #endif
+[?2004l[?2004h> #include <inttypes.h>
+[?2004l[?2004h> #include <stdint.h>
+[?2004l[?2004h> #include <stdio.h>
+[?2004l[?2004h> #include <stdlib.h>
+[?2004l[?2004h> 
+[?2004l[?2004h> #define BIG_BASE UINT32_C(1000000000)
+[?2004l[?2004h> #define BIG_WIDTH UINT32_C(9)
+[?2004l[?2004h> 
+[?2004l[?2004h> typedef struct {
+[?2004l[?2004h>     uint32_t *limbs;
+[?2004l[?2004h>     size_t length;
+[?2004l[?2004h>     size_t capacity;
+[?2004l[?2004h> } BigInteger;
+[?2004l[?2004h> 
+[?2004l[?2004h> static void *xrealloc(void *pointer, size_t size)
+[?2004l[?2004h> {
+[?2004l[?2004h>     void *result = realloc(pointer, size);
+[?2004l[?2004h>     if (result == NULL) {
+[?2004l[?2004h>         fprintf(stderr, "Out of memory\n");
+[?2004l[?2004h>         exit(EXIT_FAILURE);
+[?2004l[?2004h>     }
+[?2004l[?2004h>     return result;
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> static void big_initialize(BigInteger *value, uint32_t limb)
+[?2004l[?2004h> {
+[?2004l[?2004h>     value->limbs = xrealloc(NULL, sizeof *value->limbs);
+[?2004l[?2004h>     value->limbs[0] = limb;
+[?2004l[?2004h>     value->length = 1;
+[?2004l[?2004h>     value->capacity = 1;
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> static void big_reserve(BigInteger *value, size_t capacity)
+[?2004l[?2004h> {
+[?2004l[?2004h>     size_t new_capacity;
+[?2004l[?2004h> 
+[?2004l[?2004h>     if (capacity <= value->capacity) {
+[?2004l[?2004h>         return;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     if (capacity > SIZE_MAX / sizeof *value->limbs) {
+[?2004l[?2004h>         fprintf(stderr, "Out of memory\n");
+[?2004l[?2004h>         exit(EXIT_FAILURE);
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     new_capacity = value->capacity == 0 ? 1 : value->capacity;
+[?2004l[?2004h>     while (new_capacity < capacity) {
+[?2004l[?2004h>         if (new_capacity > SIZE_MAX / 2) {
+[?2004l[?2004h>             new_capacity = capacity;
+[?2004l[?2004h>             break;
+[?2004l[?2004h>         }
+[?2004l[?2004h>         new_capacity *= 2;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     if (new_capacity > SIZE_MAX / sizeof *value->limbs) {
+[?2004l[?2004h>         fprintf(stderr, "Out of memory\n");
+[?2004l[?2004h>         exit(EXIT_FAILURE);
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     value->limbs = xrealloc(value->limbs,
+[?2004l[?2004h>                             new_capacity * sizeof *value->limbs);
+[?2004l[?2004h>     value->capacity = new_capacity;
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> static void big_add(BigInteger *left, const BigInteger *right)
+[?2004l[?2004h> {
+[?2004l[?2004h>     size_t width = left->length > right->length ? left->length : right->length;
+[?2004l[?2004h>     uint32_t carry = 0;
+[?2004l[?2004h>     size_t i;
+[?2004l[?2004h> 
+[?2004l[?2004h>     if (width == SIZE_MAX) {
+[?2004l[?2004h>         fprintf(stderr, "Out of memory\n");
+[?2004l[?2004h>         exit(EXIT_FAILURE);
+[?2004l[?2004h>     }
+[?2004l[?2004h>     big_reserve(left, width + 1);
+[?2004l[?2004h> 
+[?2004l[?2004h>     for (i = 0; i < width; ++i) {
+[?2004l[?2004h>         uint64_t sum = carry;
+[?2004l[?2004h> 
+[?2004l[?2004h>         if (i < left->length) {
+[?2004l[?2004h>             sum += left->limbs[i];
+[?2004l[?2004h>         }
+[?2004l[?2004h>         if (i < right->length) {
+[?2004l[?2004h>             sum += right->limbs[i];
+[?2004l[?2004h>         }
+[?2004l[?2004h> 
+[?2004l[?2004h>         if (sum >= BIG_BASE) {
+[?2004l[?2004h>             left->limbs[i] = (uint32_t)(sum - BIG_BASE);
+[?2004l[?2004h>             carry = 1;
+[?2004l[?2004h>         } else {
+[?2004l[?2004h>             left->limbs[i] = (uint32_t)sum;
+[?2004l[?2004h>             carry = 0;
+[?2004l[?2004h>         }
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     left->length = width;
+[?2004l[?2004h>     if (carry != 0) {
+[?2004l[?2004h>         left->limbs[width] = carry;
+[?2004l[?2004h>         left->length = width + 1;
+[?2004l[?2004h>     }
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> static void big_print(const BigInteger *value)
+[?2004l[?2004h> {
+[?2004l[?2004h>     size_t i;
+[?2004l[?2004h> 
+[?2004l[?2004h>     printf("%" PRIu32, value->limbs[value->length - 1]);
+[?2004l[?2004h>     for (i = value->length - 1; i > 0; --i) {
+[?2004l[?2004h>         printf("%09" PRIu32, value->limbs[i - 1]);
+[?2004l[?2004h>     }
+[?2004l[?2004h>     putchar('\n');
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> static int parse_count(const char *text, size_t *result)
+[?2004l[?2004h> {
+[?2004l[?2004h>     size_t value = 0;
+[?2004l[?2004h> 
+[?2004l[?2004h>     if (*text == '+') {
+[?2004l[?2004h>         ++text;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     while (text[0] == '0' && text[1] != '\0') {
+[?2004l[?2004h>         ++text;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     if (*text < '0' || *text > '9') {
+[?2004l[?2004h>         return 0;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     while (*text >= '0' && *text <= '9') {
+[?2004l[?2004h>         unsigned int digit = (unsigned int)(*text - '0');
+[?2004l[?2004h> 
+[?2004l[?2004h>         if (value > (SIZE_MAX - digit) / 10) {
+[?2004l[?2004h>             return 0;
+[?2004l[?2004h>         }
+[?2004l[?2004h>         value = value * 10 + digit;
+[?2004l[?2004h>         ++text;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     if (*text != '\0') {
+[?2004l[?2004h>         return 0;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     *result = value;
+[?2004l[?2004h>     return 1;
+[?2004l[?2004h> }
+[?2004l[?2004h> 
+[?2004l[?2004h> int main(int argc, char **argv)
+[?2004l[?2004h> {
+[?2004l[?2004h>     BigInteger a;
+[?2004l[?2004h>     BigInteger b;
+[?2004l[?2004h>     size_t n;
+[?2004l[?2004h>     size_t i;
+[?2004l[?2004h> 
+[?2004l[?2004h>     if (argc != 2) {
+[?2004l[?2004h>         fprintf(stderr, "Usage: %s N\n", argv[0]);
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     if (!parse_count(argv[1], &n)) {
+[?2004l[?2004h>         fprintf(stderr, "N must be a nonnegative decimal integer\n");
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     big_initialize(&a, 0);
+[?2004l[?2004h>     big_initialize(&b, 1);
+[?2004l[?2004h>     for (i = 0; i < n; ++i) {
+[?2004l[?2004h>         BigInteger temporary;
+[?2004l[?2004h> 
+[?2004l[?2004h>         big_add(&a, &b);
+[?2004l[?2004h>         temporary = a;
+[?2004l[?2004h>         a = b;
+[?2004l[?2004h>         b = temporary;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     big_print(&a);
+[?2004l[?2004h>     free(a.limbs);
+[?2004l[?2004h>     free(b.limbs);
+[?2004l[?2004h>     return EXIT_SUCCESS;
+[?2004l[?2004h> }
+[?2004l[?2004h> #if 0
+[?2004l[?2004h> """
+[?2004l[?2004h> #endif
+[?2004l[?2004h> EOF
+[?2004l[?2004hroot@f1680473aa50:/app# python3 -m py_compile /app/polyglot/main.py.c && gcc -Wall -Wextra -Wpedantic /app/polyglot/main.py.c -o /app/polyglot/cmain
+[?2004l[01m[K/app/polyglot/main.py.c:29:4:[m[K [01;35m[Kwarning: [m[Kmissing terminating " character
+   29 | r""[01;35m[K"[m[K
+      |    [01;35m[K^[m[K
+[01m[K/app/polyglot/main.py.c:206:3:[m[K [01;35m[Kwarning: [m[Kmissing terminating " character
+  206 | ""[01;35m[K"[m[K
+      |   [01;35m[K^[m[K
+[?2004hroot@f1680473aa50:/app# python3 /app/polyglot/main.py.c 0; python3 /app/polyglot/main.py.c 1; python3 /app/polyglot/main.py.c 2; python3 /app/polyglot/main.py.c 93; /app/polyglot/cmain 0; /app/polyglot/cmain 1; /app/polyglot/cmain 2; /app/polyglot/cmain 93
+[?2004l0
+1
+1
+12200160415121876738
+0
+1
+1
+12200160415121876738
+[?2004hroot@f1680473aa50:/app# sed -i 's|^r"""$|r"""//"|' /app/polyglot/main.py.c && sed -i 's|^"""$|"""#//"|' /app/polyglot/main.py.c && grep -nE '^(r)?"{3}' /app/polyglot/main.py.c && gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain
+[?2004l[32m[K29[m[K[36m[K:[m[K[01;31m[Kr"""[m[K//"
+[32m[K206[m[K[36m[K:[m[K[01;31m[K"""[m[K#//"
+[?2004hroot@f1680473aa50:/app# set -e
+[?2004l[?2004hroot@f1680473aa50:/app# for n in 0 1 2 3 10 20 50 93 200; do
+[?2004l[?2004h>   p=$(python3 /app/polyglot/main.py.c "$n")
+[?2004l[?2004h>   c=$(/app/polyglot/cmain "$n")
+[?2004l[?2004h>   printf 'f(%s) = %s\n' "$n" "$p"
+[?2004l[?2004h>   test "$p" = "$c"
+[?2004l[?2004h> done
+[?2004lf(0) = 0
+f(1) = 1
+f(2) = 1
+f(3) = 2
+f(10) = 55
+f(20) = 6765
+f(50) = 12586269025
+f(93) = 12200160415121876738
+f(200) = 280571172992510140037611932413038677189525
+[?2004hroot@f1680473aa50:/app# 

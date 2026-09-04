@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/fix-git",
+        "ref": "latest"
+    },
+    "trial_name": "fix-git__sTxRfrg",
+    "trials_dir": "eval-runs\\test1-fix-git",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "b0a86c31-32f9-4f45-8649-48867fd3c4b7"
+}

@@ -41,7 +41,21 @@ from .adapter import AdapterResult
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.2"
+# 0.3: final_submission is no longer synthesised unconditionally — a harness-
+#      terminated trial (exception_info present, e.g. AgentTimeoutError) or a
+#      trajectory with zero agent steps gets only run_finished. The old 0.2
+#      behaviour made the unresolved_requirement_at_submission detector anchor
+#      on events the agent never authored (timeout/crash), misattributing
+#      harness outcomes to the agent.
+# 0.4: full event semantics. final_submission is emitted ONLY when a submission
+#      is directly observed in the trajectory (mini-swe-agent's terminal
+#      COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT echo, terminus-2's
+#      mark_task_complete call). Otherwise the harness termination is recorded
+#      as run_completed / run_timed_out / run_failed. Every adapter-written
+#      step carries provenance="synthetic"; source-fanned-out steps carry
+#      provenance="observed". A normal-looking end without an observed
+#      submission is run_completed, never an agent submission.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.5"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -118,9 +132,10 @@ def _trial_markers(p: Path) -> bool:
 def iter_trials(source: str | Path) -> list[Path]:
     """Resolve a Harbor path to the list of trial directories it contains.
 
-    Accepts one trial directory, a ``trajectory.json`` file, or a Harbor **job
-    directory** (what ``harbor run`` writes: one subdirectory per trial). The
-    job-dir case is what makes batch review of an eval sweep one command.
+    Accepts one trial directory, a ``trajectory.json`` file, a Harbor **job
+    directory** (what ``harbor run`` writes: one subdirectory per trial), or a
+    **directory of job directories** (e.g. a published corpus root). The job-dir
+    cases are what make batch review of an eval sweep one command.
     Raises ``ValueError`` with the searched layout when nothing is found.
     """
     p = Path(source)
@@ -132,6 +147,17 @@ def iter_trials(source: str | Path) -> list[Path]:
         trials = sorted(child for child in p.iterdir() if child.is_dir() and _trial_markers(child))
         if trials:
             return trials
+        # A directory *of* job directories (e.g. a committed corpus root):
+        # descend one more level and collect each job's trials.
+        nested = sorted(
+            trial
+            for job in p.iterdir()
+            if job.is_dir()
+            for trial in job.iterdir()
+            if trial.is_dir() and _trial_markers(trial)
+        )
+        if nested:
+            return nested
         raise ValueError(
             f"no Harbor trial with a reviewable trajectory found under {p}: "
             f"expected trial directories containing agent/trajectory.json (or "
@@ -305,11 +331,16 @@ def convert(
     def add(kind: str, actor: str, **payload: Any) -> None:
         nonlocal seq
         seq += 1
+        # Source-fanned-out steps are observed; adapter-written terminal events
+        # override with provenance="synthetic" at their call site.
+        payload.setdefault("provenance", "observed")
         steps.append({"step_id": f"h{seq}", "kind": kind, "actor": actor, **payload})
 
     first_user_text: str | None = None
     model: str | None = agent.get("model_name")
     call_names: dict[str, str] = {}  # tool_call_id -> function_name, to name results
+    saw_agent_step = False
+    last_agent_tool_calls: list[dict] = []
 
     for hstep in harbor_steps:
         if not isinstance(hstep, dict):
@@ -330,6 +361,8 @@ def convert(
             add("environment_observation", "harness", content=_text_of(hstep.get("message")))
 
         elif src == "agent":
+            saw_agent_step = True
+            last_agent_tool_calls = [c for c in (hstep.get("tool_calls") or []) if isinstance(c, dict)]
             reasoning = hstep.get("reasoning_content")
             if reasoning:
                 add("model_output", "main_agent", content=f"[thinking] {_text_of(reasoning)}")
@@ -372,8 +405,54 @@ def convert(
     if not steps:
         raise ValueError(f"{traj_path.name}: trajectory produced no trajectory steps")
 
-    add("final_submission", "main_agent", content="[Harbor trial ended — final agent state]")
-    add("run_finished", "harness", content="Harbor trial closed")
+    # --- termination --------------------------------------------------------
+    # Event semantics (adapter 0.4, revised 0.5): an agent submission is
+    # recorded ONLY when directly observed in the trajectory — mini-swe-agent's
+    # terminal COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT echo or a mark_task_complete
+    # tool call as the final agent action. Everything else is harness-side:
+    #   run_timed_out  deadline exception (e.g. AgentTimeoutError)
+    #   run_failed     other recorded exception (e.g. NonZeroAgentExitCodeError),
+    #                  or a zero-agent-step crash (Harbor scored the trial as
+    #                  completed, e.g. mini-swe-agent RepeatedFormatError — but a
+    #                  trial where the agent never acted is a protocol failure,
+    #                  not a completion; labelling it run_completed repeats the
+    #                  timeout-equals-submission ontology error at smaller scale)
+    #   run_completed  harness ended the trial normally without an observed
+    #                  submission (incl. iteration exhaustion with agent activity)
+    # A normal-looking end is NEVER promoted to an agent submission: inventing
+    # one makes downstream detectors attribute harness outcomes to the agent.
+    _, exc = _reward_and_exception(result_data)
+    exc_type = exc.get("exception_type") or exc.get("type") if isinstance(exc, dict) else exc
+
+    def _observed_submission(calls: list[dict]) -> bool:
+        if not calls:
+            return False
+        for c in calls:
+            fname = (c.get("function_name") or c.get("name") or "").lower()
+            args = c.get("arguments")
+            args_text = json.dumps(args, ensure_ascii=False) if args is not None else ""
+            if fname == "mark_task_complete":
+                return True
+            if "complete_task_and_submit_final_output" in args_text.lower():
+                return True
+        return False
+
+    if _observed_submission(last_agent_tool_calls):
+        add("final_submission", "main_agent", provenance="observed",
+            content="[Observed agent submission signal in final agent action]")
+    elif exc_type and "timeout" in str(exc_type).lower():
+        add("run_timed_out", "harness", provenance="synthetic",
+            content=f"[Harbor trial hit its deadline: {exc_type}]")
+    elif exc_type:
+        add("run_failed", "harness", provenance="synthetic",
+            content=f"[Harbor trial ended via {exc_type}]")
+    elif not saw_agent_step:
+        add("run_failed", "harness", provenance="synthetic",
+            content="[Harbor trial closed — trajectory contains no agent steps; the agent never acted]",
+            termination_reason="agent_protocol_failure")
+    else:
+        add("run_completed", "harness", provenance="synthetic",
+            content="[Harbor trial closed normally — no observed submission signal]")
 
     # --- run metadata -------------------------------------------------------
     # Task identity comes from the caller, else from what Harbor recorded on

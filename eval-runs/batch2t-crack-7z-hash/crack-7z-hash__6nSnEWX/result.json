@@ -1,0 +1,141 @@
+{
+    "id": "bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+    "task_name": "terminal-bench/crack-7z-hash",
+    "trial_name": "crack-7z-hash__6nSnEWX",
+    "trial_uri": "file:///C:/Users/Rahul%20Badhan/Documents/GitHub/eval-game/eval-runs/batch2t-crack-7z-hash/crack-7z-hash__6nSnEWX",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "crack-7z-hash",
+        "ref": "latest"
+    },
+    "source": null,
+    "task_checksum": "22789e2dc5cc9b54c430b61556ac8ad3cddb9052d1c7ef349f25acd6f0d1db28",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/crack-7z-hash",
+            "ref": "latest",
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "crack-7z-hash__6nSnEWX",
+        "trials_dir": "eval-runs\\batch2t-crack-7z-hash",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "terminus-2",
+            "import_path": null,
+            "model_name": "openrouter/stealth/ox-alpha",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "f0d28c7d-366d-4c86-be7f-68d361cccb74",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "terminus-2",
+        "version": "2.0.0",
+        "model_info": {
+            "name": "stealth/ox-alpha",
+            "provider": "openrouter"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 162934,
+        "n_cache_tokens": 147968,
+        "n_output_tokens": 16941,
+        "cost_usd": null,
+        "rollout_details": [],
+        "metadata": {
+            "n_episodes": 17,
+            "api_request_times_msec": [
+                13397.72081375122,
+                45775.691986083984,
+                22207.62825012207,
+                70812.3095035553,
+                152945.39737701416,
+                58828.80735397339,
+                14221.883773803711,
+                14077.17514038086,
+                5914.685487747192,
+                26195.555925369263,
+                29567.34585762024,
+                22680.705070495605,
+                119635.2276802063,
+                44377.3148059845,
+                47553.06148529053,
+                5992.207765579224,
+                14209.843397140503
+            ],
+            "summarization_count": 0
+        }
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "verifier_environment_mode": "shared",
+    "exception_info": null,
+    "started_at": "2026-08-24T11:34:12.166779Z",
+    "finished_at": "2026-08-24T11:50:45.954554Z",
+    "environment_setup": {
+        "started_at": "2026-08-24T11:34:12.233730Z",
+        "finished_at": "2026-08-24T11:34:14.268073Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-24T11:34:14.268073Z",
+        "finished_at": "2026-08-24T11:34:28.117857Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-24T11:34:28.117857Z",
+        "finished_at": "2026-08-24T11:49:39.460188Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-24T11:49:39.460188Z",
+        "finished_at": "2026-08-24T11:50:34.915717Z"
+    },
+    "step_results": null
+}

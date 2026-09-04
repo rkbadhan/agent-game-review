@@ -43,7 +43,10 @@ def test_fixture_converts_and_maps_turn_fanout():
     # One Harbor agent turn with a tool_call + observation fans out into ordered
     # model_output / tool_call / tool_result steps.
     assert "model_output" in kinds and "tool_call" in kinds and "tool_result" in kinds
-    assert kinds[-2:] == ["final_submission", "run_finished"]
+    # Fixture's final agent action carries no submission signal, so the trial
+    # ends run_completed (harness-side) — never a synthesised submission.
+    assert kinds[-1] == "run_completed"
+    assert "final_submission" not in kinds
     # reasoning_content is preserved as a tagged model_output, not dropped.
     assert any(s.get("content", "").startswith("[thinking]") for s in doc["steps"])
     # run metadata comes from the trajectory's agent block.
@@ -93,6 +96,117 @@ def test_exception_without_reward_is_error(tmp_path):
     steps = [{"step_id": 1, "source": "user", "message": "do it"}]
     res = convert(_trial(tmp_path, steps, reward=None, exception={"type": "Timeout"}), task_id="t")
     assert res.doc["verifier"]["checks"][0]["status"] == "error"
+
+
+def test_harness_killed_run_gets_no_final_submission(tmp_path):
+    """A timeout-terminated trial records run_timed_out — never a submission.
+
+    The adapter must not invent an agent-authored submission (adapter 0.4):
+    the synthesised final_submission made the unresolved_requirement_at_submission
+    detector anchor on events the agent never authored (real-world bug: raman-fitting
+    rev2 timed out at 900 s and was reviewed as 'submitted while failing').
+    """
+    steps = [
+        {"step_id": 1, "source": "user", "message": "fit the peaks"},
+        {"step_id": 2, "source": "agent", "message": "working", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "ls"}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=0.0,
+                         exception={"exception_type": "AgentTimeoutError",
+                                    "exception_message": "timed out after 900.0 seconds"}),
+                  task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert "final_submission" not in kinds
+    assert kinds[-1] == "run_timed_out"
+    assert res.doc["steps"][-1]["provenance"] == "synthetic"
+
+
+def test_non_timeout_exception_records_run_failed(tmp_path):
+    """Other exceptions (e.g. NonZeroAgentExitCodeError) are run_failed."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "working", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "make"}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=0.0,
+                         exception={"exception_type": "NonZeroAgentExitCodeError",
+                                    "exception_message": "exit code 1"}),
+                  task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds[-1] == "run_failed"
+    assert "final_submission" not in kinds
+
+
+def test_zero_agent_step_crash_is_run_failed_not_completed(tmp_path):
+    """Harbor can record a trial as completed even when the agent crashed
+    before acting (mini-swe-agent RepeatedFormatError: zero agent turns).
+    With no agent steps there is no submission to attribute anything to, and
+    the trial end is a protocol failure (run_failed with termination_reason),
+    never an agent submission and never a completion — a crash is not a
+    completed run."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "set up nginx"},
+        {"step_id": 2, "source": "system", "message": "agent exited with format error"},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=0.0), task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert "final_submission" not in kinds
+    assert kinds[-1] == "run_failed"
+    assert res.doc["steps"][-1]["provenance"] == "synthetic"
+    assert res.doc["steps"][-1]["termination_reason"] == "agent_protocol_failure"
+
+
+def test_completed_run_still_gets_final_submission(tmp_path):
+    """A directly observed submission signal (mini-swe-agent's terminal echo)
+    yields a final_submission with provenance=observed."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "done", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash",
+             "arguments": {"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds[-1] == "final_submission"
+    sub = res.doc["steps"][-1]
+    assert sub["provenance"] == "observed"
+    assert sub["actor"] == "main_agent"
+
+
+def test_mark_task_complete_is_an_observed_submission(tmp_path):
+    """terminus-2 signals completion via a mark_task_complete tool call."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "done", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "mark_task_complete", "arguments": {}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds[-1] == "final_submission"
+    assert res.doc["steps"][-1]["provenance"] == "observed"
+
+
+def test_normal_end_without_submission_signal_is_run_completed(tmp_path):
+    """A normally-ended run whose final action is ordinary work is
+    run_completed — the adapter must never promote it to a submission.
+    (Iteration exhaustion without a harness exception lands here too.)"""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "still working", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "make test"}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=0.0), task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds[-1] == "run_completed"
+    assert "final_submission" not in kinds
+    # fan-out steps are provenance=observed
+    assert res.doc["steps"][0]["provenance"] == "observed"
+    assert res.doc["steps"][1]["provenance"] == "observed"
 
 
 def test_explicit_verifier_overrides_result_reward(tmp_path):
@@ -235,6 +349,31 @@ def test_iter_trials_resolves_job_directories(tmp_path):
     empty.mkdir()
     with pytest.raises(ValueError, match="no Harbor trial"):
         iter_trials(empty)
+
+
+def test_iter_trials_resolves_a_directory_of_job_directories(tmp_path):
+    """A committed corpus root (a directory of harbor job dirs) fans out two
+    levels: root -> job -> trial. This is what makes `ingest-harbor corpus/`
+    one command for a published evaluation corpus."""
+    from agr.ingest_harbor import iter_trials
+
+    def _mk_trial(parent: Path, name: str) -> None:
+        d = parent / name
+        (d / "agent").mkdir(parents=True)
+        (d / "agent" / "trajectory.json").write_text("{}", encoding="utf-8")
+        (d / "result.json").write_text("{}", encoding="utf-8")
+
+    root = tmp_path / "corpus"
+    for job_name in ("batch1-foo", "batch2-bar"):
+        _mk_trial(root / job_name, f"{job_name}__task__1")
+    # A non-job entry (loose log, writeoff without trajectory) is skipped.
+    (root / "notes.log").write_text("log line", encoding="utf-8")
+    wo = root / "_writeoffs" / "dbg" / "trial__x__1"
+    wo.mkdir(parents=True)
+    (wo / "result.json").write_text("{}", encoding="utf-8")  # no trajectory
+
+    trials = iter_trials(root)
+    assert [t.name for t in trials] == ["batch1-foo__task__1", "batch2-bar__task__1"]
 
 
 def test_job_root_with_rollup_result_is_not_mistaken_for_a_trial(tmp_path):

@@ -1,0 +1,124 @@
+{
+    "id": "0b9b1946-1866-4e40-ac98-b0510a611a78",
+    "task_name": "terminal-bench/crack-7z-hash",
+    "trial_name": "crack-7z-hash__aNeynGE",
+    "trial_uri": "file:///C:/Users/Rahul%20Badhan/Documents/GitHub/eval-game/eval-runs/batch1-crack-7z-hash/crack-7z-hash__aNeynGE",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "crack-7z-hash",
+        "ref": "latest"
+    },
+    "source": null,
+    "task_checksum": "22789e2dc5cc9b54c430b61556ac8ad3cddb9052d1c7ef349f25acd6f0d1db28",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/crack-7z-hash",
+            "ref": "latest",
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "crack-7z-hash__aNeynGE",
+        "trials_dir": "eval-runs\\batch1-crack-7z-hash",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "mini-swe-agent",
+            "import_path": null,
+            "model_name": "openai/stealth/ox-alpha",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "d5d106b3-c856-46e5-9beb-1981d8626949",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "mini-swe-agent",
+        "version": "2.4.6",
+        "model_info": {
+            "name": "stealth/ox-alpha",
+            "provider": "openai"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 0,
+        "n_cache_tokens": 0,
+        "n_output_tokens": 0,
+        "cost_usd": 0.0,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.0
+        }
+    },
+    "verifier_environment_mode": "shared",
+    "exception_info": {
+        "exception_type": "NonZeroAgentExitCodeError",
+        "exception_message": "Command failed (exit 1): if [ -f \"$HOME/.local/bin/env\" ]; then . \"$HOME/.local/bin/env\"; else export PATH=\"$HOME/.local/bin:$PATH\"; fi; mini-swe-agent --yolo --model=openai/stealth/ox-alpha --task='You need to create a file called \"/app/solution.txt\" with the word found in \"secret_file.txt\" in the \"secrets.7z\" archive.\n' --output=/logs/agent/mini-swe-agent.trajectory.json --cost-limit 0 -c mini -c model.model_kwargs.extra_headers.X-Session-ID=crack-7z-hash__aNeynGE__agent --exit-immediately 2>&1 </dev/null | tee /logs/agent/mini-swe-agent.txt\nstdout: This is mini-swe-agent version 2.4.6.\nCheck the v2 migration guide at https://klieret.short.gy/mini-v2-migration\nLoading global config from '/root/.config/mini-swe-agent/.env'\nWarning: Input is not a terminal (fd=0).\nBuilding agent config from specs: ... [37274 chars truncated] ...  )                                                         │\n│    416 │   │   elif original_exception.status_code == 404:                   │\n│ ❱  417 │   │   │   raise NotFoundError(                                      │\n│    418 │   │   │   │   message=f\"NotFoundError: {exception_provider} -       │\n│        {message}\",                                                           │\n│    419 │   │   │   │   model=model,                                          │\n│    420 │   │   │   │   llm_provider=custom_llm_provider,                     │\n╰──────────────────────────────────────────────────────────────────────────────╯\nNotFoundError: litellm.NotFoundError: NotFoundError: OpenAIException - Model not\nfound, inaccessible, and/or not deployed\n\nstderr: None",
+        "exception_traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\trial\\single_step.py\", line 77, in _run_agent\n    await self._run_agent_phase(\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\trial\\trial.py\", line 545, in _run_agent_phase\n    await asyncio.wait_for(\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\python\\cpython-3.12.9-windows-x86_64-none\\Lib\\asyncio\\tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\agents\\installed\\base.py\", line 179, in wrapper\n    return await fn(self, instruction, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\agents\\installed\\mini_swe_agent.py\", line 789, in run\n    await self.exec_as_agent(\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\agents\\installed\\base.py\", line 898, in exec_as_agent\n    return await self._exec(\n           ^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Rahul Badhan\\AppData\\Roaming\\uv\\tools\\harbor\\Lib\\site-packages\\harbor\\agents\\installed\\base.py\", line 865, in _exec\n    raise self._classify_exec_error(command, result)\nharbor.agents.installed.base.NonZeroAgentExitCodeError: Command failed (exit 1): if [ -f \"$HOME/.local/bin/env\" ]; then . \"$HOME/.local/bin/env\"; else export PATH=\"$HOME/.local/bin:$PATH\"; fi; mini-swe-agent --yolo --model=openai/stealth/ox-alpha --task='You need to create a file called \"/app/solution.txt\" with the word found in \"secret_file.txt\" in the \"secrets.7z\" archive.\n' --output=/logs/agent/mini-swe-agent.trajectory.json --cost-limit 0 -c mini -c model.model_kwargs.extra_headers.X-Session-ID=crack-7z-hash__aNeynGE__agent --exit-immediately 2>&1 </dev/null | tee /logs/agent/mini-swe-agent.txt\nstdout: This is mini-swe-agent version 2.4.6.\nCheck the v2 migration guide at https://klieret.short.gy/mini-v2-migration\nLoading global config from '/root/.config/mini-swe-agent/.env'\nWarning: Input is not a terminal (fd=0).\nBuilding agent config from specs: ... [37274 chars truncated] ...  )                                                         │\n│    416 │   │   elif original_exception.status_code == 404:                   │\n│ ❱  417 │   │   │   raise NotFoundError(                                      │\n│    418 │   │   │   │   message=f\"NotFoundError: {exception_provider} -       │\n│        {message}\",                                                           │\n│    419 │   │   │   │   model=model,                                          │\n│    420 │   │   │   │   llm_provider=custom_llm_provider,                     │\n╰──────────────────────────────────────────────────────────────────────────────╯\nNotFoundError: litellm.NotFoundError: NotFoundError: OpenAIException - Model not\nfound, inaccessible, and/or not deployed\n\nstderr: None\n",
+        "occurred_at": "2026-08-23T17:20:56.823939Z"
+    },
+    "started_at": "2026-08-23T17:18:25.687903Z",
+    "finished_at": "2026-08-23T17:21:27.379886Z",
+    "environment_setup": {
+        "started_at": "2026-08-23T17:18:25.823928Z",
+        "finished_at": "2026-08-23T17:19:19.571425Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-23T17:19:19.571947Z",
+        "finished_at": "2026-08-23T17:20:36.594158Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-23T17:20:36.594721Z",
+        "finished_at": "2026-08-23T17:20:56.818389Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-23T17:20:56.866610Z",
+        "finished_at": "2026-08-23T17:21:11.541263Z"
+    },
+    "step_results": null
+}

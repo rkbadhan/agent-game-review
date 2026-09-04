@@ -1,0 +1,32 @@
+$ harbor run -t terminal-bench/make-mips-interpreter -a mini-swe-agent -m openai/stealth/ox-alpha --job-name pilot-miniswe -o eval-runs
+Traceback (most recent call last):
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 403, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 394, in main
+    {"oracle": lambda: cmd_oracle(cfg, args.dry_run),
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ...<3 lines>...
+     "import": lambda: cmd_import(cfg),
+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     "status": lambda: cmd_status(cfg)}[args.cmd]()
+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 395, in <lambda>
+    "pilot": lambda: cmd_pilot(cfg, args.agent, args.dry_run),
+                     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 285, in cmd_pilot
+    rec = record_job(cfg, phase="pilot", job_name=job_name,
+                     agent=agent, attempt=1, source="run")
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 187, in record_job
+    info = inspect_job(job_dir)
+  File "C:\Users\Rahul Badhan\Documents\GitHub\eval-game\experiments\terminal_bench\run_experiment.py", line 128, in inspect_job
+    d = json.loads(tr.read_text())
+  File "C:\Python313\Lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Python313\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\json\decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)

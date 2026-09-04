@@ -1,0 +1,241 @@
+[?2004hroot@086ad6ffcb84:/app# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@086ad6ffcb84:/app# clear
+[?2004l[H[J[3J[?2004hroot@086ad6ffcb84:/app# mkdir -p /app/polyglot && cat > /app/polyglot/main.py.c <<'EOF'
+[?2004l[?2004h> #if 0
+[?2004l[?2004h> import sys
+[?2004l[?2004h> n = int(sys.argv[1])
+[?2004l[?2004h> a, b = 0, 1
+[?2004l[?2004h> for _ in range(n):
+[?2004l[?2004h>     a, b = b, a + b
+[?2004l[?2004h> print(a)
+[?2004l[?2004h> r'''
+[?2004l[?2004h> #endif
+[?2004l[?2004h> #include <stdio.h>
+[?2004l[?2004h> #include <stdlib.h>
+[?2004l[?2004h> 
+[?2004l[?2004h> int main(int argc, char **argv) {
+[?2004l[?2004h>     if (argc != 2) {
+[?2004l[?2004h>         fprintf(stderr, "usage: %s N\n", argv[0]);
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     long long n = strtoll(argv[1], NULL, 10);
+[?2004l[?2004h>     unsigned long long a = 0;
+[?2004l[?2004h>     unsigned long long b = 1;
+[?2004l[?2004h>     for (long long i = 0; i < n; ++i) {
+[?2004l[?2004h>         unsigned long long next = a + b;
+[?2004l[?2004h>         a = b;
+[?2004l[?2004h>         b = next;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     printf("%llu\n", a);
+[?2004l[?2004h>     return EXIT_SUCCESS;
+[?2004l[?2004h> }
+[?2004l[?2004h> /*
+[?2004l[?2004h> '''
+[?2004l[?2004h> #*/
+[?2004l[?2004h> EOF
+[?2004l[?2004hroot@086ad6ffcb84:/app# python3 /app/polyglot/main.py.c 10
+[?2004l55
+[?2004hroot@086ad6ffcb84:/app# gcc -Wall -Wextra /app/polyglot/main.py.c -o /app/polyglot/cmain && /app/polyglot/cmain 10
+[?2004l[01m[K/app/polyglot/main.py.c:8:4:[m[K [01;35m[Kwarning: [m[Kmissing terminating ' character
+    8 | r''[01;35m[K'[m[K
+      |    [01;35m[K^[m[K
+55
+[?2004hroot@086ad6ffcb84:/app# cat > /app/polyglot/main.py.c <<'EOF'
+[?2004l[?2004h> #if 0
+[?2004l[?2004h> import sys
+[?2004l[?2004h> n = int(sys.argv[1])
+[?2004l[?2004h> a, b = 0, 1
+[?2004l[?2004h> for _ in range(n):
+[?2004l[?2004h>     a, b = b, a + b
+[?2004l[?2004h> print(a)
+[?2004l[?2004h> r"""
+[?2004l[?2004h> #endif
+[?2004l[?2004h> #include <stdio.h>
+[?2004l[?2004h> #include <stdlib.h>
+[?2004l[?2004h> 
+[?2004l[?2004h> int main(int argc, char **argv) {
+[?2004l[?2004h>     if (argc != 2) {
+[?2004l[?2004h>         fprintf(stderr, "usage: %s N\n", argv[0]);
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     long long n = strtoll(argv[1], NULL, 10);
+[?2004l[?2004h>     unsigned long long a = 0;
+[?2004l[?2004h>     unsigned long long b = 1;
+[?2004l[?2004h>     for (long long i = 0; i < n; ++i) {
+[?2004l[?2004h>         unsigned long long next = a + b;
+[?2004l[?2004h>         a = b;
+[?2004l[?2004h>         b = next;
+[?2004l[?2004h>     }
+[?2004l[?2004h>     printf("%llu\n", a);
+[?2004l[?2004h>     return EXIT_SUCCESS;
+[?2004l[?2004h> }
+[?2004l[?2004h> /*
+[?2004l[?2004h> """
+[?2004l[?2004h> #*/
+[?2004l[?2004h> EOF
+[?2004l[?2004hroot@086ad6ffcb84:/app# for i in 0 1 2 3 10 20; do python3 /app/polyglot/main.py.c "$i"; done
+[?2004l0
+1
+1
+2
+55
+6765
+[?2004hroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20; do /app/polyglot/cmain "$i"; done M[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Ke
+[?2004l[01m[K/app/polyglot/main.py.c:8:4:[m[K [01;35m[Kwarning: [m[Kmissing terminating " character
+    8 | r""[01;35m[K"[m[K
+      |    [01;35m[K^[m[K
+0
+1
+1
+2
+55
+6765
+[?2004hroot@086ad6ffcb84:/app# sed -i 's/^r"""$/"" r"""/' /app/polyglot/main.py.c
+[?2004l[?2004hroot@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c "$i"; done
+[?2004l0
+1
+1
+2
+55
+6765
+12200160415121876738
+[?2004hroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain "$i"; done
+[?2004l[01m[K/app/polyglot/main.py.c:8:7:[m[K [01;31m[Kerror: [m[Kmissing terminating " character [[01;31m[K-Werror[m[K]
+    8 | "" r""[01;31m[K"[m[K
+      |       [01;31m[K^[m[K
+cc1: all warnings being treated as errors
+[?2004hroot@086ad6ffcb84:/app# python3 - <<'PY'
+[?2004l[?2004h> p='/app/polyglot/main.py.c'
+[?2004l[?2004h> s=open(p).read()
+[?2004l[?2004h> s=s.replace('"" r"""', '""""', 1)
+[?2004l[?2004h> s=s.replace('\n"""\n#*/\n', '\n""" #"\n#*/\n', 1)
+[?2004l[?2004h> open(p, 'w').write(s)
+[?2004l[?2004h> PY
+[?2004l[?2004hroot@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c "$i"; done
+[?2004l0
+1
+1
+2
+55
+6765
+12200160415121876738
+[?2004hroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain "$i"; done
+[?2004l0
+1
+1
+2
+55
+6765
+12200160415121876738
+[?2004hroot@086ad6ffcb84:/app# for i in $(seq 0 100); do p=$(python3 /app/polyglot/main.py.c "$i"); c=$(/app/polyglot/cmain "$i"); test "$p" = "$c" || { echo "mismatch at $i: $p != $c" >&2; exit 1; }; done; echo 'All outputs match'; nl -ba /app/polyglot/main.py.c
+[?2004lmismatch at 94: 19740274219868223167 != 1293530146158671551
+exit
+[0;32masciinema: recording finished[0m
+[0;32masciinema: asciicast saved to /logs/agent/recording.cast[0m
+[?2004hroot@086ad6ffcb84:/app# cat > /app/polyglot/main.py.c <<'EOF'
+[?2004l[?2004h> #if 0
+[?2004l[?2004h> import sys
+[?2004l[?2004h> 
+[?2004l[?2004h> def fail(message):
+[?2004l[?2004h>     print(message, file=sys.stderr)
+[?2004l[?2004h>     raise SystemExit(1)
+[?2004l[?2004h> 
+[?2004l[?2004h> if len(sys.argv) != 2:
+[?2004l[?2004h>     fail("usage: main.py.c N")
+[?2004l[?2004h> try:
+[?2004l[?2004h>     n = int(sys.argv[1])
+[?2004l[?2004h> except ValueError:
+[?2004l[?2004h>     fail("N must be a non-negative integer")
+[?2004l[?2004h> if n < 0:
+[?2004l[?2004h>     fail("N must be a non-negative integer")
+[?2004l[?2004h> 
+[?2004l[?2004h> a, b = 0, 1
+[?2004l[?2004h> for _ in range(n):
+[?2004l[?2004h>     a, b = b, a + b
+[?2004l[?2004h> print(a)
+[?2004l[?2004h> r"""
+[?2004l[?2004h> #endif
+[?2004l[?2004h> #include <errno.h>
+[?2004l[?2004h> #include <stdio.h>
+[?2004l[?2004h> #include <stdlib.h>
+[?2004l[?2004h> 
+[?2004l[?2004h> int main(int argc, char **argv) {
+[?2004l[?2004h>     if (argc != 2) {
+[?2004l[?2004h>         fprintf(stderr, "usage: %s N\n", argv[0]);
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     char *end = NULL;
+[?2004l[?2004h>     errno = 0;
+[?2004l[?2004h>     long long n = strtoll(argv[1], &end, 10);
+[?2004l[?2004h>     if (end == argv[1] || *end != '\0' || errno == ERANGE || n < 0) {
+[?2004l[?2004h>         fprintf(stderr, "N must be a non-negative integer\n");
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     /* Each Fibonacci step increases its decimal length by at most one.
+[?2004l[?2004h>        Since log10(phi) is about 0.209, n / 5 plus a small constant is a
+[?2004l[?2004h>        safe capacity and avoids allocating n digits for every work array. */
+[?2004l[?2004h>     size_t capacity = (size_t)n / 5 + 8;
+[?2004l[?2004h>     unsigned char *storage = calloc(3, capacity);
+[?2004l[?2004h>     if (storage == NULL) {
+[?2004l[?2004h>         fprintf(stderr, "out of memory\n");
+[?2004l[?2004h>         return EXIT_FAILURE;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     unsigned char *a = storage;
+[?2004l[?2004h>     unsigned char *b = storage + capacity;
+[?2004l[?2004h>     unsigned char *next = storage + 2 * capacity;
+[?2004l[?2004h>     size_t a_length = 1;
+[?2004l[?2004h>     size_t b_length = 1;
+[?2004l[?2004h>     a[0] = 0;
+[?2004l[?2004h>     b[0] = 1;
+[?2004l[?2004h> 
+[?2004l[?2004h>     for (long long i = 0; i < n; ++i) {
+[?2004l[?2004h>         size_t length = a_length > b_length ? a_length : b_length;
+[?2004l[?2004h>         unsigned char carry = 0;
+[?2004l[?2004h> 
+[?2004l[?2004h>         for (size_t j = 0; j < length; ++j) {
+[?2004l[?2004h>             unsigned int left = j < a_length ? a[j] : 0;
+[?2004l[?2004h>             unsigned int right = j < b_length ? b[j] : 0;
+[?2004l[?2004h>             unsigned int sum = left + right + carry;
+[?2004l[?2004h>             next[j] = (unsigned char)(sum % 10);
+[?2004l[?2004h>             carry = (unsigned char)(sum / 10);
+[?2004l[?2004h>         }
+[?2004l[?2004h>         if (carry != 0) {
+[?2004l[?2004h>             next[length++] = carry;
+[?2004l[?2004h>         }
+[?2004l[?2004h> 
+[?2004l[?2004h>         unsigned char *temporary_pointer = a;
+[?2004l[?2004h>         a = next;
+[?2004l[?2004h>         next = b;
+[?2004l[?2004h>         b = temporary_pointer;
+[?2004l[?2004h>         size_t temporary_length = a_length;
+[?2004l[?2004h>         a_length = b_length;
+[?2004l[?2004h>         b_length = temporary_length;
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h>     for (size_t i = a_length; i > 0; --i) {
+[?2004l[?2004h>         putchar('0' + a[i - 1]);
+[?2004l[?2004h>     }
+[?2004l[?2004h>     putchar('\n');
+[?2004l[?2004h> 
+[?2004l[?2004h>     free(storage);
+[?2004l[?2004h>     return EXIT_SUCCESS;
+[?2004l[?2004h> }
+[?2004l[?2004h> /*
+[?2004l[?2004h> """ #"
+[?2004l[?2004h> #*/
+[?2004l[?2004h> EOF
+[?2004l[?2004hroot@086ad6ffcb84:/app# python3 /app/polyglot/main.py.c 94
+[?2004l19740274219868223167
+[?2004hroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && python3 /app/polyglot/main.py.c 94 && /app/polygloot/cmain 94
+[?2004l[01m[K/app/polyglot/main.py.c:21:4:[m[K [01;31m[Kerror: [m[Kmissing terminating " character [[01;31m[K-Werror[m[K]
+   21 | r""[01;31m[K"[m[K
+      |    [01;31m[K^[m[K
+cc1: all warnings being treated as errors
+[?2004hroot@086ad6ffcb84:/app# for i in $(seq 0 300); do p=$(python3 /app/polyglot/main.py.c "$i"); c=$(/app/polyglot/cmain "$i"); test "$p" = "$c" || { echo "mismatch  at $i: $p != $c" >&2; exit 1; }; done; echo 'Outputs match for F(0)..F(300)'; python3 /app/polyglot/main.py.c 1000; /app/polyglot/cmain 1000
+[?2004lmismatch at 94: 19740274219868223167 != 1293530146158671551
+logout

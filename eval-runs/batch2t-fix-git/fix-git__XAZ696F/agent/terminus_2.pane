@@ -1,0 +1,313 @@
+[?2004hroot@b4985e3424ae:/app/personal-site# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@b4985e3424ae:/app/personal-site# clear
+[?2004l[H[J[3J[?2004hroot@b4985e3424ae:/app/personal-site# pwd && git status --short --branch
+[?2004l/app/personal-site
+git branch -avv
+git log --all --graph --decorate --oneline -20
+git reflog --date=local -30
+git stash list
+Refresh index: 100% (84/84)Refresh index: 100% (84/84), done.
+## [32mmaster[m
+[?2004hroot@b4985e3424ae:/app/personal-site# git branch -avv
+[?2004l[?1h=* [32mmaster[m d7d3e4b off the job market woo[m
+[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git log --all --graph --decorate --oneline -20
+[?2004l[?1h=* [33md7d3e4b[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m off the job market woo[m
+* [33mc4e38a1[m Add code link for BLADE[m
+* [33m6f46fa0[m CV Update[m
+* [33mdd7e395[m Adds BLADE to bib[m
+* [33m2cd355a[m n+1 (for the last time???)[m
+* [33m8eaf505[m Add BLADE[m
+* [33mcc2ec78[m Underline[m
+* [33md71094e[m Underline Conferences[m
+* [33m232b279[m Remove posters[m
+* [33m3fdf5f5[m Add NeurIPS[m
+* [33m8c4731d[m Add EMNLP acceptance[m
+* [33mf54f66b[m Add GR link[m
+* [33m18d2430[m Add other links[m
+* [33m1dd055e[m Ignore Gemfile, etc[m
+* [33m5c77a6d[m Dont overwrite[m
+* [33mc7d2f95[m Delete unsused files[m
+* [33m20b05d9[m Remove more unused files[m
+* [33m2d144f7[m Add yamls for new papers[m
+* [33m7882f2d[m Don't track _site[m
+* [33mcd2b8de[m Add new papers[m
+[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git reflog --date=local -30
+[?2004l[?1h=[33md7d3e4b[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m HEAD@{Fri Apr 3 07:47:18 2026}: checkout: moving from c499730ae050deb27e5d22972ea28daf778060f2 to master[m
+[33mc499730[m HEAD@{Fri Apr 3 07:47:18 2026}: commit: Move to Stanford[m
+[33mc4e38a1[m HEAD@{Fri Apr 3 07:47:18 2026}: checkout: moving from master to HEAD~1[m
+[33md7d3e4b[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m HEAD@{Fri Apr 3 07:47:18 2026}: reset: moving to d7d3e4b[m
+[33m19b5d10[m HEAD@{Fri Apr 3 07:47:17 2026}: clone: from https://github.com/TheMikeMerrill/personal-site.git[m
+[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git stash list
+[?2004l[?2004hroot@b4985e3424ae:/app/personal-site# git show --stat --summary --decorate c499730
+[?2004l[?1h=[33mcommit c499730ae050deb27e5d22972ea28daf778060f2[m[m
+Author: Test User <test@example.com>[m
+Date:   Fri Apr 3 07:47:18 2026 +0000[m
+[m
+    Move to Stanford[m
+[m
+ _includes/about.md    |  4 [32m++[m[31m--[m[m
+ _layouts/default.html | 32 [32m+++++++++++++++++[m[31m---------------[m[m
+ 2 files changed, 19 insertions(+), 17 deletions(-)[m
+[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git show --format=fuller --no-ext-diff c499730
+[?2004l[?1h=[33mcommit c499730ae050deb27e5d22972ea28daf778060f2[m[m
+Author:     Test User <test@example.com>[m
+AuthorDate: Fri Apr 3 07:47:18 2026 +0000[m
+Commit:     Test User <test@example.com>[m
+CommitDate: Fri Apr 3 07:47:18 2026 +0000[m
+[m
+    Move to Stanford[m
+[m
+[1mdiff --git a/_includes/about.md b/_includes/about.md[m[m
+[1mindex 5322c14..7561d9e 100644[m[m
+[1m--- a/_includes/about.md[m[m
+[1m+++ b/_includes/about.md[m[m
+[36m@@ -1,3 +1,3 @@[m[m
+[31m-I am a sixth year PhD student at the [Paul G. Allen School of Computer Science & Engineering](https://www.cs.washington.edu/) at The University of Washington, [m [31mwhere I am advised by [Tim Althoff](http://www.timalthoff.com/). I am affiliated with [UW NLP](https://twitter.com/uwnlp).[m[m
+[32m+[m[32mI am a Postdoctoral Researcher at Stanford CS.[m[m
+ [m[m
+[31m-**I am looking for a full time job!** If you think we would be a good match, please reach out. Previously, I was a Student Researcher at [Google Research](http[m [31ms://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time [m [31memployee at [HealthRhythms](https://www.healthrhythms.com). [m[m
+\ No newline at end of file[m[m
+[32m+[m[32mPreviously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple[m [32m[m[32m.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com).[m[41m [m[m
+\ No newline at end of file[m[m
+[1mdiff --git a/_layouts/default.html b/_layouts/default.html[m[m
+[1mindex 3fe07ee..cff5b5e 100644[m[m
+[1m--- a/_layouts/default.html[m[m
+[1m+++ b/_layouts/default.html[m[m
+[36m@@ -27,7 +27,9 @@[m[m
+     <link href="css/bootstrap.min.css" rel="stylesheet">[m[m
+     <link href="css/style.css" rel="stylesheet">[m[m
+ [m[m
+[31m-    <link href="https://fonts.googleapis.com/css?family=Noto+Sans+HK:100,300|Barlow+Condensed|PT+Mono|PT+Serif&display=swap" rel="stylesheet">[m[m
+[32m+[m[32m    <link[m[m
+[32m+[m[32m        href="https://fonts.googleapis.com/css?family=Noto+Sans+HK:100,300|Barlow+Condensed|PT+Mono|PT+Serif&display=swap"[m[m
+[32m+[m[32m        rel="stylesheet">[m[m
+ [m[m
+ </head>[m[m
+ [m[m
+:[K[K[K:[K[K:[K[K[7mNo next tag  (press RETURN)[27m[40;1H[K[K:[K[K[36m@@ -38,7 +40,7 @@[m[m
+             <div class="jumbotron">[m[m
+                 <div class="row">[m[m
+                     <h3>[m[m
+[31m-                        PhD Student @ UW CSE[m[m
+[32m+[m[32m                        Postdoc @ Stanford[m[m
+                     </h3>[m[m
+                 </div>[m[m
+                 <div class="row">[m[m
+[36m@@ -88,7 +90,7 @@[m[m
+         <div class="row">[m[m
+             <div class="col-md-12">[m[m
+                 <h2>Publications</h2>[m[m
+[31m-                {% assign sorted_pubs = site.publications | sort: 'year' | reverse %} [m[m
+[32m+[m[32m                {% assign sorted_pubs = site.publications | sort: 'year' | reverse %}[m[m
+                 {% for pub in sorted_pubs %}[m[m
+                 <div class="row">[m[m
+                     <div class="col-md-3 hide-on-small">[m[m
+[36m@@ -99,22 +101,22 @@[m[m
+                     <div class="col-md-9">[m[m
+:[K[K:[K[K                         <p><b>{{pub.title}}</b></p>[m[m
+                         <p>[m[m
+[31m-                            {% if pub.author contains "Michael Merrill" %} [m[m
+[31m-                                {% assign a = pub.author | split: 'Michael Merrill' %} [m[m
+[31m-                                {{a[0]}}<span class="author">Michael Merrill</span>{{a[1]}} [m[m
+[31m-                            {% elsif pub.author contains "Mike A. Merrill*" %} [m[m
+[31m-                                {% assign a = pub.author | split: 'Mike A. Merrill' %} [m[m
+[31m-                                {{a[0]}}<span class="author">Mike A. Merrill*</span>{{a[1]}} [m[m
+[31m-                            {% elsif pub.author contains "Mike A. Merrill" %} [m[m
+[31m-                                {% assign a = pub.author | split: 'Mike A. Merrill' %} [m[m
+[31m-                                {{a[0]}}<span class="author">Mike A. Merrill</span>{{a[1]}} [m[m
+[32m+[m[32m                            {% if pub.author contains "Michael Merrill" %}[m[m
+[32m+[m[32m                            {% assign a = pub.author | split: 'Michael Merrill' %}[m[m
+[32m+[m[32m                            {{a[0]}}<span class="author">Michael Merrill</span>{{a[1]}}[m[m
+[32m+[m[32m                            {% elsif pub.author contains "Mike A. Merrill*" %}[m[m
+[32m+[m[32m                            {% assign a = pub.author | split: 'Mike A. Merrill' %}[m[m
+[32m+[m[32m                            {{a[0]}}<span class="author">Mike A. Merrill*</span>{{a[1]}}[m[m
+[32m+[m[32m                            {% elsif pub.author contains "Mike A. Merrill" %}[m[m
+[32m+[m[32m                            {% assign a = pub.author | split: 'Mike A. Merrill' %}[m[m
+[32m+[m[32m                            {{a[0]}}<span class="author">Mike A. Merrill</span>{{a[1]}}[m[m
+ [m[m
+                             {% endif %}[m[m
+                         </p>[m[m
+[31m-                        <p><span class = "venue">{{pub.venue}}</span>, {{pub.year}} {% if pub.pdf_path %}[m[m
+[32m+[m[32m                        <p><span class="venue">{{pub.venue}}</span>, {{pub.year}} {% if pub.pdf_path %}[m[m
+                             <a href="{{pub.pdf_path}}">[PDF]</a> {% endif %}[m[m
+                             {% for link in pub.other_links %}[m[m
+[31m-                            <a href="{{link.url}}">[{{link.name}}]</a> [m[m
+[32m+[m[32m                            <a href="{{link.url}}">[{{link.name}}]</a>[m[m
+                             {% endfor %}[m[m
+                             {{pub.notes}}[m[m
+                         </p>[m[m
+[36m@@ -123,7 +125,7 @@[m[m
+                 </div>[m[m
+                 {% endfor %}[m[m
+             </div>[m[m
+[31m-            [m[m
+[32m+[m[m
+         </div>[m[m
+:[K[K [m[m
+     </div>[m[m
+[7m(END)[27m[K[K[K[7m(END)[27m[K[K-[K--[Kss[Ktt[Kaa[Ktt[K  [Kcc[K44[K99[K99[K77[K33[K00[K..[K..[Kmm[Kaa[Kss[Ktt[Kee[Krr[K  [K&&[K&&[K  [Kgg[Kii[Ktt[K  [Kdd[Kii[Kff[Kff[K  [K--[K--[Knn[Kaa[Kmm[Kee[K--[Kss[Ktt[Kaa[Ktt[Kuu[Kss[K  [Kcc[K44[Kee[K33[K88[Kaa[K11[K..[K..[Kcc[K44[K99[K99[K77[K33[K00[K  [K&&[K&&[K  [Kgg[Kii[Ktt[K  [Kdd[Kii[Kff[Kff[K  [K--[K--[Knn[Kaa[Kmm[Kee[K--[Kss[Ktt[Kaa[Ktt[Kuu[Kss[K  [Kcc[K44[Kee[K33[K88[Kaa[K11[K..[K..[Kmm[Kaa[Kss[Ktt[Kee[Krr[K[7mThere is no --stat c499730..master && git diff --name-status c4e38a1..c499730 && git diff --name-status c4e38a1..master option  (press RETURN)[27m[40;1H[K[K[7m(END)[27m[K[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git --no-pager show --stat --summary d7d3e4b
+[?2004l[33mcommit d7d3e4ba9350f634d92d39ace2b471433ee57d50[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m
+Author: Mike Merrill <mikeam@cs.washington.edu>
+Date:   Fri Nov 8 09:52:32 2024 -0800
+
+    off the job market woo
+
+ _includes/about.md | 4 [32m++[m[31m--[m
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+[?2004hroot@b4985e3424ae:/app/personal-site# git --no-pager diff --name-status c4e38a1..c499730
+[?2004lM	_includes/about.md
+M	_layouts/default.html
+[?2004hroot@b4985e3424ae:/app/personal-site# git --no-pager diff --name-status c4e38a1..master
+[?2004lM	_includes/about.md
+[?2004hroot@b4985e3424ae:/app/personal-site# git --no-pager diff --stat c499730..master
+[?2004l _includes/about.md    |  4 [32m++[m[31m--[m
+ _layouts/default.html | 32 [32m+++++++++++++++[m[31m-----------------[m
+ 2 files changed, 17 insertions(+), 19 deletions(-)
+[?2004hroot@b4985e3424ae:/app/personal-site# git --no-pager show --format=medium d7d3e4b -- _includes/about.md
+[?2004l[33mcommit d7d3e4ba9350f634d92d39ace2b471433ee57d50[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m
+Author: Mike Merrill <mikeam@cs.washington.edu>
+Date:   Fri Nov 8 09:52:32 2024 -0800
+
+    off the job market woo
+
+[1mdiff --git a/_includes/about.md b/_includes/about.md[m
+[1mindex 5322c14..ebf11b4 100644[m
+[1m--- a/_includes/about.md[m
+[1m+++ b/_includes/about.md[m
+[36m@@ -1,3 +1,3 @@[m
+[31m-I am a sixth year PhD student at the [Paul G. Allen School of Computer Science & Engineering](https://www.cs.washington.edu/) at The University of Washington, where I am advised by [Tim Althoff](http://www.timalthoff.com/). I am affiliated with [UW NLP](https://twitter.com/uwnlp).[m
+[32m+[m[32mI am a sixth PhD candidate at the [Paul G. Allen School of Computer Science & Engineering](https://www.cs.washington.edu/) at The University of Washington, where I am advised by [Tim Althoff](http://www.timalthoff.com/). I am affiliated with [UW NLP](https://twitter.com/uwnlp).[m
+ [m
+[31m-**I am looking for a full time job!** If you think we would be a good match, please reach out. Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). [m
+\ No newline at end of file[m
+[32m+[m[32m Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com).[m[41m [m
+\ No newline at end of file[m
+[?2004hroot@b4985e3424ae:/app/personal-site# printf '%s\n' '--- master version ---' && sed -n '1,20p' _includes/about.md && printf '%s\n' '--- recovered version ---' && git show c499730:_includes/about.md | sed -n '1,20p'
+[?2004l--- master version ---
+I am a sixth PhD candidate at the [Paul G. Allen School of Computer Science & Engineering](https://www.cs.washington.edu/) at The University of Washington, where I am advised by [Tim Althoff](http://www.timalthoff.com/). I am affiliated with [UW NLP](https://twitter.com/uwnlp).
+
+ Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). --- recovered version ---
+I am a Postdoctoral Researcher at Stanford CS.
+
+Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). [?2004hroot@b4985e3424ae:/app/personal-site# git merge-base master c499730 && git merge-tree $(git merge-base master c499730) master c499730
+[?2004lc4e38a1833fdeaf320d60133c17e2930464c580c
+changed in both
+  base   100644 5322c146699d7820cce876bc41a35a43fb6f4388 _includes/about.md
+  our    100644 ebf11b453c26d8b9bb42960c9afe83e7bb23a4c0 _includes/about.md
+  their  100644 7561d9eea0b5acae867453d9581ae0b28eca99a7 _includes/about.md
+@@ -1,3 +1,9 @@
++<<<<<<< .our
+ I am a sixth PhD candidate at the [Paul G. Allen School of Computer Science & Engineering](https://www.cs.washington.edu/) at The University of Washington, where I am advised by [Tim Althoff](http://www.timalthoff.com/). I am affiliated with [UW NLP](https://twitter.com/uwnlp).
+ 
+- Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). 
+\ No newline at end of file
++ Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). 
++=======
++I am a Postdoctoral Researcher at Stanford CS.
++
++Previously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com). 
++>>>>>>> .their
+merged
+  result 100644 cff5b5e3eb1946c84586040dd9674a720873ed26 _layouts/default.html
+  our    100644 3fe07eec78fc2fb4cbd4d9318837a1fba90e56c7 _layouts/default.html
+@@ -27,7 +27,9 @@
+     <link href="css/bootstrap.min.css" rel="stylesheet">
+     <link href="css/style.css" rel="stylesheet">
+ 
+-    <link href="https://fonts.googleapis.com/css?family=Noto+Sans+HK:100,300|Barlow+Condensed|PT+Mono|PT+Serif&display=swap" rel="stylesheet">
++    <link
++        href="https://fonts.googleapis.com/css?family=Noto+Sans+HK:100,300|Barlow+Condensed|PT+Mono|PT+Serif&display=swap"
++        rel="stylesheet">
+ 
+ </head>
+ 
+@@ -38,7 +40,7 @@
+             <div class="jumbotron">
+                 <div class="row">
+                     <h3>
+-                        PhD Student @ UW CSE
++                        Postdoc @ Stanford
+                     </h3>
+                 </div>
+                 <div class="row">
+@@ -88,7 +90,7 @@
+         <div class="row">
+             <div class="col-md-12">
+                 <h2>Publications</h2>
+-                {% assign sorted_pubs = site.publications | sort: 'year' | reverse %} 
++                {% assign sorted_pubs = site.publications | sort: 'year' | reverse %}
+                 {% for pub in sorted_pubs %}
+                 <div class="row">
+                     <div class="col-md-3 hide-on-small">
+@@ -99,22 +101,22 @@
+                     <div class="col-md-9">
+                         <p><b>{{pub.title}}</b></p>
+                         <p>
+-                            {% if pub.author contains "Michael Merrill" %} 
+-                                {% assign a = pub.author | split: 'Michael Merrill' %} 
+-                                {{a[0]}}<span class="author">Michael Merrill</span>{{a[1]}} 
+-                            {% elsif pub.author contains "Mike A. Merrill*" %} 
+-                                {% assign a = pub.author | split: 'Mike A. Merrill' %} 
+-                                {{a[0]}}<span class="author">Mike A. Merrill*</span>{{a[1]}} 
+-                            {% elsif pub.author contains "Mike A. Merrill" %} 
+-                                {% assign a = pub.author | split: 'Mike A. Merrill' %} 
+-                                {{a[0]}}<span class="author">Mike A. Merrill</span>{{a[1]}} 
++                            {% if pub.author contains "Michael Merrill" %}
++                            {% assign a = pub.author | split: 'Michael Merrill' %}
++                            {{a[0]}}<span class="author">Michael Merrill</span>{{a[1]}}
++                            {% elsif pub.author contains "Mike A. Merrill*" %}
++                            {% assign a = pub.author | split: 'Mike A. Merrill' %}
++                            {{a[0]}}<span class="author">Mike A. Merrill*</span>{{a[1]}}
++                            {% elsif pub.author contains "Mike A. Merrill" %}
++                            {% assign a = pub.author | split: 'Mike A. Merrill' %}
++                            {{a[0]}}<span class="author">Mike A. Merrill</span>{{a[1]}}
+ 
+                             {% endif %}
+                         </p>
+-                        <p><span class = "venue">{{pub.venue}}</span>, {{pub.year}} {% if pub.pdf_path %}
++                        <p><span class="venue">{{pub.venue}}</span>, {{pub.year}} {% if pub.pdf_path %}
+                             <a href="{{pub.pdf_path}}">[PDF]</a> {% endif %}
+                             {% for link in pub.other_links %}
+-                            <a href="{{link.url}}">[{{link.name}}]</a> 
++                            <a href="{{link.url}}">[{{link.name}}]</a>
+                             {% endfor %}
+                             {{pub.notes}}
+                         </p>
+@@ -123,7 +125,7 @@
+                 </div>
+                 {% endfor %}
+             </div>
+-            
++
+         </div>
+ 
+     </div>
+[?2004hroot@b4985e3424ae:/app/personal-site# git merge --no-edit c499730
+[?2004lAuto-merging _includes/about.md
+CONFLICT (content): Merge conflict in _includes/about.md
+Automatic merge failed; fix conflicts and then commit the result.
+[?2004hroot@b4985e3424ae:/app/personal-site# git status --short --branch
+[?2004l## [32mmaster[m
+[31mUU[m _includes/about.md
+[32mM[m  _layouts/default.html
+[?2004hroot@b4985e3424ae:/app/personal-site# git checkout --theirs -- _includes/about.md
+[?2004l[?2004hroot@b4985e3424ae:/app/personal-site# git add _includes/about.md
+[?2004l[?2004hroot@b4985e3424ae:/app/personal-site# if grep -nE '<<<<<<<|>>>>>>>|^=======' _includes/about.md; then echo 'Conflict markers still present'; else echo 'Conflict markers removed'; fi
+[?2004lConflict markers removed
+[?2004hroot@b4985e3424ae:/app/personal-site# git diff --cached --check
+[?2004l[?1h=_includes/about.md:3: trailing whitespace.[m
+[32m+[m[32mPreviously, I was a Student Researcher at [Google Research](https://research.google/), an ML Research Intern at [Apple Health AI](https://machinelearning.apple[m [32m[m[32m.com/work-with-us) and a data scientist and the second full-time employee at [HealthRhythms](https://www.healthrhythms.com).[m[41m [m[m
+[K[?1l>[?2004hroot@b4985e3424ae:/app/personal-site# git commit --no-edit
+[?2004l[master 0dc3de5] Merge commit 'c499730'
+[?2004hroot@b4985e3424ae:/app/personal-site# git status --short --branch && git --no-pager log -3 --graph --decorate --oneline
+[?2004l## [32mmaster[m
+*   [33m0dc3de5[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m Merge commit 'c499730'
+[31m|[m[32m\[m  
+[31m|[m * [33mc499730[m Move to Stanford
+* [32m|[m [33md7d3e4b[m off the job market woo
+[32m|[m[32m/[m  
+[?2004hroot@b4985e3424ae:/app/personal-site# test "$(git rev-parse HEAD:_includes/about.md)" = "$(git rev-parse c499730:_includes/about.md)" && test "$(git rev-parse HEAD:_layouts/default.html)" = "$(git rev-parse c499730:_layouts/default.html)" && echo 'Recovered changes are merged into master'
+[?2004lRecovered changes are merged into master
+[?2004hroot@b4985e3424ae:/app/personal-site# 

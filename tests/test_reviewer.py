@@ -184,3 +184,103 @@ def test_review_moments_persist_and_are_deterministic_only(tmp_path, load_fixtur
 def test_clean_pass_selects_no_negative_card(tmp_path, load_fixture):
     a = analyze(load_fixture("clean_pass.atif.json"), Store(str(tmp_path / "store")))
     assert not [m for m in a.review_moments if m.selected and m.polarity == "negative"]
+
+
+# --- semantic-moment discovery: event_support / termination facts -------------
+
+
+def _event(eid, content, etype="tool_call", seq=None):
+    from agr.schema import DerivedEvent
+    return DerivedEvent(
+        event_id=eid, run_id="r", source_capture_id="c", sequence=seq or 1,
+        source_step_ids=[f"h_{eid}"], event_type=etype, actor="main_agent",
+        payload={"content": content},
+    )
+
+
+def test_event_support_quote_matching():
+    """An event_support fact validates iff every quoted span really appears."""
+    evs = [
+        _event("evt_010", "Let me investigate the x-axis spacing instead"),
+        _event("evt_011", "python3 scan_windows.py"),
+    ]
+    cand = _candidate("sem_1", anchor_event_ids=["evt_010"], structured_facts=[
+        {"type": "event_support", "quotes": [
+            {"event_id": "evt_010", "quote": "investigate the X-axis  spacing"},
+            {"event_id": "evt_011", "quote": "scan_windows"},
+        ]},
+    ])
+    validated = reviewer.validate_facts(cand, _ctx([cand], events=evs))
+    assert validated[0]["validation"] == "passed"
+
+
+def test_event_support_fails_on_fake_event_or_bad_quote():
+    evs = [_event("evt_010", "real content")]
+    bad_event = _candidate("sem_bad_ev", anchor_event_ids=["evt_nope"], structured_facts=[
+        {"type": "event_support", "quotes": [{"event_id": "evt_nope", "quote": "anything"}]},
+    ])
+    assert reviewer.validate_facts(bad_event, _ctx([bad_event], events=evs))[0]["validation"] == "failed"
+    bad_quote = _candidate("sem_bad_q", anchor_event_ids=["evt_010"], structured_facts=[
+        {"type": "event_support", "quotes": [{"event_id": "evt_010", "quote": "hallucinated text"}]},
+    ])
+    assert reviewer.validate_facts(bad_quote, _ctx([bad_quote], events=evs))[0]["validation"] == "failed"
+
+
+def test_termination_fact_recomputes_from_terminal_event():
+    evs = [_event("evt_001", "work"), _event("evt_002", "[deadline]", etype="run_timed_out")]
+    good = _candidate("sem_ok", anchor_event_ids=["evt_001"], structured_facts=[
+        {"type": "termination", "expected": "run_timed_out"},
+    ])
+    validated = reviewer.validate_facts(good, _ctx([good], events=evs))
+    assert validated[0]["validation"] == "passed"
+    assert validated[0]["recomputed"] == "run_timed_out"
+    wrong = _candidate("sem_wrong", anchor_event_ids=["evt_001"], structured_facts=[
+        {"type": "termination", "expected": "final_submission"},
+    ])
+    assert reviewer.validate_facts(wrong, _ctx([wrong], events=evs))[0]["validation"] == "failed"
+
+
+def test_all_unrecomputable_moment_is_ungrounded_and_not_selected():
+    """A semantic claim with no recomputable fact must not survive Stage G."""
+    cand = _candidate("sem_vague", affected_checks=["C1"], structured_facts=[
+        {"type": "agent_was_confused", "details": "vibes"},
+    ])
+    checks = [_check("C1", "failed")]
+    moments = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    m = moments[0]
+    assert m.gate_results["fact_validation"] == "failed"
+    assert not m.selected
+
+
+def test_discovered_drift_moment_survives_the_full_envelope():
+    """The acceptance path: a model-proposed strategy-drift moment grounded in
+    quoted evidence + termination + artifact absence is selected end-to-end,
+    with the attribution ceiling at hypothesized (no slice licenses more)."""
+    evs = [
+        _event("evt_016", "The G peak fit is poor. Let me examine the axis spacing.", seq=16),
+        _event("evt_030", "Scanning fit windows for parameter stability again.", seq=30),
+        _event("evt_031", "[Harbor trial hit its deadline]", etype="run_timed_out", seq=31),
+    ]
+    cand = _candidate(
+        "sem_1", detector="model", kind="behaviour",
+        anchor_event_ids=["evt_016", "evt_030"], affected_checks=["C1"],
+        polarity="negative",
+        structured_facts=[
+            {"type": "event_support", "quotes": [
+                {"event_id": "evt_016", "quote": "examine the axis spacing"},
+                {"event_id": "evt_030", "quote": "parameter stability"},
+            ]},
+            {"type": "termination", "expected": "run_timed_out"},
+            {"type": "absence", "declared_artifact": "/app/results.json"},
+        ],
+    )
+    # No artifact_observation events -> results.json counts as absent.
+    moments = reviewer.run_reviewer(_ctx([cand], checks=[_check("C1", "failed")], events=evs))
+    selected = [m for m in moments if m.selected]
+    assert len(selected) == 1
+    m = selected[0]
+    assert m.detector == "model"
+    assert m.candidate_id == "sem_1"
+    assert m.attribution_ceiling == "hypothesized"
+    assert m.gate_results["fact_validation"] == "passed"
+    assert all(f["validation"] == "passed" for f in m.validated_facts)

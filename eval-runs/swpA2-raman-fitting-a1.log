@@ -1,0 +1,28 @@
+$ harbor run -t terminal-bench/raman-fitting -a terminus-2 -m openrouter/stealth/ox-alpha --agent-kwarg temperature=0.0 --job-name swpA2-raman-fitting-a1 -o eval-runs
+
+  1/1 Mean: 0.000 ---------------------------------------- 0:15:54 0:00:00
+adhoc • terminus-2 • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          1 │ 0.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 0.0    │     1 │
+└────────┴───────┘
+
+┌───────────────────┬───────┐
+│ Exception         │ Count │
+├───────────────────┼───────┤
+│ AgentTimeoutError │     1 │
+└───────────────────┴───────┘
+
+Job Info
+Total runtime: 15m 54s
+Results written to eval-runs\swpA2-raman-fitting-a1\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\swpA2-raman-fitting-a1`
+

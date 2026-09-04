@@ -11,10 +11,14 @@ from ._util import is_tool_failure
 from .schema import DerivedEvent, Opportunity
 
 
+_TERMINAL = ("strategy_change", "tool_result", "final_submission", "run_finished",
+             "run_completed", "run_timed_out", "run_failed")
+
+
 def _next_stop(events: list[DerivedEvent], start_idx: int) -> DerivedEvent:
     """First strategy_change / tool_result / submission after start, else last event."""
     for j in range(start_idx + 1, len(events)):
-        if events[j].event_type in ("strategy_change", "tool_result", "final_submission", "run_finished"):
+        if events[j].event_type in _TERMINAL:
             return events[j]
     return events[-1]
 

@@ -1,0 +1,16 @@
+{
+    "job_name": "batch1-fix-git",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha"
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/fix-git",
+            "ref": "latest"
+        }
+    ]
+}

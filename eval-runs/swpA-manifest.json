@@ -1,0 +1,20 @@
+[
+  {
+    "task": "nginx-request-logging",
+    "agent": "miniswe",
+    "attempt": 1,
+    "temp": 0.0,
+    "job_name": "swpA-nginx-request-logging-a1",
+    "pid": 19416,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\swpA-nginx-request-logging-a1.log"
+  },
+  {
+    "task": "polyglot-c-py",
+    "agent": "miniswe",
+    "attempt": 1,
+    "temp": 0.0,
+    "job_name": "swpA-polyglot-c-py-a1",
+    "pid": 15620,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\swpA-polyglot-c-py-a1.log"
+  }
+]

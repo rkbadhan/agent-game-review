@@ -1,0 +1,20 @@
+[
+  {
+    "task": "fix-git",
+    "job_name": "batch2t-fix-git",
+    "pid": 14112,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch2t-fix-git.log"
+  },
+  {
+    "task": "prove-plus-comm",
+    "job_name": "batch2t-prove-plus-comm",
+    "pid": 18644,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch2t-prove-plus-comm.log"
+  },
+  {
+    "task": "crack-7z-hash",
+    "job_name": "batch2t-crack-7z-hash",
+    "pid": 3436,
+    "log": "C:\\Users\\Rahul Badhan\\Documents\\GitHub\\eval-game\\eval-runs\\batch2t-crack-7z-hash.log"
+  }
+]

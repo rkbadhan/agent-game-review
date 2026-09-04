@@ -1,0 +1,28 @@
+$ harbor run -t terminal-bench/fix-git -a mini-swe-agent -m openai/stealth/ox-alpha --job-name batch1-fix-git -o eval-runs
+
+  1/1 Mean: 0.000 ---------------------------------------- 0:03:21 0:00:00
+adhoc • mini-swe-agent • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          1 │ 0.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 0.0    │     1 │
+└────────┴───────┘
+
+┌───────────────────────────┬───────┐
+│ Exception                 │ Count │
+├───────────────────────────┼───────┤
+│ NonZeroAgentExitCodeError │     1 │
+└───────────────────────────┴───────┘
+
+Job Info
+Total runtime: 3m 21s
+Results written to eval-runs\batch1-fix-git\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\batch1-fix-git`
+

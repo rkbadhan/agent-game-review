@@ -35,7 +35,7 @@ from .adapter import AdapterResult
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
-PI_ADAPTER_VERSION = "pi-adapter-0.2"
+PI_ADAPTER_VERSION = "pi-adapter-0.5"
 
 # Pi session-entry types that carry no trajectory content for analysis.
 _SKIP_ENTRY_TYPES = {
@@ -145,6 +145,7 @@ def convert(
     def add(kind: str, actor: str, **payload: Any) -> None:
         nonlocal seq
         seq += 1
+        payload.setdefault("provenance", "observed")
         steps.append({"step_id": f"s{seq}", "kind": kind, "actor": actor, **payload})
 
     first_user_text: str | None = None
@@ -264,8 +265,28 @@ def convert(
     if not steps:
         raise ValueError(f"{path.name}: session produced no trajectory steps")
 
-    add("final_submission", "main_agent", content="[pi session ended — final assistant state]")
-    add("run_finished", "harness", content="pi session closed")
+    # Same honesty rule as the Harbor adapter (0.4, revised 0.5): pi sessions
+    # carry no observable submission signal, so a session end is run_completed —
+    # never an agent final_submission. A session with zero assistant turns means
+    # the agent never acted: that is a protocol failure (run_failed), not a
+    # completion — crash-as-completion repeats the timeout-equals-submission
+    # ontology error at smaller scale.
+    saw_agent_step = any(
+        isinstance(e, dict)
+        and isinstance(e.get("message"), dict)
+        and e["message"].get("role") == "assistant"
+        for e in branch
+    )
+    if saw_agent_step:
+        add("run_completed", "harness", provenance="synthetic",
+            content="[pi session closed — no explicit submission signal observed]")
+    else:
+        add("run_failed", "harness", provenance="synthetic",
+            content="[pi session ended without any assistant step — the agent never acted]",
+            termination_reason="agent_protocol_failure")
+        warnings.append(
+            "session has zero assistant steps (agent never acted)"
+        )
 
     # --- run metadata -------------------------------------------------------
     header_id = header.get("id", path.stem)

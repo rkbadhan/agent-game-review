@@ -1,0 +1,121 @@
+{
+    "id": "331fa977-a824-4eb7-a5c5-611cec0282e5",
+    "task_name": "analyze-raman-fitting__FpPoN5F",
+    "trial_name": "analyze-raman-fitting__FpPoN5F__Xxbe5Wm",
+    "trial_uri": "file:///C:/Users/Rahul%20Badhan/Documents/GitHub/eval-game/eval-runs/gateb-raman4/2026-08-24__20-35-42/analyze-raman-fitting__FpPoN5F__Xxbe5Wm",
+    "task_id": {
+        "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-xl13r1y_\\analyze-raman-fitting__FpPoN5F"
+    },
+    "source": null,
+    "task_checksum": "4390aad2796171137ff3a407a8f5d8723a55bf38b83edb66cf1978d968b0d29d",
+    "config": {
+        "task": {
+            "path": "C:\\Users\\RAHULB~1\\AppData\\Local\\Temp\\harbor-analyze-xl13r1y_\\analyze-raman-fitting__FpPoN5F",
+            "git_url": null,
+            "git_commit_id": null,
+            "name": null,
+            "ref": null,
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "analyze-raman-fitting__FpPoN5F__Xxbe5Wm",
+        "trials_dir": "eval-runs\\gateb-raman4\\2026-08-24__20-35-42",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "mini-swe-agent",
+            "import_path": null,
+            "model_name": "openai/stealth/ox-alpha",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "env": {
+                "OPENAI_API_KEY": "sk-o****816",
+                "OPENAI_BASE_URL": "https://openrouter.ai/api/v1"
+            },
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "f336eaba-228e-4786-82bb-29e0481288d7",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "mini-swe-agent",
+        "version": "2.4.6",
+        "model_info": {
+            "name": "stealth/ox-alpha",
+            "provider": "openai"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 580126,
+        "n_cache_tokens": 534656,
+        "n_output_tokens": 7435,
+        "cost_usd": 0.0,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "verifier_environment_mode": "shared",
+    "exception_info": null,
+    "started_at": "2026-08-24T15:05:42.861356Z",
+    "finished_at": "2026-08-24T15:14:02.332432Z",
+    "environment_setup": {
+        "started_at": "2026-08-24T15:05:42.951713Z",
+        "finished_at": "2026-08-24T15:05:45.640248Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-24T15:05:45.640248Z",
+        "finished_at": "2026-08-24T15:06:49.192948Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-24T15:06:49.192948Z",
+        "finished_at": "2026-08-24T15:13:49.304473Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-24T15:13:49.723381Z",
+        "finished_at": "2026-08-24T15:13:50.718630Z"
+    },
+    "step_results": null
+}

@@ -1,0 +1,16 @@
+{
+    "job_name": "pilot-terminus2",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "terminus-2",
+            "model_name": "openrouter/stealth/ox-alpha"
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/make-mips-interpreter",
+            "ref": "latest"
+        }
+    ]
+}

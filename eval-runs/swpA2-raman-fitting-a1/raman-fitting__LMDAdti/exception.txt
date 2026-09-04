@@ -1,0 +1,132 @@
+Traceback (most recent call last):
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\terminus_2\terminus_2.py", line 1607, in run
+    await self._run_agent_loop(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\terminus_2\terminus_2.py", line 1286, in _run_agent_loop
+    ) = await self._handle_llm_interaction(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\terminus_2\terminus_2.py", line 1164, in _handle_llm_interaction
+    llm_response = await self._query_llm(
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 193, in async_wrapped
+    return await copy(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 112, in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 157, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\_utils.py", line 111, in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 116, in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\agents\terminus_2\terminus_2.py", line 1004, in _query_llm
+    llm_response = await chat.chat(
+                   ^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\llms\chat.py", line 89, in chat
+    llm_response: LLMResponse = await self._model.call(
+                                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 193, in async_wrapped
+    return await copy(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 112, in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 157, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\_utils.py", line 111, in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\__init__.py", line 393, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\tenacity\asyncio\__init__.py", line 116, in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\llms\lite_llm.py", line 370, in call
+    response = await litellm.acompletion(**completion_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\utils.py", line 1760, in wrapper_async
+    result = await original_function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\main.py", line 640, in acompletion
+    response = await _resolve_dispatched_chat_response(init_response)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\main.py", line 705, in _resolve_dispatched_chat_response
+    return await pending
+           ^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\llms\custom_httpx\llm_http_handler.py", line 389, in async_completion
+    response: Final = await self._make_common_async_call(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\llms\custom_httpx\llm_http_handler.py", line 275, in _make_common_async_call
+    response = await async_httpx_client.post(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\litellm_core_utils\logging_utils.py", line 289, in async_wrapper
+    result: Final = await func(*args, **kwargs)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\llms\custom_httpx\http_handler.py", line 687, in post
+    response: Final = await self.client.send(req, stream=stream)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_client.py", line 1643, in send
+    raise exc
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_client.py", line 1637, in send
+    await response.aread()
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_models.py", line 979, in aread
+    self._content = b"".join([part async for part in self.aiter_bytes()])
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_models.py", line 997, in aiter_bytes
+    async for raw_bytes in self.aiter_raw():
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_models.py", line 1055, in aiter_raw
+    async for raw_stream_bytes in self.stream:
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\httpx\_client.py", line 176, in __aiter__
+    async for chunk in self._stream:
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\litellm\llms\custom_httpx\aiohttp_transport.py", line 88, in __aiter__
+    async for chunk in self._aiohttp_response.content.iter_chunked(self.CHUNK_SIZE):
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\aiohttp\streams.py", line 46, in __anext__
+    rv = await self.read_func()
+         ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\aiohttp\streams.py", line 448, in read
+    await self._wait("read")
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\aiohttp\streams.py", line 365, in _wait
+    await waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\trial\trial.py", line 545, in _run_agent_phase
+    await asyncio.wait_for(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\trial\single_step.py", line 77, in _run_agent
+    await self._run_agent_phase(
+  File "C:\Users\Rahul Badhan\AppData\Roaming\uv\tools\harbor\Lib\site-packages\harbor\trial\trial.py", line 554, in _run_agent_phase
+    raise AgentTimeoutError(
+harbor.trial.errors.AgentTimeoutError: Agent execution timed out after 900.0 seconds
