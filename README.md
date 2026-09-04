@@ -13,17 +13,23 @@ with **no model calls anywhere**. An optional model reviewer can enrich the
 narrative on top, but every structured fact it rests on is recomputed here, so
 the interpretation stays bounded by evidence rather than free to hallucinate.
 
-## Quick start (about five minutes)
+## Quick start (about one minute, no clone)
+
+Requires [uv](https://docs.astral.sh/uv/). Install the CLI as an isolated tool
+and try the synthetic demo:
 
 ```bash
-pip install '.[api]'      # or: uv pip install '.[api]'  (quote it: zsh globs unquoted brackets)
+uv tool install 'agent-game-review[api] @ git+https://github.com/rkbadhan/agent-game-review'
 agr demo
 # open http://127.0.0.1:8000
 ```
 
-That installs the package, builds a synthetic demo store (12 runs across 5
-tasks), and starts the evidence-browser SPA. No credentials, no model calls,
-no watermarks. Press `Ctrl+C` to stop.
+That builds a synthetic demo store (12 runs across 5 tasks) and starts the
+evidence-browser SPA. No credentials, no model calls, no watermarks. Press
+`Ctrl+C` to stop.
+
+On pip instead of uv? Clone the repo, then `pip install '.[api]'` (quote the
+extra — zsh globs unquoted brackets) and run the same commands.
 
 New here? [`examples/`](./examples/README.md) is a six-run guided tour of exactly
 what a review surfaces — a clean pass, a recovered failure, a run that passed the
@@ -61,9 +67,12 @@ verifier sidecar ingests as `UNVERIFIED`, never a vacuous pass.
 
 This repo ships a **published evaluation corpus** — 25 real Harbor/Terminal-Bench
 trials across 6 task families and two agent configurations, with verifier
-outputs, logs, and the honest pilot record. Browse it in three commands:
+outputs, logs, and the honest pilot record. With the tool installed (above),
+clone the repo and browse it:
 
 ```bash
+git clone https://github.com/rkbadhan/agent-game-review.git
+cd agent-game-review
 agr ingest-harbor eval-runs/      # ingests every published job in one command
 agr runs                          # 16 logical runs: passes, failures, sibling sets
 agr serve                         # http://127.0.0.1:8000 — click any moment's
@@ -83,11 +92,14 @@ verdicts, ranked root causes, better actions — bring **any** OpenAI-compatible
 or Anthropic-compatible model: OpenRouter, Together, or a fully local Ollama/
 vLLM server.
 
-> **Windows note:** stop any running `agr serve` before installing extras —
-> pip cannot replace the running `agr.exe` and the install can corrupt.
+> **Windows note:** if you installed with pip (not uv tool), stop any running
+> `agr serve` before reinstalling extras — pip cannot replace the running
+> `agr.exe` and the install can corrupt. uv tool users: just re-run
+> `uv tool install --force`.
 
 ```bash
-pip install '.[model-openai]'
+uv tool install --force 'agent-game-review[api,model-openai] @ git+https://github.com/rkbadhan/agent-game-review'
+# or, from a clone: pip install '.[model-openai]'
 agr config --provider openai --model moonshotai/kimi-k3 \
     --base-url https://openrouter.ai/api/v1   # or http://localhost:11434/v1
 agr config --test          # one real call: proves key + endpoint + model id
