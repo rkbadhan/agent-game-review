@@ -57,6 +57,45 @@ warning, and a run ingested from a bare verifier stays `PROVISIONAL` until you
 confirm its contract with `agr confirm`. Nothing is invented — a run with no
 verifier sidecar ingests as `UNVERIFIED`, never a vacuous pass.
 
+## Browse the real pilot corpus (no synthetic data)
+
+This repo ships a **published evaluation corpus** — 25 real Harbor/Terminal-Bench
+trials across 6 task families and two agent configurations, with verifier
+outputs, logs, and the honest pilot record. Browse it in three commands:
+
+```bash
+agr ingest-harbor eval-runs/      # ingests every published job in one command
+agr runs                          # 16 logical runs: passes, failures, sibling sets
+agr serve                         # http://127.0.0.1:8000 — click any moment's
+                                  # anchor to open the raw trajectory event
+```
+
+The annotated pilot review lives in
+[`experiments/terminal_bench/gallery.md`](./experiments/terminal_bench/gallery.md)
+— labeled a **pilot gallery and failure audit**, including the false-positive
+audit that caught our own reviewer fabricating a moment (and the abstention
+discipline that now prevents it).
+
+## Use your own model
+
+The deterministic review needs no model. To add the AI layer — taxonomy
+verdicts, ranked root causes, better actions — bring **any** OpenAI-compatible
+or Anthropic-compatible model: OpenRouter, Together, or a fully local Ollama/
+vLLM server.
+
+```bash
+pip install '.[model-openai]'
+agr config --provider openai --model moonshotai/kimi-k3 \
+    --base-url https://openrouter.ai/api/v1   # or http://localhost:11434/v1
+agr config --test          # one real call: proves key + endpoint + model id
+agr review --all           # enrich every run in the store
+```
+
+The model never gets the raw trace — a typed, redacted packet — and every fact
+it claims is recomputed against the trajectory (Stage G), every attribution
+capped, every card selected by the deterministic envelope. Its moments are
+visibly labeled model-generated.
+
 ## Documentation
 
 - [`docs/terminal-bench.md`](./docs/terminal-bench.md) — a full walkthrough:
@@ -104,6 +143,9 @@ agr/        The package — ingestion, deterministic derivations, detectors,
             the reviewer envelope, the read layer, and the evidence-browser SPA.
 docs/       Adapter guide, Terminal-Bench walkthrough, ATIF schema.
 examples/   Six-run guided tour of what a review surfaces.
+eval-runs/  The published Terminal-Bench pilot corpus (real runs, immutable
+            source record — see eval-runs/README.md).
+experiments/  The pilot gallery and gate evaluation record.
 tests/      Acceptance tests for the deterministic core.
 archive/    Synthetic fixtures and gold labels used by the demo and tests.
 ```
