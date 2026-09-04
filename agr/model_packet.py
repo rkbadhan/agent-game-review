@@ -35,6 +35,86 @@ def _phase_summaries(events: list) -> list[dict]:
     return list(seen.values())
 
 
+_EXCERPT_CHARS = 220  # per-event excerpt budget for the timeline digest
+
+# Event types that represent agent work when computing budget allocation.
+_WORK_TYPES = {"tool_call", "tool_result", "model_output", "plan_declared",
+               "error_observed", "retry", "strategy_change"}
+
+
+def _run_shape(events: list) -> dict:
+    """Deterministic budget-allocation strip of the whole run.
+
+    The timeline digest shows the story event by event; ``run_shape`` shows its
+    *shape* — where the work events concentrate, whether any artifact was ever
+    observed, how the run ended. This gives the reviewer a mechanically computed
+    scaffold for discovering prolonged-drift patterns (the spec §8.7 discovery
+    job) instead of having to eyeball every digest entry: e.g. a span that holds
+    most of the run's work while the required deliverable never appears.
+    Every number is recomputable from derived records only — no interpretation,
+    no causal claims, just arithmetic over the timeline.
+    """
+    total = len(events)
+    phases: dict[str, dict] = {}
+    tools: dict[str, int] = {}
+    artifacts: list[str] = []
+    submission = None
+    terminal = None
+    for e in events:
+        pid = getattr(e, "phase_id", None)
+        if pid is not None:
+            ph = phases.setdefault(pid, {"phase_id": pid, "events": 0,
+                                         "first_event_id": e.event_id})
+            ph["events"] += 1
+            ph["last_event_id"] = e.event_id
+        if e.event_type == "tool_call":
+            tool = e.payload.get("tool")
+            if tool:
+                tools[str(tool)] = tools.get(str(tool), 0) + 1
+        if e.event_type == "artifact_observation":
+            path = e.payload.get("path") or e.payload.get("artifact_path")
+            if path:
+                artifacts.append(str(path))
+        if e.event_type == "final_submission" and submission is None:
+            submission = e.event_id
+        terminal = {"event_id": e.event_id, "event_type": e.event_type}
+    phase_list = sorted(phases.values(), key=lambda p: p["first_event_id"])
+    for ph in phase_list:
+        ph["share"] = round(ph["events"] / total, 2) if total else 0.0
+    return {
+        "total_events": total,
+        "work_events": sum(1 for e in events if e.event_type in _WORK_TYPES),
+        "phases": phase_list,
+        "tools": dict(sorted(tools.items(), key=lambda kv: -kv[1])),
+        "artifacts_observed": sorted(set(artifacts)),
+        "submission_event_id": submission,
+        "terminal": terminal,
+    }
+
+
+def _timeline_digest(events: list, redacted: dict) -> list[dict]:
+    """Compact per-event strip of the whole run, in order.
+
+    This is what lets the reviewer *discover* semantic moments beyond the
+    deterministic candidates (spec §8.7 "phase summaries when available"): it
+    sees the shape of the whole run — where time went, what was attempted,
+    repeated, or abandoned — while every event_id it can anchor on is a real
+    derived id and every quote it copies can be recomputed against the source.
+    Excerpts are truncated; quotes must come from these excerpts (they are
+    substrings of the full event text, so Stage G re-verification matches).
+    """
+    out = []
+    for e in events:
+        text = redacted.get(f"event::{e.event_id}", "")
+        out.append({
+            "event_id": e.event_id,
+            "event_type": e.event_type,
+            "phase_id": getattr(e, "phase_id", None),
+            "excerpt": text[:_EXCERPT_CHARS],
+        })
+    return out
+
+
 def build_packet(ctx: ReviewerContext) -> tuple[dict, dict]:
     """Assemble the reviewer's typed input packet and its redaction map.
 
@@ -122,6 +202,12 @@ def build_packet(ctx: ReviewerContext) -> tuple[dict, dict]:
         "task_contract": contract,
         "atomic_checks": atomic_checks,
         "deterministic_candidates": candidates,
+        "run_shape": _run_shape(ctx.events),
         "phase_summaries": _phase_summaries(ctx.events),
+        "timeline_digest": _timeline_digest(ctx.events, redacted),
+        "supported_fact_types": [
+            "requirement_status", "absence", "repetition", "state_transition",
+            "event_support", "termination",
+        ],
     }
     return packet, red_result.to_dict()

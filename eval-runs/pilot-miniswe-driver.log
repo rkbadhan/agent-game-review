@@ -1,0 +1,2 @@
+$ harbor run -t terminal-bench/make-mips-interpreter -a mini-swe-agent -m openai/stealth/ox-alpha --job-name pilot-miniswe -o eval-runs
+miniswe: job=pilot-miniswe outcomes=['ERROR'] trajectories=1 duration=2660s 429s=0

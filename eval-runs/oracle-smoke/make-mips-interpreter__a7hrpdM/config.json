@@ -1,0 +1,10 @@
+{
+    "task": {
+        "name": "terminal-bench/make-mips-interpreter",
+        "ref": "sha256:608e82ecd67ce469824a34181b580cbd0e1096cdfc05fe40edda3e6bfada9773",
+        "source": "terminal-bench/terminal-bench-2"
+    },
+    "trial_name": "make-mips-interpreter__a7hrpdM",
+    "trials_dir": "eval-runs\\oracle-smoke",
+    "job_id": "382e973d-ab0d-42d4-bf9a-bbf390264e33"
+}

@@ -1,0 +1,43 @@
+{
+    "id": "d9f0acee-3f83-46a7-b44d-321b6a3cd5e9",
+    "started_at": "2026-08-24T18:58:51.930672",
+    "updated_at": "2026-08-24T19:14:46.462247",
+    "finished_at": "2026-08-24T19:14:46.462247",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 1,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "terminus-2__stealth/ox-alpha__adhoc": {
+                "n_trials": 1,
+                "n_errors": 1,
+                "metrics": [
+                    {
+                        "mean": 0.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "0.0": [
+                            "raman-fitting__LMDAdti"
+                        ]
+                    }
+                },
+                "exception_stats": {
+                    "AgentTimeoutError": [
+                        "raman-fitting__LMDAdti"
+                    ]
+                }
+            }
+        },
+        "n_input_tokens": 198997,
+        "n_cache_tokens": 170432,
+        "n_output_tokens": 22241,
+        "cost_usd": null
+    }
+}

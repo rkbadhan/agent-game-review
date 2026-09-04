@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/fix-git -a mini-swe-agent -m openai/stealth/ox-alpha --job-name test1-fix-git -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:05:37 0:00:00
+adhoc • mini-swe-agent • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 5m 37s
+Results written to eval-runs\test1-fix-git\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\test1-fix-git`
+

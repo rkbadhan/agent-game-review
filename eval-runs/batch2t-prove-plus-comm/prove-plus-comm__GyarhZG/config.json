@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/prove-plus-comm",
+        "ref": "latest"
+    },
+    "trial_name": "prove-plus-comm__GyarhZG",
+    "trials_dir": "eval-runs\\batch2t-prove-plus-comm",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha"
+    },
+    "job_id": "a7ee4188-67ec-4447-9892-cef382a35116"
+}

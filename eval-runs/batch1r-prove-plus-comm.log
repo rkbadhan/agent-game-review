@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/prove-plus-comm -a mini-swe-agent -m openai/stealth/ox-alpha --job-name batch1r-prove-plus-comm -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:04:56 0:00:00
+adhoc • mini-swe-agent • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 4m 56s
+Results written to eval-runs\batch1r-prove-plus-comm\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\batch1r-prove-plus-comm`
+

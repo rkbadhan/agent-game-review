@@ -53,7 +53,9 @@ def test_basic_conversion_maps_tool_flow(tmp_path):
     kinds = [s["kind"] for s in doc["steps"]]
     assert kinds[0] == "task_received"
     assert "model_output" in kinds and "tool_call" in kinds and "tool_result" in kinds
-    assert kinds[-2:] == ["final_submission", "run_finished"]
+    # pi sessions carry no observable submission signal — session end is
+    # run_completed (pi-adapter-0.4), never a synthesised agent submission.
+    assert kinds[-1] == "run_completed"
     # tool result success -> exit_code 0 (recovery state machine reads this)
     tr = next(s for s in doc["steps"] if s["kind"] == "tool_result")
     assert tr["exit_code"] == 0

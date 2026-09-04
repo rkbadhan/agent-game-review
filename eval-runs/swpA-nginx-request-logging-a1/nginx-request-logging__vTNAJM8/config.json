@@ -1,0 +1,20 @@
+{
+    "task": {
+        "name": "terminal-bench/nginx-request-logging",
+        "ref": "latest"
+    },
+    "trial_name": "nginx-request-logging__vTNAJM8",
+    "trials_dir": "eval-runs\\swpA-nginx-request-logging-a1",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha",
+        "kwargs": {
+            "config": {
+                "model": {
+                    "temperature": 0.0
+                }
+            }
+        }
+    },
+    "job_id": "2e16d339-813b-4d6c-96d9-1df8a65dd8df"
+}

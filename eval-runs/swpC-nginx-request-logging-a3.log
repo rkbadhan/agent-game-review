@@ -1,0 +1,23 @@
+$ harbor run -t terminal-bench/nginx-request-logging -a mini-swe-agent -m openai/stealth/ox-alpha --agent-kwarg config={"model":{"temperature":0.7}} --job-name swpC-nginx-request-logging-a3 -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:06:19 0:00:00
+adhoc • mini-swe-agent • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 6m 19s
+Results written to eval-runs\swpC-nginx-request-logging-a3\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload 
+eval-runs\swpC-nginx-request-logging-a3`
+

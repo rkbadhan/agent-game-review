@@ -1,0 +1,20 @@
+{
+    "task": {
+        "name": "terminal-bench/polyglot-c-py",
+        "ref": "latest"
+    },
+    "trial_name": "polyglot-c-py__2chrYuM",
+    "trials_dir": "eval-runs\\swpB-polyglot-c-py-a2",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha",
+        "kwargs": {
+            "config": {
+                "model": {
+                    "temperature": 0.3
+                }
+            }
+        }
+    },
+    "job_id": "4905c8a7-30e4-45fd-9d90-990d4fa342f0"
+}

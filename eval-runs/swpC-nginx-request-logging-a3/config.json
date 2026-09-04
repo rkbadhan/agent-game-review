@@ -1,0 +1,23 @@
+{
+    "job_name": "swpC-nginx-request-logging-a3",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha",
+            "kwargs": {
+                "config": {
+                    "model": {
+                        "temperature": 0.7
+                    }
+                }
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/nginx-request-logging",
+            "ref": "latest"
+        }
+    ]
+}

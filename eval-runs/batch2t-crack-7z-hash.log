@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/crack-7z-hash -a terminus-2 -m openrouter/stealth/ox-alpha --job-name batch2t-crack-7z-hash -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:16:40 0:00:00
+adhoc • terminus-2 • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 16m 40s
+Results written to eval-runs\batch2t-crack-7z-hash\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\batch2t-crack-7z-hash`
+

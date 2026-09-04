@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/raman-fitting",
+        "ref": "latest"
+    },
+    "trial_name": "raman-fitting__FpPoN5F",
+    "trials_dir": "eval-runs\\batch1r-raman-fitting",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "22886788-ed9e-4f37-a10d-1447f15df0c8"
+}

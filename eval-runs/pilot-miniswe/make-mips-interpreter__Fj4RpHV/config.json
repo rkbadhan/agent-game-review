@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/make-mips-interpreter",
+        "ref": "latest"
+    },
+    "trial_name": "make-mips-interpreter__Fj4RpHV",
+    "trials_dir": "eval-runs\\pilot-miniswe",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "d19ed55e-ed4c-417f-a381-88b5a834a546"
+}

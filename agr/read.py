@@ -57,6 +57,9 @@ _EVENT_PANEL = {
     "artifact_observation": "artifact",
     "verifier_check": "verifier",
     "run_finished": "timeline",
+    "run_completed": "timeline",
+    "run_timed_out": "timeline",
+    "run_failed": "timeline",
 }
 
 # The capability (spec §6.2) that governs whether a panel's evidence was
@@ -630,9 +633,24 @@ def list_runs(store: Store) -> list[dict]:
     if not os.path.isdir(root):
         return []
     summaries: list[dict] = []
-    for run_id in sorted(os.listdir(root)):
-        if not os.path.isdir(os.path.join(root, run_id)):
-            continue
+
+    def _discover_run_ids() -> list[str]:
+        # Runs may be nested under namespace dirs (the harbor adapter keys runs
+        # by task id, e.g. runs/harbor__terminal-bench/<task>/...). A dir is a
+        # run only when it carries a capture index; namespace dirs are descended
+        # into, run dirs are pruned (their captures/ subtree is not a run).
+        found: list[str] = []
+        for dirpath, dirnames, _ in os.walk(root):
+            rel = os.path.relpath(dirpath, root)
+            if rel == ".":
+                continue
+            run_id = rel.replace(os.sep, "/")
+            if store.latest_capture_id(run_id) is not None:
+                found.append(run_id)
+                dirnames[:] = []
+        return sorted(found)
+
+    for run_id in _discover_run_ids():
         capture_id = store.latest_capture_id(run_id)
         if capture_id is None:
             continue

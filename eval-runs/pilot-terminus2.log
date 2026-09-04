@@ -1,0 +1,26 @@
+  1/1 Mean: 0.000 ---------------------------------------- 0:35:04 0:00:00
+adhoc • terminus-2 • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          1 │ 0.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 0.0    │     1 │
+└────────┴───────┘
+
+┌───────────────────┬───────┐
+│ Exception         │ Count │
+├───────────────────┼───────┤
+│ AgentTimeoutError │     1 │
+└───────────────────┴───────┘
+
+Job Info
+Total runtime: 35m 4s
+Results written to eval-runs\pilot-terminus2\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\pilot-terminus2`
+

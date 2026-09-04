@@ -1,0 +1,16 @@
+{
+    "job_name": "batch1-crack-7z-hash",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha"
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/crack-7z-hash",
+            "ref": "latest"
+        }
+    ]
+}

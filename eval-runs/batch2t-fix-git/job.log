@@ -1,0 +1,53 @@
+Installing: tmux, asciinema
+Detected system: {'os': 'debian-based', 'package_manager': 'apt-get', 'update_command': None}
+Installing tools using apt-get: DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tmux asciinema
+Starting recording.
+Sending keys: ['asciinema rec --stdin /logs/agent/recording.cast', 'Enter'] min_timeout_sec: 1.0 max_timeout_sec: 180.0
+Sending keys: ['clear', 'Enter'] min_timeout_sec: 0.0 max_timeout_sec: 180.0
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: ['pwd && git status --short --branch\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git branch -avv\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git log --all --graph --decorate --oneline -20\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git reflog --date=local -30\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git stash list\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: [''] min_timeout_sec: 3.0 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: ['git show --stat --summary --decorate c499730\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git show --format=fuller --no-ext-diff c499730\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git diff --stat c499730..master && git diff --name-status c4e38a1..c499730 && git diff --name-status c4e38a1..master\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Parser warnings: - Command 1 should end with newline when followed by another command. Otherwise the two commands will be concatenated together on the same line.
+Sending keys: ['\nq'] min_timeout_sec: 0.2 max_timeout_sec: 180.0
+Sending keys: ['git --no-pager show --stat --summary d7d3e4b\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git --no-pager diff --name-status c4e38a1..c499730\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git --no-pager diff --name-status c4e38a1..master\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git --no-pager diff --stat c499730..master\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: ['git --no-pager show --format=medium d7d3e4b -- _includes/about.md\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ["printf '%s\\n' '--- master version ---' && sed -n '1,20p' _includes/about.md && printf '%s\\n' '--- recovered version ---' && git show c499730:_includes/about.md | sed -n '1,20p'\n"] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git merge-base master c499730 && git merge-tree $(git merge-base master c499730) master c499730\n'] min_timeout_sec: 0.2 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: ['git merge --no-edit c499730\n'] min_timeout_sec: 0.5 max_timeout_sec: 180.0
+Sending keys: ['git status --short --branch\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Sending keys: ['git checkout --theirs -- _includes/about.md\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git add _includes/about.md\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ["if grep -nE '<<<<<<<|>>>>>>>|^=======' _includes/about.md; then echo 'Conflict markers still present'; else echo 'Conflict markers removed'; fi\n"] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git diff --cached --check\n'] min_timeout_sec: 0.1 max_timeout_sec: 180.0
+Sending keys: ['git commit --no-edit\n'] min_timeout_sec: 0.5 max_timeout_sec: 180.0
+Sending keys: ['git status --short --branch && git --no-pager log -3 --graph --decorate --oneline\n'] min_timeout_sec: 0.2 max_timeout_sec: 180.0
+Sending keys: ['test "$(git rev-parse HEAD:_includes/about.md)" = "$(git rev-parse c499730:_includes/about.md)" && test "$(git rev-parse HEAD:_layouts/default.html)" = "$(git rev-parse c499730:_layouts/default.html)" && echo \'Recovered changes are merged into master\'\n'] min_timeout_sec: 0.2 max_timeout_sec: 180.0
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Failed to retrieve model info for 'openrouter/stealth/ox-alpha': This model isn't mapped yet. model=openrouter/stealth/ox-alpha, custom_llm_provider=openrouter. Add it here - https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json.. Using fallback context limit: 1000000
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Trajectory dumped to eval-runs\batch2t-fix-git\fix-git__XAZ696F\agent\trajectory.json
+Collecting main service artifacts

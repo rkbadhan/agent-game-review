@@ -29,11 +29,14 @@ KIND_TO_EVENT = {
     "strategy_change": "strategy_change",
     "context_compaction": "context_compaction",
     "final_submission": "final_submission",
+    "run_completed": "run_completed",
+    "run_timed_out": "run_timed_out",
+    "run_failed": "run_failed",
     "run_finished": "run_finished",
 }
 
 # Keys copied verbatim from an ATIF step into the derived event payload.
-_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary")
+_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason")
 
 
 class EventDerivationError(ValueError):

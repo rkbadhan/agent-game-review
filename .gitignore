@@ -17,3 +17,13 @@ dist/
 # Archived store snapshot — derived data, regenerable by re-ingesting the fixtures
 archive/synthetic/agr-store/
 .benchmarks
+# Evaluation sweep artifacts: published corpus is committed (see eval-runs/README.md);
+# only the write-off ledger (aborted/debug jobs) stays local.
+eval-runs/_writeoffs/
+
+# Harbor analyze outputs (derived, regenerable; contain local filesystem paths)
+jobs/
+# Batch run logs (may echo env/error output)
+experiments/terminal_bench/analyze-batch-logs/
+experiments/terminal_bench/gold-drafts/
+terminal_bench\run_analyze_batch.sheval-runs/agr-serve.log

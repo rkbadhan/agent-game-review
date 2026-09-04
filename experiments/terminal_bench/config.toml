@@ -1,0 +1,32 @@
+# Terminal-Bench evaluation sweep — experiment configuration
+# See docs/launch-plan.md for the full plan and gates.
+
+dataset    = "terminal-bench/terminal-bench-2"
+jobs_dir   = "eval-runs"
+
+# Phase 1 pipeline validation happens on this single task first.
+pilot_task = "terminal-bench/make-mips-interpreter"
+
+# Phase 2 fills this in after task piloting. Until then the sweep
+# refuses to run (Guard: len(tasks) must be >= 6).
+tasks = []
+
+attempts          = 3   # per task x agent cell
+max_infra_retries = 2   # infra failures are re-run and logged, never counted toward the 36
+
+# Both agents run the SAME model (stealth/ox-alpha via OpenRouter free tier).
+# mini-swe-agent reaches OpenRouter through the openai/ provider with
+# OPENAI_API_KEY + OPENAI_BASE_URL passed into the container (do NOT set
+# MSWEA_API_KEY - it shadows the key and never reaches litellm inside the
+# container), terminus-2 through litellm's native
+# openrouter/ provider (OPENROUTER_API_KEY). The driver wires both from the
+# single OPENAI_API_KEY / OPENAI_BASE_URL pair in .env.
+[[agents]]
+id           = "miniswe"
+harbor_agent = "mini-swe-agent"
+model        = "openai/stealth/ox-alpha"
+
+[[agents]]
+id           = "terminus2"
+harbor_agent = "terminus-2"
+model        = "openrouter/stealth/ox-alpha"

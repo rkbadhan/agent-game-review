@@ -1,0 +1,19 @@
+{
+    "job_name": "swpA2-raman-fitting-a1",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "terminus-2",
+            "model_name": "openrouter/stealth/ox-alpha",
+            "kwargs": {
+                "temperature": 0.0
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/raman-fitting",
+            "ref": "latest"
+        }
+    ]
+}

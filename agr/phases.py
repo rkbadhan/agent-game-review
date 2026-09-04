@@ -20,7 +20,13 @@ from . import version
 from .schema import DerivedEvent, Phase
 
 _INTAKE = {"task_received"}
-_SUBMISSION = {"final_submission", "run_finished", "verifier_check"}
+# Terminal events. ``final_submission`` is only ever emitted for a directly
+# observed submission (adapter contract since harbor-adapter-0.3/0.4); the
+# run_* kinds carry harness-side termination semantics.
+_SUBMISSION = {
+    "final_submission", "run_finished", "verifier_check",
+    "run_completed", "run_timed_out", "run_failed",
+}
 _EXECUTION = {
     "tool_call", "tool_result", "environment_observation", "artifact_observation",
     "process_started", "process_observed", "error_observed", "retry", "strategy_change",

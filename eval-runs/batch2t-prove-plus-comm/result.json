@@ -1,0 +1,39 @@
+{
+    "id": "a7ee4188-67ec-4447-9892-cef382a35116",
+    "started_at": "2026-08-24T17:03:50.476476",
+    "updated_at": "2026-08-24T17:06:36.976265",
+    "finished_at": "2026-08-24T17:06:36.976265",
+    "n_total_trials": 1,
+    "stats": {
+        "n_completed_trials": 1,
+        "n_errored_trials": 0,
+        "n_running_trials": 0,
+        "n_pending_trials": 0,
+        "n_cancelled_trials": 0,
+        "n_retries": 0,
+        "evals": {
+            "terminus-2__stealth/ox-alpha__adhoc": {
+                "n_trials": 1,
+                "n_errors": 0,
+                "metrics": [
+                    {
+                        "mean": 1.0
+                    }
+                ],
+                "pass_at_k": {},
+                "reward_stats": {
+                    "reward": {
+                        "1.0": [
+                            "prove-plus-comm__GyarhZG"
+                        ]
+                    }
+                },
+                "exception_stats": {}
+            }
+        },
+        "n_input_tokens": 6422,
+        "n_cache_tokens": 4096,
+        "n_output_tokens": 1351,
+        "cost_usd": null
+    }
+}

@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/prove-plus-comm",
+        "ref": "latest"
+    },
+    "trial_name": "prove-plus-comm__UfS8uMD",
+    "trials_dir": "eval-runs\\batch1r-prove-plus-comm",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "855c2cab-3a38-4ec5-8c6a-ee80c370bebf"
+}

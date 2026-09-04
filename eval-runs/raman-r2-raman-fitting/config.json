@@ -1,0 +1,16 @@
+{
+    "job_name": "raman-r2-raman-fitting",
+    "jobs_dir": "eval-runs",
+    "agents": [
+        {
+            "name": "mini-swe-agent",
+            "model_name": "openai/stealth/ox-alpha"
+        }
+    ],
+    "tasks": [
+        {
+            "name": "terminal-bench/raman-fitting",
+            "ref": "latest"
+        }
+    ]
+}

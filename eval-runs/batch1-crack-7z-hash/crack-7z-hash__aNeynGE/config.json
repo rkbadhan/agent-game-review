@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/crack-7z-hash",
+        "ref": "latest"
+    },
+    "trial_name": "crack-7z-hash__aNeynGE",
+    "trials_dir": "eval-runs\\batch1-crack-7z-hash",
+    "agent": {
+        "name": "mini-swe-agent",
+        "model_name": "openai/stealth/ox-alpha"
+    },
+    "job_id": "d5d106b3-c856-46e5-9beb-1981d8626949"
+}

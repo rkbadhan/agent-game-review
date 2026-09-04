@@ -1,0 +1,22 @@
+$ harbor run -t terminal-bench/polyglot-c-py -a mini-swe-agent -m openai/stealth/ox-alpha --agent-kwarg config={"model":{"temperature":0.3}} --job-name swpB-polyglot-c-py-a2 -o eval-runs
+
+  1/1 Mean: 1.000 ---------------------------------------- 0:07:21 0:00:00
+adhoc • mini-swe-agent • stealth/ox-alpha
+┌────────┬────────────┬───────┐
+│ Trials │ Exceptions │  Mean │
+├────────┼────────────┼───────┤
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┌────────┬───────┐
+│ Reward │ Count │
+├────────┼───────┤
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 7m 21s
+Results written to eval-runs\swpB-polyglot-c-py-a2\result.json
+Inspect results by running `harbor view eval-runs`
+Share results by running `harbor upload eval-runs\swpB-polyglot-c-py-a2`
+

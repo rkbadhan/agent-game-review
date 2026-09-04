@@ -121,24 +121,23 @@ def create_app(store_root: str = ".agr-store"):
     def runs() -> list[dict]:
         return read.list_runs(store)
 
-    @app.get("/runs/{run_id}")
-    def review(run_id: str) -> dict:
-        return _run_or_404(read.get_review, run_id)
+    # NOTE: the bare /runs/{run_id} route is defined LAST (with :path) so its
+    # greedy path capture never shadows the /runs/{run_id}/... sub-routes.
 
-    @app.get("/runs/{run_id}/audit")
+    @app.get("/runs/{run_id:path}/audit")
     def audit(run_id: str) -> list[dict]:
         """§11 Task & Verifier Audit rows (categorical, evidence-backed)."""
         return _run_or_404(read.get_audit, run_id)
 
-    @app.get("/runs/{run_id}/forensic")
+    @app.get("/runs/{run_id:path}/forensic")
     def forensic(run_id: str) -> dict:
         return _run_or_404(read.get_forensic, run_id)
 
-    @app.get("/runs/{run_id}/source")
+    @app.get("/runs/{run_id:path}/source")
     def source(run_id: str) -> dict:
         return _run_or_404(read.get_source, run_id)
 
-    @app.get("/runs/{run_id}/reviews")
+    @app.get("/runs/{run_id:path}/reviews")
     def reviews(run_id: str) -> dict:
         """Reviewer keys that have scored this run's latest capture."""
         keys = _run_or_404(read.list_reviews, run_id)
@@ -149,7 +148,7 @@ def create_app(store_root: str = ".agr-store"):
                 break
         return {"reviews": keys, "default_compare": [default, "deterministic"] if len(keys) >= 2 else None}
 
-    @app.get("/runs/{run_id}/compare")
+    @app.get("/runs/{run_id:path}/compare")
     def compare(run_id: str, left: str = Query(...), right: str = Query(...),
                 threshold: float = Query(default=0.0)) -> dict:
         """Diff two reviews of the same capture — reviewer vs reviewer, not §4.16.
@@ -164,7 +163,7 @@ def create_app(store_root: str = ".agr-store"):
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"review {str(exc)!r} not found")
 
-    @app.get("/runs/{run_id}/next")
+    @app.get("/runs/{run_id:path}/next")
     def next_run(
         run_id: str,
         filter: list[str] = Query(default=[]),
@@ -257,7 +256,7 @@ def create_app(store_root: str = ".agr-store"):
         except versions.ComparisonError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
-    @app.post("/runs/{run_id}/workflow")
+    @app.post("/runs/{run_id:path}/workflow")
     def set_workflow(run_id: str, payload: dict = Body(...)) -> dict:
         """Set disposition / assignment / progress (§4.3.4). Optimistic on ``base_version``."""
         _ensure_run(run_id)
@@ -283,7 +282,7 @@ def create_app(store_root: str = ".agr-store"):
         except workflow.WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
-    @app.post("/runs/{run_id}/feedback")
+    @app.post("/runs/{run_id:path}/feedback")
     def add_feedback(run_id: str, payload: dict = Body(...)) -> dict:
         """Record Tier-1/2/3 moment feedback (§4.13). Idempotent on ``mutation_id``.
 
@@ -321,7 +320,7 @@ def create_app(store_root: str = ".agr-store"):
             detail={"error": "version_conflict", "expected": exc.expected,
                     "actual": exc.actual, "current": exc.current})
 
-    @app.post("/runs/{run_id}/lessons")
+    @app.post("/runs/{run_id:path}/lessons")
     def create_lesson(run_id: str, payload: dict = Body(...)) -> dict:
         """Create the Eval Lesson for an accepted moment (§4.11). Idempotent per moment."""
         _ensure_run(run_id)
@@ -343,7 +342,7 @@ def create_app(store_root: str = ".agr-store"):
             raise HTTPException(status_code=422, detail=str(exc))
         return {"lesson": lesson}
 
-    @app.post("/runs/{run_id}/lessons/{lesson_id}")
+    @app.post("/runs/{run_id:path}/lessons/{lesson_id}")
     def update_lesson(run_id: str, lesson_id: str, payload: dict = Body(...)) -> dict:
         """Advance a lesson's status and/or apply edits (§4.11, §6.10). Optimistic on base_version."""
         _ensure_run(run_id)
@@ -360,7 +359,7 @@ def create_app(store_root: str = ".agr-store"):
             raise HTTPException(status_code=422, detail=str(exc))
         return {"lesson": lesson}
 
-    @app.post("/runs/{run_id}/lessons/{lesson_id}/experiment")
+    @app.post("/runs/{run_id:path}/lessons/{lesson_id}/experiment")
     def lesson_experiment(run_id: str, lesson_id: str, payload: dict = Body(default={})) -> dict:
         """Generate (``action`` omitted) or approve (``action=approve``) the §13.2 proposal."""
         _ensure_run(run_id)
@@ -371,5 +370,10 @@ def create_app(store_root: str = ".agr-store"):
         except lessons.LessonError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"lesson": lesson}
+
+    @app.get("/runs/{run_id:path}")
+    def review(run_id: str) -> dict:
+        """Full deterministic review for a run. Defined last: :path is greedy."""
+        return _run_or_404(read.get_review, run_id)
 
     return app

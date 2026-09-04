@@ -1,0 +1,16 @@
+{
+    "task": {
+        "name": "terminal-bench/polyglot-c-py",
+        "ref": "latest"
+    },
+    "trial_name": "polyglot-c-py__85wAj7j",
+    "trials_dir": "eval-runs\\swpC3-polyglot-c-py-a2",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha",
+        "kwargs": {
+            "temperature": 0.3
+        }
+    },
+    "job_id": "fca96f1b-8f7e-4cf3-84ea-3c1859c3122c"
+}

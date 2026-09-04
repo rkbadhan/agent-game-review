@@ -17,7 +17,9 @@ GOOD_RECOVERY = "good_recovery"
 UNCHANGED_RETRY = "retry_succeeded_without_strategy_change"
 UNRECOVERED = "unrecovered_failure"
 
-_STOP = {"final_submission", "run_finished"}
+_STOP = {
+    "final_submission", "run_finished", "run_completed", "run_timed_out", "run_failed",
+}
 
 
 def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str) -> list[RecoveryEpisode]:

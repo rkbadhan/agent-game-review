@@ -1,0 +1,518 @@
+[?2004hroot@e06ba6aa1f4e:/app# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@e06ba6aa1f4e:/app# clear
+[?2004l[H[J[3J[?2004hroot@e06ba6aa1f4e:/app# pwd && ls -la
+[?2004l/app
+total 16
+drwxr-xr-x 1 root root 4096 Oct 24  2025 [0m[01;34m.[0m
+drwxr-xr-x 1 root root 4096 Aug 24 11:34 [01;34m..[0m
+drwxr-xr-x 1 root root 4096 Oct 31  2025 [01;34mjohn[0m
+-rw-r--r-- 1 root root  215 Oct 24  2025 [01;31msecrets.7z[0m
+[?2004hroot@e06ba6aa1f4e:/app# file secrets.7z && (command -v 7z || command -v 7zz || command -v 7za || true)
+[?2004lbash: file: command not found
+[?2004hroot@e06ba6aa1f4e:/app# if command -v 7z >/dev/null; then 7z l secrets.7z; elif command -v 7zz >/dev/null; then 7zz l secrets.7z; elif command -v 7za >/dev/null; then 7za l secrets.7z; fi
+[?2004l[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- john top level ---'; ls -la john; printf '%s\n' '--- likely run directory ---'; ls -la john/run 2>/dev/null | head -80
+[?2004l--- john top level ---
+total 104
+drwxr-xr-x 1 root root  4096 Oct 31  2025 [0m[01;34m.[0m
+drwxr-xr-x 1 root root  4096 Oct 24  2025 [01;34m..[0m
+drwxr-xr-x 2 root root  4096 Oct 31  2025 [01;34m.ci[0m
+drwxr-xr-x 2 root root  4096 Oct 31  2025 [01;34m.circleci[0m
+-rw-r--r-- 1 root root  2980 Oct 31  2025 .editorconfig
+drwxr-xr-x 8 root root  4096 Oct 31  2025 [01;34m.git[0m
+-rw-r--r-- 1 root root   982 Oct 31  2025 .gitattributes
+drwxr-xr-x 3 root root  4096 Oct 31  2025 [01;34m.github[0m
+-rw-r--r-- 1 root root  1595 Oct 31  2025 .gitignore
+-rw-r--r-- 1 root root  2975 Oct 31  2025 .mailmap
+-rwxr-xr-x 1 root root  3836 Oct 31  2025 [01;32m.pre-commit.sh[0m
+drwxr-xr-x 2 root root  4096 Oct 31  2025 [01;34m.travis[0m
+-rw-r--r-- 1 root root  1251 Oct 31  2025 .travis.yml
+-rw-r--r-- 1 root root  1654 Oct 31  2025 CONTRIBUTING.md
+-rw-r--r-- 1 root root  2332 Oct 31  2025 LICENSE
+-rw-r--r-- 1 root root  8124 Oct 31  2025 README.md
+drwxr-xr-x 3 root root  4096 Oct 31  2025 [01;34mdoc[0m
+-rw-r--r-- 1 root root    79 Oct 31  2025 requirements.txt
+drwxr-xr-x 1 root root  4096 Oct 31  2025 [01;34mrun[0m
+-rw-r--r-- 1 root root  1954 Oct 31  2025 shell.nix
+drwxr-xr-x 1 root root 20480 Oct 31  2025 [01;34msrc[0m
+--- likely run directory ---
+total 82716
+drwxr-xr-x 1 root root     4096 Oct 31  2025 .
+drwxr-xr-x 1 root root     4096 Oct 31  2025 ..
+-rwxr-xr-x 1 root root    11545 Oct 31  2025 1password2john.py
+-rwxr-xr-x 1 root root    97726 Oct 31  2025 7z2john.pl
+-rwxr-xr-x 1 root root    26197 Oct 31  2025 DPAPImk2john.py
+-rwxr-xr-x 1 root root     3800 Oct 31  2025 adxcsouf2john.py
+-rwxr-xr-x 1 root root     2729 Oct 31  2025 aem2john.py
+-rwxr-xr-x 1 root root      894 Oct 31  2025 aix2john.pl
+-rwxr-xr-x 1 root root     1958 Oct 31  2025 aix2john.py
+-rw-r--r-- 1 root root  4086722 Oct 31  2025 alnum.chr
+-rw-r--r-- 1 root root  4174257 Oct 31  2025 alnumspace.chr
+-rw-r--r-- 1 root root  1950539 Oct 31  2025 alpha.chr
+-rwxr-xr-x 1 root root     1368 Oct 31  2025 andotp2john.py
+-rwxr-xr-x 1 root root     3455 Oct 31  2025 androidbackup2john.py
+-rwxr-xr-x 1 root root     7471 Oct 31  2025 androidfde2john.py
+-rwxr-xr-x 1 root root     1758 Oct 31  2025 ansible2john.py
+-rwxr-xr-x 1 root root      731 Oct 31  2025 apex2john.py
+-rwxr-xr-x 1 root root     2140 Oct 31  2025 apop2john.py
+-rwxr-xr-x 1 root root     2074 Oct 31  2025 applenotes2john.py
+-rwxr-xr-x 1 root root     1447 Oct 31  2025 aruba2john.py
+-rw-r--r-- 1 root root  5720262 Oct 31  2025 ascii.chr
+-rwxr-xr-x 1 root root      614 Oct 31  2025 atmail2john.pl
+-rwxr-xr-x 1 root root     6299 Oct 31  2025 axcrypt2john.py
+lrwxrwxrwx 1 root root        4 Oct 31  2025 base64conv -> john
+-rwxr-xr-x 1 root root    10577 Oct 31  2025 benchmark-unify
+-rwxr-xr-x 1 root root    10174 Oct 31  2025 bestcrypt2john.py
+-rwxr-xr-x 1 root root     2314 Oct 31  2025 bestcryptve2john.py
+drwxr-xr-x 2 root root     4096 Oct 31  2025 bip-0039
+-rwxr-xr-x 1 root root     9421 Oct 31  2025 bitcoin2john.py
+-rwxr-xr-x 1 root root   206872 Oct 31  2025 bitlocker2john
+-rwxr-xr-x 1 root root    10001 Oct 31  2025 bitlocker2john.py
+-rwxr-xr-x 1 root root     2725 Oct 31  2025 bitshares2john.py
+-rwxr-xr-x 1 root root     4315 Oct 31  2025 bitwarden2john.py
+-rwxr-xr-x 1 root root     7754 Oct 31  2025 bks2john.py
+-rwxr-xr-x 1 root root     2940 Oct 31  2025 blockchain2john.py
+-rwxr-xr-x 1 root root    26864 Oct 31  2025 calc_stat
+-rwxr-xr-x 1 root root     2057 Oct 31  2025 cardano2john.py
+-rwxr-xr-x 1 root root    26774 Oct 31  2025 ccache2john.py
+drwxr-xr-x 2 root root     4096 Oct 31  2025 ccl_chrome_indexeddb
+-rwxr-xr-x 1 root root     7054 Oct 31  2025 cisco2john.pl
+-rwxr-xr-x 1 root root      898 Oct 31  2025 codepage.pl
+-rwxr-xr-x 1 root root     2830 Oct 31  2025 coinomi2john.py
+-rwxr-xr-x 1 root root   106840 Oct 31  2025 cprepair
+-rwxr-xr-x 1 root root      880 Oct 31  2025 cracf2john.py
+-rwxr-xr-x 1 root root     2573 Oct 31  2025 dashlane2john.py
+-rwxr-xr-x 1 root root     3771 Oct 31  2025 deepsound2john.py
+-rw-r--r-- 1 root root     4099 Oct 31  2025 dictionary.rfc2865
+-rw-r--r-- 1 root root   465097 Oct 31  2025 digits.chr
+-rwxr-xr-x 1 root root     7341 Oct 31  2025 diskcryptor2john.py
+-rwxr-xr-x 1 root root    72328 Oct 31  2025 dmg2john
+-rwxr-xr-x 1 root root     5249 Oct 31  2025 dmg2john.py
+drwxr-xr-x 2 root root     4096 Oct 31  2025 dns
+-rw-r--r-- 1 root root    54555 Oct 31  2025 dumb16.conf
+-rw-r--r-- 1 root root   109149 Oct 31  2025 dumb32.conf
+-rw-r--r-- 1 root root    60347 Oct 31  2025 dynamic.conf
+-rw-r--r-- 1 root root     8539 Oct 31  2025 dynamic_disabled.conf
+-rw-r--r-- 1 root root     9542 Oct 31  2025 dynamic_flat_sse_formats.conf
+-rwxr-xr-x 1 root root     2053 Oct 31  2025 ecryptfs2john.py
+-rwxr-xr-x 1 root root     5081 Oct 31  2025 ejabberd2john.py
+-rwxr-xr-x 1 root root     9523 Oct 31  2025 electrum2john.py
+-rwxr-xr-x 1 root root     3625 Oct 31  2025 encdatavault2john.py
+-rwxr-xr-x 1 root root     2717 Oct 31  2025 encfs2john.py
+-rwxr-xr-x 1 root root     1107 Oct 31  2025 enpass2john.py
+-rwxr-xr-x 1 root root     1113 Oct 31  2025 enpass5tojohn.py
+-rwxr-xr-x 1 root root     3773 Oct 31  2025 ethereum2john.py
+-rwxr-xr-x 1 root root     1725 Oct 31  2025 filezilla2john.py
+-rw-r--r-- 1 root root    99202 Oct 31  2025 fuzz.dic
+-rwxr-xr-x 1 root root     3324 Oct 31  2025 fuzz_option.pl
+-rw-r--r-- 1 root root     8910 Oct 31  2025 fvde2john.py
+-rwxr-xr-x 1 root root     3439 Oct 31  2025 geli2john.py
+-rwxr-xr-x 1 root root     1867 Oct 31  2025 genincstats.rb
+-rwxr-xr-x 1 root root   190672 Oct 31  2025 genmkvpwd
+lrwxrwxrwx 1 root root        4 Oct 31  2025 gpg2john -> john
+-rwxr-xr-x 1 root root    60872 Oct 31  2025 hccap2john
+-rwxr-xr-x 1 root root     7096 Oct 31  2025 hccapx2john.py
+-rwxr-xr-x 1 root root      428 Oct 31  2025 hextoraw.pl
+-rwxr-xr-x 1 root root     1059 Oct 31  2025 htdigest2john.py
+-rw-r--r-- 1 root root     7536 Oct 31  2025 hybrid.conf
+-rwxr-xr-x 1 root root     1458 Oct 31  2025 ibmiscanner2john.py
+[?2004hroot@e06ba6aa1f4e:/app# find john -maxdepth 4 -type f \( -iname '*7z*' -o -name john -o -name 'john*' \) -printf '%p\n' | head -100
+[?2004ljohn/doc/extras/john-1.7.9-jumbo-7-licensing-stats.txt
+john/doc/extras/john-1.7.9-jumbo-7-licensing.txt
+john/doc/README.7z2john.md
+john/run/opencl/7z_kernel.cl
+john/run/john.bash_completion
+john/run/john.conf
+john/run/john.zsh_completion
+john/run/7z2john.pl
+john/run/john
+john/src/john.h
+john/src/7z_fmt_plug.c
+john/src/john_mpi.h
+john/src/john.c
+john/src/lzma/7zTypes.h
+john/src/johnswap.h
+john/src/john_mpi.c
+john/src/john.com
+john/src/7z_common.h
+john/src/opencl_7z_fmt_plug.c
+john/src/7z_common_plug.c
+john/src/john.asm
+john/src/7z_fmt_plug.o
+john/src/john_build_rule.h
+john/src/7z_common_plug.o
+john/src/john.o
+john/src/john_mpi.o
+[?2004hroot@e06ba6aa1f4e:/app# (xxd secrets.7z || od -Ax -tx1z secrets.7z) | head -20
+[?2004lbash: xxd: command not found
+000000 37 7a bc af 27 1c 00 04 0d 2b 28 98 95 00 00 00  >7z..'....+(.....<
+000010 00 00 00 00 22 00 00 00 00 00 00 00 eb 89 0c 95  >...."...........<
+000020 70 3e 06 dc 09 b6 c7 14 74 9d 8e fc 9f a5 54 34  >p>......t.....T4<
+000030 00 00 81 33 07 ae 0f ce f2 b2 0c 07 b0 c3 da f7  >...3............<
+000040 5f 45 8a 98 48 4a f8 91 90 05 19 8c af c1 16 ee  >_E..HJ..........<
+000050 74 5b ea 5e d5 03 a8 2b b1 6f 74 82 06 26 d3 82  >t[.^...+.ot..&..<
+000060 f9 b1 1d 54 07 47 28 d8 ec 9b cf b0 00 69 8c 26  >...T.G(......i.&<
+000070 e7 5b 1e 10 d7 25 8f 5f bf 0a 92 fb 1d 93 38 ec  >.[...%._......8.<
+000080 dc 44 9e 7b 9b f6 20 d5 4e 59 88 91 17 9c 32 25  >.D.{.. .NY....2%<
+000090 77 ad d1 88 24 48 a4 0a fe de 7e 84 78 b2 32 3f  >w...$H....~.x.2?<
+0000a0 c4 04 57 2c b2 8c 02 bb 43 27 81 13 bb 12 a9 37  >..W,....C'.....7<
+0000b0 bb 0d 00 00 00 17 06 10 01 09 80 85 00 07 0b 01  >................<
+0000c0 00 01 23 03 01 01 05 5d 00 10 00 00 0c 80 a6 0a  >..#....]........<
+0000d0 01 22 4c 2d 3a 00 00                             >."L-:..<
+0000d7
+[?2004hroot@e06ba6aa1f4e:/app# python3 - <<'PY'
+[?2004l[?2004h> try:
+[?2004l[?2004h>  import py7zr
+[?2004l[?2004h>  print('py7zr available:', py7zr.__version__)
+[?2004l[?2004h> except Exception as e:
+[?2004l[?2004h>  print('py7zr unavailable:', repr(e))
+[?2004l[?2004h> PY
+[?2004lpy7zr unavailable: ModuleNotFoundError("No module named 'py7zr'")
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && perl john/run/7z2john.pl secrets.7z > secrets.hash && cat secrets.hash
+[?2004lCan't locate Compress/Raw/Lzma.pm in @INC (you may need to install the Compress::Raw::Lzma module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.38.2 /usr/local/share/perl/5.38.2 /usr/lib/x86_64-linux-gnu/perl5/5.38 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.38 /usr/share/perl/5.38 /usr/local/lib/site_perl) at john/run/7z2john.pl line 6.
+BEGIN failed--compilation aborted at john/run/7z2john.pl line 6.
+[?2004hroot@e06ba6aa1f4e:/app# john/run/john --list=formats 2>/dev/null | tr ',' '\n' | grep -i '^7z$' || true
+[?2004l[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- candidate wordlists ---'; find /usr/share /opt /app -type f \( -iname '*wordlist*' -o -iname '*password*' -o -name 'rockyou*' -o -name '*.dic' -o -name 'password.lst' \) -size +10k -printf '%s %p\n' 2>/dev/null | sort -nr | head -30
+[?2004l--- candidate wordlists ---
+15327454 /app/john/run/password.lst
+301161 /app/john/run/rules/rockyou-30000.rule
+220120 /app/john/src/wordlist.o
+99202 /app/john/run/fuzz.dic
+36452 /app/john/src/wordlist.c
+34436 /app/john/run/rules/T0XlC-insert_top_100_passwords_1_G.rule
+19478 /app/john/run/rules/InsidePro-PasswordsPro.rule
+11545 /app/john/run/1password2john.py
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && ls -l john/run/john* | head -20 && readelf -h john/run/john 2>/dev/null | head -8 || true
+[?2004l-rwxr-xr-x 1 root root 22647944 Oct 31  2025 john/run/john
+-rw-r--r-- 1 root root    33024 Oct 31  2025 john/run/john.bash_completion
+-rw-r--r-- 1 root root   126985 Oct 31  2025 john/run/john.conf
+-rw-r--r-- 1 root root     8928 Oct 31  2025 john/run/john.zsh_completion
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Position-Independent Executable file)
+[?2004hroot@e06ba6aa1f4e:/app# ./john/run/john --list=formats > /tmp/formats.txt 2>/tmp/formats.err; printf '%s\n' '--- formats ---'; tr ',' '\n' < /tmp/formats.txt | grep -iE '(^|[^a-z])7z([^a-z]|$)|seven'; printf '%s\n' '--- stderr ---'; cat /tmp/formats.err
+[?2004l--- formats ---
+[01;31m[K 7z[m[K
+--- stderr ---
+392 formats (151 dynamic formats shown as just "dynamic_n" here)
+[?2004hroot@e06ba6aa1f4e:/app# grep -nE 'fmt_7z|FMT_MAIN_VERSION|struct fmt_main.*7z|"7z"' john/src/7z_fmt_plug.c | head -30; tail -40 john/src/7z_fmt_plug.c
+[?2004l53:#define FORMAT_LABEL            "7z"
+114:	if (cfg_get_bool(SECTION_FORMATS, "7z", "TrustPadding", 1))
+			"data length"
+		},
+		{ FORMAT_TAG },
+		sevenzip_tests
+	}, {
+		init,
+		done,
+		fmt_default_reset,
+		fmt_default_prepare,
+		sevenzip_valid,
+		fmt_default_split,
+		fmt_default_binary,
+		sevenzip_get_salt,
+		{
+			sevenzip_iteration_count,
+			sevenzip_padding_size,
+			sevenzip_compression_type,
+			sevenzip_data_len
+		},
+		fmt_default_source,
+		{
+			fmt_default_binary_hash
+		},
+		fmt_default_salt_hash,
+		sevenzip_salt_compare,
+		set_salt,
+		set_key,
+		get_key,
+		fmt_default_clear_keys,
+		crypt_all,
+		{
+			fmt_default_get_hash
+		},
+		cmp_all,
+		cmp_one,
+		cmp_exact
+	}
+};
+
+#endif /* plugin stanza */
+[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- Lzma usage in extractor ---'; grep -n 'Lzma\|lzma' john/run/7z2john.pl | head -60
+[?2004l--- Lzma usage in extractor ---
+6:use Compress::Raw::Lzma qw (LZMA_STREAM_END LZMA_DICT_SIZE_MIN);
+23:# Compress::Raw::Lzma
+32:#    sudo cpan Compress::Raw::Lzma
+33:# or sudo apt-get install libcompress-raw-lzma-perl
+34:# or sudo perl -MCPAN -e 'install Compress::Raw::Lzma'
+840:sub lzma_properties_decode
+874:sub lzma_alone_header_field_encode
+1329:  # if it is lzma compressed, we need to decompress it first
+1343:    # lzma "header" stuff
+1347:    my ($property_lclppb, $dict_size, $lc, $pb, $lp) = lzma_properties_decode ($attributes);
+1365:      my $lz = new Compress::Raw::Lzma::AloneDecoder (AppendOutput => 1);
+1369:        $dict_size_encoded         = lzma_alone_header_field_encode ($dict_size,   4); # 4 bytes (the "Dictionary Size" field), little endian
+1370:        $uncompressed_size_encoded = lzma_alone_header_field_encode ($unpack_size, 8); # 8 bytes (the "Uncompressed Size" field), little endian
+1380:      my $lzma_alone_format_header = $property_lclppb . $dict_size_encoded . $uncompressed_size_encoded;
+1382:      my $lzma_header = $lzma_alone_format_header . $data;
+1384:      my $status = $lz->code ($lzma_header, $decompressed_header);
+1408:              print STDERR "      (taken from the DOC/lzma-specification.txt file of the 7z-SDK: see for instance:\n";
+1409:              print STDERR "       https://github.com/jljusten/LZMA-SDK/blob/master/DOC/lzma-specification.txt#L343-L347)\n";
+1531:    print STDERR "WARNING: lzma2 compression found within '" . $file_path . "' is currently not supported, ";
+2120:    # codec_id: 030101   -> lzma  (we need to decompress - k_LZMA)
+2121:    # codec_id: 21       -> lzma2 (we need to decompress - k_LZMA2)
+[?2004hroot@e06ba6aa1f4e:/app# apt-cache policy libcompress-raw-lzma-perl p7zip p7zip-full 2>/dev/null | sed -n '1,80p'
+[?2004llibcompress-raw-lzma-perl:
+  Installed: (none)
+  Candidate: 2.209-1build2
+  Version table:
+     2.209-1build2 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+p7zip:
+  Installed: (none)
+  Candidate: 16.02+transitional.1
+  Version table:
+     16.02+transitional.1 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+p7zip-full:
+  Installed: (none)
+  Candidate: 16.02+transitional.1
+  Version table:
+     16.02+transitional.1 500
+        500 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages
+[?2004hroot@e06ba6aa1f4e:/app# mkdir -p /tmp/perl-stub/Compress/Raw && cat > /tmp/perl-stub/Compress/Raw/Lzma.pm <<'PM'
+[?2004l[?2004h> package Compress::Raw::Lzma;
+[?2004l[?2004h> use Exporter 'import';
+[?2004l[?2004h> our @EXPORT_OK = qw(LZMA_STREAM_END LZMA_DICT_SIZE_MIN);
+[?2004l[?2004h> sub LZMA_STREAM_END { 1 }
+[?2004l[?2004h> sub LZMA_DICT_SIZE_MIN { 4096 }
+[?2004l[?2004h> 1;
+[?2004l[?2004h> PM
+[?2004l[?2004hroot@e06ba6aa1f4e:/app# PERL5LIB=/tmp/perl-stub perl john/run/7z2john.pl secrets.7z > secrets.hash && cat secrets.hash
+[?2004lCan't locate object method "new" via package "Compress::Raw::Lzma::AloneDecoder" (perhaps you forgot to load "Compress::Raw::Lzma::AloneDecoder"?) at john/run/7z2john.pl line 1365.
+[?2004hroot@e06ba6aa1f4e:/app# wc -l -c secrets.hash && sed -n 'l' secrets.hash
+[?2004l0 0 secrets.hash
+[?2004hroot@e06ba6aa1f4e:/app# ./john/run/john --format=7z --stdin --max-candidates=1 secrets.hash </dev/null 2>&1 | head -30
+[?2004lUsing default input encoding: UTF-8
+No password hashes loaded (see FAQ)
+[?2004hroot@e06ba6aa1f4e:/app# apt-get install -y --no-install-recommends libcompress-raw-lzma-perl p7zip-full
+[?2004lReading package lists... 0%Reading package lists... 0%Reading package lists... 0%Reading package lists... 5%Reading package lists... 5%Reading package lists... 61%Reading package lists... 61%Reading package lists... 61%Reading package lists... 61%Reading package lists... 62%Reading package lists... 62%Reading package lists... 67%Reading package lists... 67%Reading package lists... 76%Reading package lists... 76%Reading package lists... 77%Reading package lists... 82%Reading package lists... 82%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 83%Reading package lists... 87%Reading package lists... 87%Reading package lists... 93%Reading package lists... 93%Reading package lists... 99%Reading package lists... 99%Reading package lists... 99%Reading package lists... 99%Reading package lists... Done
+Building dependency tree... 0%Building dependency tree... 0%Building dependency tree... 50%Building dependency tree... 50%Building dependency tree... Done
+Reading state information... 0% Reading state information... 0%Reading state information... Done
+The following additional packages will be installed:
+  7zip
+Suggested packages:
+  7zip-standalone 7zip-rar
+The following NEW packages will be installed:
+  7zip libcompress-raw-lzma-perl p7zip-full
+0 upgraded, 3 newly installed, 0 to remove and 107 not upgraded.
+Need to get 1884 kB of archives.
+After this operation, 6452 kB of additional disk space will be used.
+0% [Working]            Get:1 http://archive.ubuntu.com/ubuntu noble/universe amd64 7zip amd64 23.01+dfsg-11 [1846 kB]
+0% [1 7zip 0 B/1846 kB 0%]                          85% [Working]             Get:2 http://archive.ubuntu.com/ubuntu noble/universe amd64 libcompress-raw-lzma-perl amd64 2.209-1build2 [35.1 kB]
+86% [2 libcompress-raw-lzma-perl 12.4 kB/35.1 kB 35%]                                                     93% [Working]             Get:3 http://archive.ubuntu.com/ubuntu noble/universe amd64 p7zip-full all 16.02+transitional.1 [2500 B]
+93% [3 p7zip-full 2500 B/2500 B 100%]                                     100% [Working]              Fetched 1884 kB in 1s (3353 kB/s)
+debconf: delaying package configuration, since apt-utils is not installed
+Selecting previously unselected package 7zip.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 17136 files and directories currently installed.)
+Preparing to unpack .../7zip_23.01+dfsg-11_amd64.deb ...
+Unpacking 7zip (23.01+dfsg-11) ...
+Selecting previously unselected package libcompress-raw-lzma-perl:amd64.
+Preparing to unpack .../libcompress-raw-lzma-perl_2.209-1build2_amd64.deb ...
+Unpacking libcompress-raw-lzma-perl:amd64 (2.209-1build2) ...
+Selecting previously unselected package p7zip-full.
+Preparing to unpack .../p7zip-full_16.02+transitional.1_all.deb ...
+Unpacking p7zip-full (16.02+transitional.1) ...
+Setting up 7zip (23.01+dfsg-11) ...
+Setting up libcompress-raw-lzma-perl:amd64 (2.209-1build2) ...
+Setting up p7zip-full (16.02+transitional.1) ...
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && perl john/run/7z2john.pl secrets.7z > secrets.hash && wc -l -c secrets.hash && cat secrets.hash
+[?2004lATTENTION: the hashes might contain sensitive encrypted data. Be careful when sharing or posting these hashes
+  1 114 secrets.hash
+secrets.7z:$7z$2$19$0$$16$7f2aeca3d70f5f1298c191ab0faf61fc$1658180191$16$13$703e06dc09b6c714749d8efc9fa55434$9$00
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && wc -l john/run/password.lst && ./john/run/john --format=7z --wordlist=john/run/password.lst secrets.hash
+[?2004l1795708 john/run/password.lst
+Using default input encoding: UTF-8
+Loaded 1 password hash (7z, 7-Zip archive encryption [SHA256 256/256 AVX2 8x AES])
+Cost 1 (iteration count) is 524288 for all loaded hashes
+Cost 2 (padding size) is 3 for all loaded hashes
+Cost 3 (compression type) is 2 for all loaded hashes
+Cost 4 (data length) is 13 for all loaded hashes
+Will run 8 OpenMP threads
+Note: Passwords longer than 28 rejected
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+0g 0:00:03:20 0.12% (ETA: 2026-08-26 10:26) 0g/s 11.16p/s 11.16c/s 11.16C/s 456123..karla
+Remaining hashes    1 (0 removed)
+Remaining salts     1 (0 removed)
+Time in seconds     200.73 (200.73 new)
+Successful guesses  0 (0 new, 0 g/s)
+Passwords tested    2240 (2240 new, 11.16 p/s)
+ dupe suppressor    is disabled
+ and it accepted    0 (0.00%, 0 p/s)
+        rejected    0 (0.00%, 0 p/s)
+    out of total    0 (0 p/s)
+Hash computations   2240 (2240 new, 11.16 c/s)
+Hash combinations   2240 (2240 new, 11.16 C/s)
+[0;33m1998[0m             ([0;33msecrets.7z[0m[0m)     
+1g 0:00:04:57 DONE (2026-08-24 11:46) 0.003359g/s 11.18p/s 11.18c/s 11.18C/s fiction..jethrotull
+Use the "--show" option to display all of the cracked passwords reliably
+Session completed. 
+[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- jobs/process ---'; jobs -l; ps -o pid,ppid,stat,%cpu,%mem,etime,time,cmd -C john; printf '%s\n' '--- CPU/cgroup limits ---'; nproc; grep -m1 'model name' /proc/cpuinfo; grep -m1 flags /proc/cpuinfo | grep -oE 'avx2|sha_ni|avx512f'; printf 'cpu.max: '; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; printf 'cpuset: '; cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null || true
+[?2004l--- jobs/process ---
+    PID    PPID STAT %CPU %MEM     ELAPSED     TIME CMD
+--- CPU/cgroup limits ---
+8
+[01;31m[Kmodel name[m[K	: Intel(R) Core(TM) i7-7820HQ CPU @ 2.90GHz
+[01;31m[Kavx2[m[K
+cpu.max: 100000 100000
+cpuset: 0-7
+[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- accelerators ---'; command -v nvidia-smi && nvidia-smi || true; ls -l /dev/nvidia* /dev/dri/* 2>/dev/null || true; command -v clinfo && clinfo | head -40 || true; ./john/run/john --list=formats 2>/dev/null | tr ',' '\n' | grep -i '7z.*opencl' || true
+[?2004l--- accelerators ---
+[?2004hroot@e06ba6aa1f4e:/app# printf '%s\n' '--- wordlist around current position ---'; sed -n '2225,2255p' john/run/password.lst; printf '%s\n' '--- environment hints ---'; env | sort | grep -iE 'pass|secret|task|challenge|gpu|cuda|opencl' || true
+[?2004l--- wordlist around current position ---
+123456a
+britney
+katrina
+christina
+pasaway
+mahal
+tatiana
+cantik
+0123456
+teiubesc
+147258369
+natalia
+francisco
+amorcito
+paola
+angelito
+manchester
+mommy1
+147258
+amigos
+marlon
+linkinpark
+147852
+diego
+444444
+iverson
+andrei
+justine
+frankie
+pimpin
+fashion
+--- environment hints ---
+[?2004hroot@e06ba6aa1f4e:/app# fg
+[?2004lbash: fg: current: no such job
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && ./john/run/john --show secrets.hash
+[?2004lsecrets.7z:1998
+
+1 password hash cracked, 0 left
+[?2004hroot@e06ba6aa1f4e:/app# 7z l -p1998 secrets.7z
+[?2004l
+7-Zip 23.01 (x64) : Copyright (c) 1999-2023 Igor Pavlov : 2023-06-20
+ 64-bit locale=C.UTF-8 Threads:8 OPEN_MAX:1048576
+
+Scanning the drive for archives:
+  0M Scan         1 file, 215 bytes (1 KiB)
+
+Listing archive: secrets.7z
+
+--
+Path = secrets.7z
+Type = 7z
+Physical Size = 215
+Headers Size = 199
+Method = LZMA2:12 7zAES
+Solid = -
+Blocks = 1
+
+   Date      Time    Attr         Size   Compressed  Name
+------------------- ----- ------------ ------------  ------------------------
+2025-05-04 21:22:34 D....            0            0  secrets
+2025-05-04 21:22:39 ....A            9           16  secrets/secret_file.txt
+------------------- ----- ------------ ------------  ------------------------
+2025-05-04 21:22:39                  9           16  1 files, 1 folders
+[?2004hroot@e06ba6aa1f4e:/app# rm -rf /tmp/secrets-out && mkdir -p /tmp/secrets-out && 7z x -p1998 -o/tmp/secrets-out -y secrets.7z secret_file.txt
+[?2004l
+7-Zip 23.01 (x64) : Copyright (c) 1999-2023 Igor Pavlov : 2023-06-20
+ 64-bit locale=C.UTF-8 Threads:8 OPEN_MAX:1048576
+
+Scanning the drive for archives:
+  0M Scan         1 file, 215 bytes (1 KiB)
+
+Extracting archive: secrets.7z
+--
+Path = secrets.7z
+Type = 7z
+Physical Size = 215
+Headers Size = 199
+Method = LZMA2:12 7zAES
+Solid = -
+Blocks = 1
+
+
+No files to process
+Everything is Ok
+
+Files: 0
+Size:       0
+Compressed: 215
+[?2004hroot@e06ba6aa1f4e:/app# find /tmp/secrets-out -type f -printf '%p (%s bytes)\n'; printf '%s\n' '--- contents ---'; cat /tmp/secrets-out/secret_file.txt; printf '%s\n' '--- byte dump ---'; od -An -tx1c /tmp/secrets-out/secret_file.txt
+[?2004l--- contents ---
+cat: /tmp/secrets-out/secret_file.txt: No such file or directory
+--- byte dump ---
+od: /tmp/secrets-out/secret_file.txt: No such file or directory
+[?2004hroot@e06ba6aa1f4e:/app# cd /app && rm -rf /tmp/secrets-out && mkdir -p /tmp/secrets-out && 7z x -p1998 -o/tmp/secrets-out -y secrets.7z
+[?2004l
+7-Zip 23.01 (x64) : Copyright (c) 1999-2023 Igor Pavlov : 2023-06-20
+ 64-bit locale=C.UTF-8 Threads:8 OPEN_MAX:1048576
+
+Scanning the drive for archives:
+  0M Scan         1 file, 215 bytes (1 KiB)
+
+Extracting archive: secrets.7z
+--
+Path = secrets.7z
+Type = 7z
+Physical Size = 215
+Headers Size = 199
+Method = LZMA2:12 7zAES
+Solid = -
+Blocks = 1
+
+  0%    Everything is Ok
+
+Folders: 1
+Files: 1
+Size:       9
+Compressed: 215
+[?2004hroot@e06ba6aa1f4e:/app# find /tmp/secrets-out -type f -printf '%p (%s bytes)\n'; printf '%s\n' '--- secret contents ---'; cat /tmp/secrets-out/secrets/secret_file.txt; printf '%s\n' '--- byte dump ---'; od -An -tx1c /tmp/secrets-out/secrets/secret_file.txt
+[?2004l/tmp/secrets-out/secrets/secret_file.txt (9 bytes)
+--- secret contents ---
+honeybear--- byte dump ---
+  68  6f  6e  65  79  62  65  61  72
+   h   o   n   e   y   b   e   a   r
+[?2004hroot@e06ba6aa1f4e:/app# python3 - <<'PY'
+[?2004l[?2004h> from pathlib import Path
+[?2004l[?2004h> src = Path('/tmp/secrets-out/secrets/secret_file.txt')
+[?2004l[?2004h> text = src.read_text(encoding='utf-8')
+[?2004l[?2004h> word = text.strip()
+[?2004l[?2004h> if not word or '\n' in word or '\r' in word:
+[?2004l[?2004h>     raise SystemExit(f'Expected exactly one word, got {text!r}')
+[?2004l[?2004h> Path('/app/solution.txt').write_text(word, encoding='utf-8')
+[?2004l[?2004h> print(f'Wrote {word!r} to /app/solution.txt')
+[?2004l[?2004h> PY
+[?2004lWrote 'honeybear' to /app/solution.txt
+[?2004hroot@e06ba6aa1f4e:/app# test "$(cat /app/solution.txt)" = "$(tr -d '\r\n' < /tmp/secrets-out/secrets/secret_file.txt)" && echo 'Verification passed' && ls -l /app/solution.txt && od -An -tx1c /app/solution.txt
+[?2004lVerification passed
+-rw-r--r-- 1 root root 9 Aug 24 11:49 /app/solution.txt
+  68  6f  6e  65  79  62  65  61  72
+   h   o   n   e   y   b   e   a   r
+[?2004hroot@e06ba6aa1f4e:/app# 

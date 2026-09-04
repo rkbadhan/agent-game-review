@@ -1,0 +1,13 @@
+{
+    "task": {
+        "name": "terminal-bench/fix-git",
+        "ref": "latest"
+    },
+    "trial_name": "fix-git__XAZ696F",
+    "trials_dir": "eval-runs\\batch2t-fix-git",
+    "agent": {
+        "name": "terminus-2",
+        "model_name": "openrouter/stealth/ox-alpha"
+    },
+    "job_id": "a33eb981-0f75-4d38-8d91-bd81d02fad24"
+}
