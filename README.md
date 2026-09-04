@@ -16,7 +16,7 @@ the interpretation stays bounded by evidence rather than free to hallucinate.
 ## Quick start (about five minutes)
 
 ```bash
-pip install .[api]        # or: uv pip install .[api]
+pip install '.[api]'      # or: uv pip install '.[api]'  (quote it: zsh globs unquoted brackets)
 agr demo
 # open http://127.0.0.1:8000
 ```
@@ -82,6 +82,9 @@ The deterministic review needs no model. To add the AI layer — taxonomy
 verdicts, ranked root causes, better actions — bring **any** OpenAI-compatible
 or Anthropic-compatible model: OpenRouter, Together, or a fully local Ollama/
 vLLM server.
+
+> **Windows note:** stop any running `agr serve` before installing extras —
+> pip cannot replace the running `agr.exe` and the install can corrupt.
 
 ```bash
 pip install '.[model-openai]'
