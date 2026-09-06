@@ -49,6 +49,10 @@ CHECK_SOURCES = {
     "output_interpretation",
 }
 
+# When the check's evidence was collected relative to the agent's execution
+# (AGR-04): post-run verifier output is not information the agent had.
+CHECK_TIMINGS = {"during_run", "post_run"}
+
 # Capture completeness (spec §6.1 / §7.3).
 CAPTURE_COMPLETENESS = {"incomplete", "partial", "complete", "corrected"}
 
@@ -277,6 +281,9 @@ class VerifierCheck:
     observed: Optional[list] = None
     source_pointers: list[str] = field(default_factory=list)
     derivation_version: str = ""
+    # AGR-04: when the evidence was collected — post-run verifier output is
+    # labelled so it is never presented as information the agent had.
+    timing: Optional[str] = None
 
     def to_dict(self) -> dict:
         return _clean(asdict(self))
@@ -583,6 +590,9 @@ class DetectorResult:
     evaluated: bool
     candidates: list[Candidate] = field(default_factory=list)
     unmet_capabilities: list[str] = field(default_factory=list)
+    # AGR-05: True when the detector is a registered placeholder — distinct
+    # from a capability-gated skip and from an evaluated no-issue run.
+    placeholder: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -590,4 +600,5 @@ class DetectorResult:
             "evaluated": self.evaluated,
             "candidates": [c.to_dict() for c in self.candidates],
             "unmet_capabilities": self.unmet_capabilities,
+            "placeholder": self.placeholder,
         }

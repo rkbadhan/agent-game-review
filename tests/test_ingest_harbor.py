@@ -28,7 +28,7 @@ def _trial(tmp_path, steps, *, reward=1.0, exception=None, schema="ATIF-v1.7", a
         "steps": steps,
     }
     agent_dir = tmp_path / "agent"
-    agent_dir.mkdir()
+    agent_dir.mkdir(exist_ok=True)
     (agent_dir / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     result = {"reward": reward, "exception": exception}
     (tmp_path / "result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -75,8 +75,12 @@ def test_reward_one_synthesises_a_passed_verifier(tmp_path):
     check = res.doc["verifier"]["checks"][0]
     assert check["status"] == "passed"
     assert check["source"] == "native_structured"
+    # AGR-04: the reward is post-run verifier evidence — labelled as such.
+    assert check["timing"] == "post_run"
     assert res.doc["capture_completeness"] == "complete"
-    assert res.doc["capabilities"]["verifier_code"] == "complete"
+    # Seeing a reward sidecar does not make the verifier's CODE visible.
+    assert res.doc["capabilities"]["verifier_code"] == "partial"
+    assert res.doc["capabilities"]["verifier_results"] == "complete"
 
 
 def test_reward_zero_synthesises_a_failed_verifier(tmp_path):
@@ -433,5 +437,276 @@ def test_cli_ingest_harbor_batches_a_job_directory(tmp_path):
 
     ingested_store = Store(str(store))
     # One capture registered per trial, keyed by the derived logical run id.
-    assert ingested_store.read_index("harbor__alpha__tr-alpha")
-    assert ingested_store.read_index("harbor__beta__tr-beta")
+    # No trial UUID in these minimal results, so identity is the adapter-0.6
+    # hash of the complete task+session identity (AGR-02) — distinct per trial,
+    # never a truncated prefix.
+    import hashlib
+
+    def _hash_id(task, session):
+        return f"harbor__{task}__{hashlib.sha256(f'{task}|{session}'.encode()).hexdigest()[:32]}"
+
+    assert ingested_store.read_index(_hash_id("alpha", "tr-alpha"))
+    assert ingested_store.read_index(_hash_id("beta", "tr-beta"))
+
+
+# --- AGR-02: execution identity (adapter 0.6) --------------------------------
+
+def _trial_with_session(tmp_path, session_id, *, trial_uuid=None, task="terminal-bench/nginx-request-logging"):
+    """A Harbor trial whose session id is task-prefixed, as mini-swe-agent writes."""
+    steps = [{"step_id": 1, "source": "user", "message": "log requests"}]
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    d = Path(_trial(tmp_path, steps, reward=1.0))
+    traj = json.loads((d / "agent" / "trajectory.json").read_text(encoding="utf-8"))
+    # Real mini-swe-agent trajectories carry a session_id and no trajectory_id;
+    # identity rests on the session the harness recorded.
+    traj["session_id"] = session_id
+    traj.pop("trajectory_id", None)
+    (d / "agent" / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+    result = json.loads((d / "result.json").read_text(encoding="utf-8"))
+    result["task_name"] = task
+    if trial_uuid:
+        result["id"] = trial_uuid
+        result["trial_name"] = session_id.split("__agent")[0]
+    (d / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    return d
+
+
+def test_distinct_attempts_sharing_a_session_prefix_get_distinct_run_ids(tmp_path):
+    """The reproduced AGR-02 defect: three attempts of one task whose session
+    ids are task-prefixed ('nginx-request-logging__<SHORT>__agent') all
+    truncated to the same first 12 chars and merged into one logical run.
+    Distinct executions must get distinct ids (pass/fail/pass outcomes)."""
+    sessions = ["nginx-request-logging__vTNAJM8__agent",
+                "nginx-request-logging__h6dA2go__agent",
+                "nginx-request-logging__rwPp8Q4__agent"]
+    ids = set()
+    for i, session in enumerate(sessions):
+        d = _trial_with_session(tmp_path / f"t{i}", session,
+                                trial_uuid=f"00000000-0000-4000-8000-{i:012d}")
+        res = convert(str(d))
+        ids.add(res.doc["run"]["logical_run_id"])
+        assert res.doc["run"]["trial_uuid"] == f"00000000-0000-4000-8000-{i:012d}"
+        assert res.doc["run"]["trial_name"].startswith("nginx-request-logging__")
+    assert len(ids) == 3
+
+
+def test_run_id_prefers_the_full_harbor_trial_uuid(tmp_path):
+    d = _trial_with_session(tmp_path, "nginx-request-logging__vTNAJM8__agent",
+                            trial_uuid="96cfb6ac-cbf9-4858-b9b3-8916b3f86827")
+    res = convert(str(d))
+    run_id = res.doc["run"]["logical_run_id"]
+    assert run_id == "harbor__terminal-bench/nginx-request-logging__96cfb6ac-cbf9-4858-b9b3-8916b3f86827"
+
+
+def test_without_a_uuid_the_run_id_hashes_the_complete_identity(tmp_path):
+    """No UUID: the id derives from the FULL task+session identity — stable
+    across re-ingests and machines, never a 12-char prefix that collides."""
+    a = _trial_with_session(tmp_path / "a", "nginx-request-logging__vTNAJM8__agent")
+    b = _trial_with_session(tmp_path / "b", "nginx-request-logging__h6dA2go__agent")
+    import hashlib
+
+    expected = "harbor__terminal-bench/nginx-request-logging__" + hashlib.sha256(
+        "terminal-bench/nginx-request-logging|nginx-request-logging__vTNAJM8__agent".encode()
+    ).hexdigest()[:32]
+    ra, rb = convert(str(a)), convert(str(b))
+    assert ra.doc["run"]["logical_run_id"] == expected
+    assert ra.doc["run"]["logical_run_id"] != rb.doc["run"]["logical_run_id"]
+    # The weaker identity basis is visible as a warning, not silent.
+    assert any("hash of the full task+session identity" in w for w in ra.warnings)
+
+
+def test_hash_identity_is_stable_across_locations(tmp_path):
+    """Re-ingesting the same trial from a different directory keeps the id —
+    identity lives in the task+session, not the filesystem path."""
+    a = _trial_with_session(tmp_path / "first", "nginx-request-logging__vTNAJM8__agent")
+    b = _trial_with_session(tmp_path / "elsewhere" / "copy", "nginx-request-logging__vTNAJM8__agent")
+    assert convert(str(a)).doc["run"]["logical_run_id"] == convert(str(b)).doc["run"]["logical_run_id"]
+
+
+def test_reingest_of_the_same_trial_is_idempotent(tmp_path):
+    """Same trial, same store: the second ingest is a no-op on the source."""
+    from agr.store import Store
+    from agr.pipeline import analyze
+
+    d = _trial_with_session(tmp_path / "t", "nginx-request-logging__vTNAJM8__agent",
+                            trial_uuid="96cfb6ac-cbf9-4858-b9b3-8916b3f86827")
+    store = Store(str(tmp_path / "store"))
+    doc = convert(str(d)).doc
+    first = analyze(doc, store)
+    second = analyze(doc, store)
+    assert second.idempotent
+    assert second.run_source.capture_revision == first.run_source.capture_revision
+    assert second.run_source.source_capture_id == first.run_source.source_capture_id
+
+
+def test_iter_trials_detailed_accounts_for_every_directory(tmp_path):
+    """Discovery reports excluded directories WITH a reason, so a batch run can
+    account for every discovered trial as ingested or excluded (AGR-02)."""
+    job = tmp_path / "job"
+    _trial_with_session(job / "good", "nginx-request-logging__vTNAJM8__agent")
+    errored = job / "errored"
+    errored.mkdir()
+    (errored / "result.json").write_text(json.dumps({"reward": None}), encoding="utf-8")
+
+    from agr.ingest_harbor import iter_trials_detailed
+
+    detail = iter_trials_detailed(job)
+    by_name = {p.name: reason for p, reason in detail}
+    assert set(by_name) == {"good", "errored"}
+    assert by_name["good"] is None
+    assert by_name["errored"] and "no reviewable trajectory" in by_name["errored"]
+    # iter_trials keeps its reviewed-only contract.
+    from agr.ingest_harbor import iter_trials
+
+    assert [p.name for p in iter_trials(job)] == ["good"]
+
+
+# --- AGR-04: preserve the information needed for diagnosis --------------------
+
+def _write_ctrf(trial, tests, summary=None):
+    ctrf_dir = Path(trial) / "verifier"
+    ctrf_dir.mkdir(exist_ok=True)
+    payload = {"results": {"tool": {"name": "pytest"}, "summary": summary or {"passed": len(tests)},
+                           "tests": tests}}
+    (ctrf_dir / "ctrf.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_ctrf_tests_become_atomic_checks_with_the_aggregate_reward(tmp_path):
+    """The acceptance case: eight CTRF tests, one failing (including
+    test_outputs.py::test_log_file_format), each its own check; the aggregate
+    reward stays the run outcome as an explicitly labelled aggregate check."""
+    tests = [{"name": f"test_outputs.py::test_{i}", "status": "passed",
+              "file_path": "test_outputs.py"} for i in range(7)]
+    tests.append({"name": "test_outputs.py::test_log_file_format", "status": "failed",
+                  "file_path": "test_outputs.py"})
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=0.0)
+    _write_ctrf(trial, tests)
+    res = convert(trial, task_id="t")
+    checks = res.doc["verifier"]["checks"]
+    ids = [c["check_id"] for c in checks]
+    assert len(checks) == 9  # 8 CTRF tests + the aggregate reward
+    assert "test_outputs.py::test_log_file_format" in ids
+    failing = [c for c in checks if c["status"] == "failed"
+               and c["check_id"] != "terminal_bench_reward"]
+    assert [c["check_id"] for c in failing] == ["test_outputs.py::test_log_file_format"]
+    # The aggregate reward survives as the run outcome, named as an aggregate.
+    agg = next(c for c in checks if c["check_id"] == "terminal_bench_reward")
+    assert agg["status"] == "failed" and "aggregate" in agg["name"]
+
+
+def test_ctrf_checks_are_labelled_post_run_with_source_pointers(tmp_path):
+    """Post-run verifier evidence is labelled so it is never confused with
+    information the agent had during execution."""
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    _write_ctrf(trial, [{"name": "test_outputs.py::test_x", "status": "passed",
+                         "file_path": "test_outputs.py"}])
+    res = convert(trial, task_id="t")
+    for c in res.doc["verifier"]["checks"]:
+        assert c["timing"] == "post_run"
+    ctrf_check = next(c for c in res.doc["verifier"]["checks"]
+                      if c["check_id"] == "test_outputs.py::test_x")
+    assert "verifier/ctrf.json" in ctrf_check["source_pointers"]
+    assert "verifier/test_outputs.py" in ctrf_check["source_pointers"]
+
+
+def test_unknown_ctrf_status_is_preserved_not_guessed(tmp_path):
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    _write_ctrf(trial, [{"name": "test_a", "status": "skipped"},
+                        {"name": "test_b", "status": "WEIRD"}])
+    res = convert(trial, task_id="t")
+    by_id = {c["check_id"]: c for c in res.doc["verifier"]["checks"]}
+    assert by_id["test_a"]["status"] == "skipped"
+    assert by_id["test_b"]["status"] == "unknown"
+    assert any("WEIRD" in w for w in res.warnings)
+
+
+def test_verifier_log_excerpt_is_attached_capped_and_sourced(tmp_path):
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    _write_ctrf(trial, [{"name": "test_a", "status": "failed"}])
+    vdir = Path(trial) / "verifier"
+    (vdir / "test-stdout.txt").write_text("E   assert 404 == 200\n" * 10, encoding="utf-8")
+    res = convert(trial, task_id="t")
+    excerpt = res.doc["verifier"]["log_excerpts"][0]
+    assert excerpt["source"] == "verifier/test-stdout.txt"
+    assert excerpt["timing"] == "post_run"
+    assert "assert 404 == 200" in excerpt["content"]
+    # Over the cap -> truncated, never silently omitted or unbounded.
+    (vdir / "test-stdout.txt").write_text("x" * 20_000, encoding="utf-8")
+    res2 = convert(trial, task_id="t")
+    assert res2.doc["verifier"]["log_excerpts"][0]["content"].endswith("[truncated]")
+    assert any("truncated" in w for w in res2.warnings)
+
+
+def test_missing_or_broken_ctrf_falls_back_to_the_aggregate_reward(tmp_path):
+    steps = [{"step_id": 1, "source": "user", "message": "do it"}]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    assert [c["check_id"] for c in res.doc["verifier"]["checks"]] == ["terminal_bench_reward"]
+    broken = _trial(tmp_path, steps, reward=1.0)
+    vdir = Path(broken) / "verifier"
+    vdir.mkdir(exist_ok=True)
+    (vdir / "ctrf.json").write_text("{not json", encoding="utf-8")
+    res2 = convert(broken, task_id="t")
+    assert [c["check_id"] for c in res2.doc["verifier"]["checks"]] == ["terminal_bench_reward"]
+    assert any("ctrf" in w.lower() for w in res2.warnings)
+
+
+def test_explicit_verifier_wins_over_ctrf(tmp_path):
+    explicit = {"checks": [{"check_id": "C1", "name": "C1", "status": "failed",
+                            "source": "native_structured"}]}
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    _write_ctrf(trial, [{"name": "test_a", "status": "passed"}])
+    res = convert(trial, task_id="t", verifier=explicit)
+    assert [c["check_id"] for c in res.doc["verifier"]["checks"]] == ["C1"]
+
+
+def test_full_task_instruction_is_kept_not_an_excerpt(tmp_path):
+    """The complete instruction reaches doc.task.instruction and the reviewer's
+    packet field — the plan's 220-character-excerpt defect stays dead."""
+    full = "Please solve this issue: " + ("Configure detailed request logging. " * 130)
+    assert len(full) > 4_700  # nginx-scale instruction
+    steps = [{"step_id": 1, "source": "user", "message": full}]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    assert res.doc["task"]["instruction"] == full
+    assert len(res.doc["task"]["instruction"]) == len(full)
+
+
+def test_step_timestamps_are_preserved_when_the_source_has_them(tmp_path):
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},          # no ts
+        {"step_id": 2, "source": "agent", "message": "working",
+         "timestamp": "2026-08-24T13:30:38.435732+00:00"},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    stamped = [s for s in res.doc["steps"] if s["kind"] == "model_output"]
+    assert stamped and all(s.get("timestamp") == "2026-08-24T13:30:38.435732+00:00"
+                           for s in stamped)
+    # Never synthesised for steps the source left timestampless.
+    received = next(s for s in res.doc["steps"] if s["kind"] == "task_received")
+    assert "timestamp" not in received
+
+
+def test_task_checksum_and_ref_recorded_when_source_supports_them(tmp_path):
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    result_path = Path(trial) / "result.json"
+    data = json.loads(result_path.read_text(encoding="utf-8"))
+    data["task_checksum"] = "913305d8"
+    data["task_id"] = {"org": "terminal-bench", "name": "nginx-request-logging", "ref": "v2.1"}
+    result_path.write_text(json.dumps(data), encoding="utf-8")
+    res = convert(trial, task_id="t")
+    assert res.doc["run"]["task_checksum"] == "913305d8"
+    assert res.doc["run"]["task_org"] == "terminal-bench"
+    assert res.doc["run"]["task_name"] == "nginx-request-logging"
+    assert res.doc["run"]["task_ref"] == "v2.1"
+
+
+def test_packet_carries_the_full_instruction_and_check_timing(tmp_path):
+    """The reviewer's typed input packet: dedicated task_instruction field,
+    atomic checks carrying their post-run timing labels."""
+    from agr.model_packet import build_packet
+    from agr.reviewer import ReviewerContext
+    full = "Please solve this issue: " + ("Configure detailed request logging. " * 130)
+    ctx = ReviewerContext(
+        run_id="r", source_capture_id="c", candidates=[], slices=[], checks=[],
+        events=[], task_instruction=full)
+    packet, _red = build_packet(ctx)
+    assert packet["task_instruction"] == full

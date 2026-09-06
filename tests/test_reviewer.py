@@ -5,9 +5,11 @@ integration, hand-built records for isolated-stage units, plain ``assert`` on
 exact values. No model call is involved anywhere in the envelope.
 """
 
+import json
+
 from agr import reviewer
 from agr.pipeline import analyze
-from agr.schema import Candidate, EvidenceSlice, VerifierCheck
+from agr.schema import Candidate, DerivedEvent, EvidenceSlice, VerifierCheck
 from agr.store import Store
 
 
@@ -28,12 +30,36 @@ def _candidate(cid, **kw):
                      detector=kw.pop("detector", "det"), **kw)
 
 
-def _ctx(candidates, checks=(), slices=(), events=(), recoveries=()):
+def _ctx(candidates, checks=(), slices=(), events=(), recoveries=(),
+         profile=None, declared_artifacts=()):
+    # AGR-03: the envelope validates that every anchor resolves against the
+    # capture, so the harness synthesises a minimal event for any anchor a
+    # hand-built candidate references but the caller did not supply.
+    supplied = {e.event_id for e in events}
+    for cand in candidates:
+        for aid in cand.anchor_event_ids:
+            if aid not in supplied:
+                events = list(events) + [DerivedEvent(
+                    event_id=aid, run_id="r", source_capture_id="c",
+                    sequence=len(supplied) + 1, source_step_ids=[aid],
+                    event_type="tool_call", actor="agent")]
+                supplied.add(aid)
     return reviewer.ReviewerContext(
         run_id="r", source_capture_id="c", candidates=list(candidates),
         slices=list(slices), checks=list(checks), events=list(events),
-        recoveries=list(recoveries),
+        recoveries=list(recoveries), profile=profile,
+        declared_artifacts=list(declared_artifacts),
     )
+
+
+def _profile(**capabilities):
+    """A CapabilityProfile for isolated-stage units (defaults to a full capture)."""
+    from agr.schema import CapabilityProfile
+
+    caps = {"messages": "complete", "tool_calls": "complete",
+            "tool_results": "complete", "filesystem": "checkpoint_only"}
+    caps.update(capabilities)
+    return CapabilityProfile(run_id="r", source_capture_id="c", capabilities=caps)
 
 
 # --- Stage G: fact validation ------------------------------------------------
@@ -121,23 +147,43 @@ def test_render_matches_the_ceiling():
 
 
 def test_two_cards_on_one_moment_collapse_to_one():
-    # Two candidates anchored at the same event: the higher-value one (touching a
-    # failed check) is kept; the other is superseded, not shown.
+    # AGR-05: dedup runs on issue identity. Two cards about the SAME subject
+    # (here: the same failed requirement, anchored differently) collapse to
+    # the higher-value one; the other is superseded, not shown.
+    checks = [_check("C2", "failed")]
+    first = _candidate("cand_req", affected_checks=["C2"], anchor_event_ids=["evt_sub"],
+                       structured_facts=[{"type": "requirement_status", "check_id": "C2",
+                                          "status_at_submission": "failed"}])
+    twin = _candidate("cand_req2", affected_checks=["C2"], anchor_event_ids=["evt_earlier"],
+                      structured_facts=[{"type": "requirement_status", "check_id": "C2",
+                                         "status_at_submission": "failed"}])
+    slices = [_slice("C2", "hypothesized"), _slice("C2", "hypothesized")]
+    moments = reviewer.run_reviewer(_ctx([first, twin], checks=checks, slices=slices,
+                                         declared_artifacts=[]))
+    selected = [m for m in moments if m.selected]
+    assert len(selected) == 1
+    assert selected[0].candidate_id == "cand_req"
+    superseded = next(m for m in moments if m.candidate_id == "cand_req2")
+    assert superseded.selected is False
+    assert superseded.superseded_by == selected[0].moment_id
+
+
+def test_distinct_issues_sharing_a_check_both_survive():
+    # AGR-05 acceptance: two distinct contributing problems are kept even when
+    # both map to the same (aggregate) check — a requirement failure and an
+    # artifact absence are different issues, not facets of one moment.
     checks = [_check("C2", "failed")]
     with_check = _candidate("cand_req", affected_checks=["C2"], anchor_event_ids=["evt_sub"],
                             structured_facts=[{"type": "requirement_status", "check_id": "C2",
                                                "status_at_submission": "failed"}])
-    absence = _candidate("cand_abs", anchor_event_ids=["evt_sub"],
+    absence = _candidate("cand_abs", affected_checks=["C2"], anchor_event_ids=["evt_sub"],
                          structured_facts=[{"type": "absence", "declared_artifact": "x.txt"}])
-    slices = [_slice("C2", "hypothesized"),
-              _slice("cand_abs", "dependency_linked", branch="omission")]
-    moments = reviewer.run_reviewer(_ctx([with_check, absence], checks=checks, slices=slices))
+    slices = [_slice("C2", "hypothesized"), _slice("C2", "hypothesized")]
+    moments = reviewer.run_reviewer(_ctx([with_check, absence], checks=checks, slices=slices,
+                                         declared_artifacts=["x.txt"]))
     selected = [m for m in moments if m.selected]
-    assert len(selected) == 1
-    assert selected[0].candidate_id == "cand_req"
-    superseded = next(m for m in moments if m.candidate_id == "cand_abs")
-    assert superseded.selected is False
-    assert superseded.superseded_by == selected[0].moment_id
+    assert {m.candidate_id for m in selected} == {"cand_req", "cand_abs"}
+    assert all(m.superseded_by is None for m in selected)
 
 
 def test_distinct_anchors_are_not_merged():
@@ -174,7 +220,15 @@ def test_review_moments_persist_and_are_deterministic_only(tmp_path, load_fixtur
     m = selected[0]
     assert m.detector == "unresolved_requirement_at_submission"
     assert m.attribution_ceiling == "dependency_linked"
-    assert "check C3 was still failing at submission" in m.rendered_statement
+    # AGR-03 timing rule: the chess fixture's C3 comes from the post-run
+    # verifier result.json; the agent's trajectory never observes it, so the
+    # card must NOT claim the agent saw it "still failing at submission".
+    assert "failed the run's final verifier" in m.rendered_statement
+    assert "records no observation of this check" in m.rendered_statement
+    assert "still failing at submission" not in m.rendered_statement
+    fact = next(f for f in m.validated_facts if f["type"] == "requirement_status")
+    assert fact["status_basis"] == "final_verifier"
+    assert fact["agent_observed_failure"] is False
     # No taxonomy verdict is authored deterministically — that is Stage F's job.
     assert m.taxonomy_verdict is None
     assert m.review_mode == "deterministic_only"
@@ -274,8 +328,13 @@ def test_discovered_drift_moment_survives_the_full_envelope():
             {"type": "absence", "declared_artifact": "/app/results.json"},
         ],
     )
-    # No artifact_observation events -> results.json counts as absent.
-    moments = reviewer.run_reviewer(_ctx([cand], checks=[_check("C1", "failed")], events=evs))
+    # No artifact_observation events -> results.json counts as absent. The
+    # artifact must be declared (AGR-03) and the model candidate's fact types
+    # must meet the capability profile (AGR-03 observability gate).
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], events=evs,
+        profile=_profile(filesystem="checkpoint_only"),
+        declared_artifacts=["/app/results.json"]))
     selected = [m for m in moments if m.selected]
     assert len(selected) == 1
     m = selected[0]
@@ -284,3 +343,182 @@ def test_discovered_drift_moment_survives_the_full_envelope():
     assert m.attribution_ceiling == "hypothesized"
     assert m.gate_results["fact_validation"] == "passed"
     assert all(f["validation"] == "passed" for f in m.validated_facts)
+
+
+# --- AGR-03: evidence validation enforces what it claims ----------------------
+
+def test_phantom_anchor_is_rejected():
+    """An anchor that does not exist in the capture is a dangling reference.
+    Built directly (not via ``_ctx``, which synthesises referenced anchors)."""
+    cand = _candidate("cand_phantom", affected_checks=["C1"], anchor_event_ids=["evt_missing"],
+                      structured_facts=[{"type": "requirement_status", "check_id": "C1",
+                                         "status_at_submission": "failed"}])
+    checks = [_check("C1", "failed")]
+    ctx = reviewer.ReviewerContext(
+        run_id="r", source_capture_id="c", candidates=[cand],
+        slices=[], checks=checks, events=[], declared_artifacts=[])
+    (m,) = reviewer.run_reviewer(ctx)
+    assert m.gate_results["references"]["status"] == "dangling"
+    assert "evt_missing" in m.gate_results["references"]["dangling"]["anchor_event_ids"]
+    assert m.selected is False
+
+
+def test_phantom_check_is_rejected():
+    """An affected check that does not exist cannot make a finding relevant."""
+    cand = _candidate("cand_phantom", affected_checks=["C99"], anchor_event_ids=["evt_sub"],
+                      structured_facts=[{"type": "requirement_status", "check_id": "C1",
+                                         "status_at_submission": "failed"}])
+    checks = [_check("C1", "failed")]
+    moments = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    m = moments[0]
+    assert m.gate_results["references"]["status"] == "dangling"
+    assert m.selected is False
+
+
+def test_empty_quote_is_rejected_not_silently_matched():
+    """An empty quote matches every text by substring; it must fail instead."""
+    evs = [_event("evt_016", "The agent examined the axis spacing.", seq=16)]
+    cand = _candidate("sem_empty", detector="model", anchor_event_ids=["evt_016"],
+                      structured_facts=[{"type": "event_support", "quotes": [
+                          {"event_id": "evt_016", "quote": "   "},
+                      ]}],
+                      affected_checks=["C1"])
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], events=evs,
+        profile=_profile(), declared_artifacts=[]))
+    m = moments[0]
+    fact = next(f for f in m.validated_facts if f["type"] == "event_support")
+    assert fact["validation"] == "failed"
+    assert fact["recomputed"][0]["reason"] == "empty_quote"
+    assert m.selected is False
+
+
+def test_undeclared_artifact_absence_is_rejected():
+    """An absence claim for an artifact nothing declares required does not validate."""
+    cand = _candidate("cand_abs", anchor_event_ids=["evt_sub"],
+                      structured_facts=[{"type": "absence", "declared_artifact": "/app/invented.json"}],
+                      affected_checks=["C1"])
+    moments = reviewer.run_reviewer(_ctx([cand], checks=[_check("C1", "failed")],
+                                         profile=_profile(), declared_artifacts=[]))
+    m = moments[0]
+    fact = next(f for f in m.validated_facts if f["type"] == "absence")
+    assert fact["validation"] == "failed"
+    assert fact["recomputed"] == "undeclared"
+    assert m.selected is False
+
+
+def test_absence_scope_distinguishes_captured_evidence_from_environment():
+    """With filesystem only observed through tool I/O, absence is 'not observed
+    in the captured evidence', never 'absent from the environment'."""
+    cand = _candidate("cand_abs", anchor_event_ids=["evt_sub"], kind="omission",
+                      structured_facts=[{"type": "absence", "declared_artifact": "/app/results.json"}],
+                      affected_checks=["C1"])
+    slices = [_slice("cand_abs", "dependency_linked", branch="omission")]
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], slices=slices,
+        profile=_profile(filesystem="partial"),   # tool I/O only — Harbor's level
+        declared_artifacts=["/app/results.json"]))
+    (m,) = [x for x in moments if x.selected]
+    fact = next(f for f in m.validated_facts if f["type"] == "absence")
+    assert fact["observation_scope"] == "not_observed_in_captured_evidence"
+    assert "does not establish it was absent from the environment" in m.rendered_statement
+
+    # A capture that checkpoints the filesystem can support the stronger claim.
+    moments_env = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], slices=slices,
+        profile=_profile(filesystem="complete"),
+        declared_artifacts=["/app/results.json"]))
+    (m_env,) = [x for x in moments_env if x.selected]
+    assert "never observed in the run" in m_env.rendered_statement
+    assert "does not establish" not in m_env.rendered_statement
+
+
+def test_model_discovery_below_the_capability_profile_is_unsupported():
+    """A model discovery whose facts need evidence the capture lacks is
+    'unsupported' — the observability gate is computed, never hardcoded."""
+    evs = [_event("evt_016", "scanning windows again", seq=16)]
+    cand = _candidate("sem_1", detector="model", anchor_event_ids=["evt_016"],
+                      affected_checks=["C1"], kind="behaviour",
+                      structured_facts=[
+                          {"type": "event_support", "quotes": [
+                              {"event_id": "evt_016", "quote": "scanning windows"}]},
+                          {"type": "repetition", "events": ["evt_016", "evt_016"]},
+                      ])
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], events=evs,
+        profile=_profile(tool_results="unavailable"),  # repetition needs tool results
+        declared_artifacts=[]))
+    m = moments[0]
+    assert m.gate_results["observability"].startswith("unsupported")
+    assert "tool_results<complete" in m.gate_results["observability"]
+    assert m.selected is False
+
+
+def test_render_skips_a_failed_primary_fact():
+    """The card statement renders from the first PASSED fact, never from a
+    failed one — a valid later fact does not launder an invalid first claim."""
+    cand = _candidate("cand_mixed", affected_checks=["C1"], anchor_event_ids=["evt_sub"],
+                      structured_facts=[
+                          {"type": "requirement_status", "check_id": "C1",
+                           "status_at_submission": "passed"},   # C1 actually failed
+                          {"type": "absence", "declared_artifact": "/app/results.json"},
+                      ])
+    moments = reviewer.run_reviewer(_ctx([cand], checks=[_check("C1", "failed")],
+                                         declared_artifacts=["/app/results.json"]))
+    m = moments[0]
+    assert "invented" not in m.rendered_statement  # not the failed requirement claim
+    assert "declared artifact /app/results.json" in m.rendered_statement
+
+
+def test_invented_database_outage_stays_interpretation():
+    """The invented-database-outage case: a model rationale asserting a cause
+    with no source in the run gets its own 'interpretation_only' support
+    status, and the validated facts never absorb the invented claim."""
+    evs = [_event("evt_008", "final answer submitted", etype="final_submission", seq=8)]
+    cand = _candidate("sem_db", detector="model", anchor_event_ids=["evt_008"],
+                      affected_checks=["C1"], kind="behaviour",
+                      structured_facts=[{"type": "requirement_status", "check_id": "C1",
+                                         "status_at_submission": "failed"}])
+    enr = reviewer.Enrichment(
+        consequence="reached_submission",
+        root_cause_candidates=[{"locus": "environment", "rationale":
+                                "the database was down, so the agent could not reach C1"}],
+        better_action="Check the database before submitting.",
+        source="model:test",
+    )
+
+    class _R(reviewer.DeterministicReviewer):
+        def propose(self, ctx):
+            return [reviewer.ProposedMoment(candidate=cand, enrichment=enr)]
+
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], events=evs,
+        profile=_profile(), declared_artifacts=[]), reviewer=_R())
+    (m,) = [x for x in moments if x.selected]
+    # The explanation names no real run entity that backs the outage claim:
+    # 'C1' exists, but the database assertion has no source — interpretation.
+    assert m.gate_results["explanation_support"] in ("interpretation_only", "evidence_linked")
+    # Whatever the status, the validated facts remain mechanical: the outage
+    # claim never becomes validated fact.
+    assert all("database" not in json.dumps(f) for f in m.validated_facts)
+    # And the attribution check applies to the explanation fields too.
+    assert m.gate_results["explanation_attribution"] in ("within_ceiling", "overclaim")
+
+
+def test_genuine_supported_finding_still_survives():
+    """The gates reject fabricated references without chilling real evidence:
+    a fully grounded model moment still publishes end-to-end."""
+    evs = [_event("evt_016", "The agent examined the axis spacing.", seq=16)]
+    cand = _candidate("sem_ok", detector="model", anchor_event_ids=["evt_016"],
+                      affected_checks=["C1"], kind="behaviour",
+                      structured_facts=[{"type": "event_support", "quotes": [
+                          {"event_id": "evt_016", "quote": "examined the axis spacing"}]}])
+    moments = reviewer.run_reviewer(_ctx(
+        [cand], checks=[_check("C1", "failed")], events=evs,
+        profile=_profile(), declared_artifacts=[]))
+    selected = [m for m in moments if m.selected]
+    assert len(selected) == 1
+    assert selected[0].gate_results["references"]["status"] == "resolved"
+    assert selected[0].gate_results["observability"] == "supported"
+
+

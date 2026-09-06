@@ -7,12 +7,15 @@
 async function selectRun(runId, restore) {
   state.runId = runId; state.momentIdx = 0; state.dispOpen = false;
   state.view = "review"; state.chapter = "moments"; state.viewed = new Set();
+  // AGR-07 UX: the reviewer flip resets on run change — the default view is
+  // the most-enriched review of the run being opened.
+  state.reviewerKey = null;
   closeTrace();  // a drawer left open belongs to the run being left behind
   state.compare = restore && restore.left && restore.right
     ? { left: restore.left, right: restore.right } : null;
   [state.forensic, state.review] = await Promise.all([
     api("/runs/" + encodeURIComponent(runId) + "/forensic"),
-    api("/runs/" + encodeURIComponent(runId)),
+    api(reviewUrl(runId, state.reviewerKey)),
   ]);
   // Landing chapter: a shared link's position (§4.1) wins; otherwise the §4.3.5
   // workspace preference decides between Outcome and the first key moment.
@@ -52,9 +55,15 @@ function applyEntryPreference(explicitChapter) {
   return false;
 }
 async function refreshRun() {
-  state.review = await api("/runs/" + encodeURIComponent(state.runId));
+  state.review = await api(reviewUrl(state.runId, state.reviewerKey));
   await loadInbox().catch(() => {});
   render();
+}
+// AGR-07 UX: which reviewer's snapshot to serve. ``null`` = the most-enriched
+// available review (a model pass if present, else the deterministic baseline).
+function reviewUrl(runId, reviewerKey) {
+  const base = "/runs/" + encodeURIComponent(runId);
+  return reviewerKey ? base + "?reviewer=" + encodeURIComponent(reviewerKey) : base;
 }
 function feedbackFor(momentId) { return ((state.review && state.review.feedback) || []).filter(f => f.moment_id === momentId); }
 function currentMoments() { return (state.review && state.review.moments) || []; }

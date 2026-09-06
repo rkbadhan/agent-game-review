@@ -46,12 +46,22 @@ class DetectorContext:
 class Detector:
     name: str = ""
     required_capabilities: dict[str, str] = {}
+    # AGR-05: a registered-but-not-implemented detector is distinct from an
+    # evaluated detector that found no issue. Placeholders report
+    # evaluated=False with placeholder=True even when capabilities would allow
+    # a run — "no candidates" from a stub must never read as "no problem".
+    implemented: bool = True
 
     def _run(self, ctx: DetectorContext) -> list[Candidate]:
         raise NotImplementedError
 
     def run(self, ctx: DetectorContext) -> DetectorResult:
         unmet = [c for c, m in self.required_capabilities.items() if not ctx.profile.meets(c, m)]
+        if not self.implemented:
+            # A stub can never evaluate, whatever the capabilities say — report
+            # the placeholder status (and the unmet capabilities, for candour).
+            return DetectorResult(detector=self.name, evaluated=False,
+                                  unmet_capabilities=unmet, placeholder=True)
         if unmet:
             return DetectorResult(detector=self.name, evaluated=False, unmet_capabilities=unmet)
         return DetectorResult(detector=self.name, evaluated=True, candidates=self._run(ctx))
@@ -117,33 +127,65 @@ class IgnoredToolFailure(Detector):
 
 
 class RepeatedActionNoNewInfo(Detector):
-    """Same action repeated with no strategy change in between (§8.5 #2)."""
+    """Same action repeated, producing the same output again (§8.5 #2).
+
+    AGR-05: a repeated call is an observation, not automatically a defect. The
+    "no new information" claim is made only when the mechanical evidence
+    supports it — both calls' tool results are captured and their outputs are
+    equivalent. Differing outputs (e.g. a poll whose report changed) are
+    observation with new information and emit nothing; unobserved results
+    cannot support the claim and emit nothing either.
+    """
 
     name = "repeated_action_no_new_info"
-    required_capabilities = {"tool_calls": "complete"}
+    required_capabilities = {"tool_calls": "complete", "tool_results": "complete"}
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return " ".join(text.split())
 
     def _run(self, ctx):
         out = []
-        last_sig = None
-        last_call: DerivedEvent | None = None
+        # First walk: attach each tool_call to its own tool_result (the next
+        # result before the next call) and remember whether a strategy change
+        # separated it from the previous call.
+        calls: list[dict] = []
         strategy_since = False
+        pending: DerivedEvent | None = None
         for ev in ctx.events:
             if ev.event_type == "strategy_change":
                 strategy_since = True
                 continue
-            if ev.event_type != "tool_call":
+            if ev.event_type == "tool_call":
+                pending = ev
+                calls.append({"call": ev, "result": None, "strategy_since": strategy_since})
+                strategy_since = False
+            elif ev.event_type == "tool_result" and pending is not None:
+                calls[-1]["result"] = ev
+                pending = None
+        # Second walk: consecutive identical calls with no strategy change —
+        # emit only when BOTH outputs are captured and equivalent.
+        for a, b in zip(calls, calls[1:]):
+            if action_signature(a["call"]) != action_signature(b["call"]):
                 continue
-            sig = action_signature(ev)
-            if sig == last_sig and not strategy_since:
-                out.append(self._candidate(
-                    ctx, ev.event_id, kind="behaviour",
-                    anchor_event_ids=[last_call.event_id, ev.event_id],
-                    structured_facts=[{
-                        "type": "repetition", "signature": list(sig),
-                        "events": [last_call.event_id, ev.event_id],
-                    }],
-                ))
-            last_sig, last_call, strategy_since = sig, ev, False
+            if a["strategy_since"] or b["strategy_since"]:
+                continue
+            ra, rb = a["result"], b["result"]
+            if ra is None or rb is None:
+                continue  # outputs not captured — the claim is unsupported
+            if self._norm(ra.text()) != self._norm(rb.text()):
+                continue  # outputs differ — observation with new information
+            out.append(self._candidate(
+                ctx, b["call"].event_id, kind="behaviour",
+                anchor_event_ids=[a["call"].event_id, b["call"].event_id],
+                structured_facts=[{
+                    "type": "repetition", "signature": list(action_signature(b["call"])),
+                    "events": [a["call"].event_id, b["call"].event_id],
+                    "result_event_ids": [ra.event_id, rb.event_id],
+                    "outputs_compared": True,
+                    "outputs_equivalent": True,
+                }],
+            ))
         return out
 
 
@@ -199,10 +241,17 @@ class SuccessfulRecoveryViaStrategyChange(Detector):
 
 
 class CompactionRequirementLoss(Detector):
-    """Requirement lost across a compaction (context family). Capability-gated."""
+    """Requirement lost across a compaction (context family). Capability-gated.
+
+    AGR-05: registered as a placeholder — the compaction-context evidence
+    family is not implemented yet. It reports ``evaluated=False,
+    placeholder=True`` so the UI can say "not implemented" instead of the
+    "evaluated, no issue found" a stub's empty candidate list would fake.
+    """
 
     name = "compaction_requirement_loss"
     required_capabilities = {"pre_post_compaction_context": "complete"}
+    implemented = False
 
     def _run(self, ctx):
         return []

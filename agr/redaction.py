@@ -115,3 +115,39 @@ def redact_all(sections: dict[str, str]) -> tuple[dict[str, str], RedactionResul
         injection_markers=markers,
     )
     return out, combined
+
+
+def redact_value(obj: object) -> tuple[object, RedactionResult]:
+    """Schema-aware traversal: redact EVERY string in a nested structure (AGR-06).
+
+    Packets carry strings in many shapes — check names and expected/observed
+    values, structured facts, revision and error payloads — and a keyed pass
+    alone cannot guarantee none is missed. This walks dicts, lists, and tuples
+    and redacts every string value it finds (keys are structural identifiers,
+    not content, and are left intact). Returns ``(new_obj, combined_map)``.
+    """
+    merged: dict[str, int] = {}
+    markers = 0
+
+    def walk(o: object) -> object:
+        nonlocal markers
+        if isinstance(o, str):
+            r = redact(o)
+            for entry in r.removed:
+                merged[entry["reason"]] = merged.get(entry["reason"], 0) + entry["count"]
+            markers += r.injection_markers
+            return r.text
+        if isinstance(o, dict):
+            return {k: walk(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            out = [walk(v) for v in o]
+            return type(o)(out) if isinstance(o, tuple) else out
+        return o
+
+    new_obj = walk(obj)
+    combined = RedactionResult(
+        text="",
+        removed=[{"reason": k, "count": merged[k]} for k in sorted(merged)],
+        injection_markers=markers,
+    )
+    return new_obj, combined

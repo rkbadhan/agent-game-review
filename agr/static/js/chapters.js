@@ -213,8 +213,37 @@ function renderOutcomeChapter(main) {
   }
   const disabled = (rv.detector_results || []).filter(d => d.evaluated === false);
   for (const d of disabled) {
-    const r = el("div", "limit-item"); r.append(el("span", "chip", "not evaluated"));
-    r.append(document.createTextNode(d.detector + " — missing capability: " + (d.unmet_capabilities || []).join(", ")));
+    const r = el("div", "limit-item");
+    if (d.placeholder) {
+      // AGR-05: a registered placeholder is distinct from a capability-gated
+      // skip — it has evaluated nothing and could not have, either.
+      r.append(el("span", "chip", "not implemented"));
+      r.append(document.createTextNode(d.detector + " — registered placeholder, no evidence family implemented yet"));
+    } else {
+      r.append(el("span", "chip", "not evaluated"));
+      r.append(document.createTextNode(d.detector + " — missing capability: " + (d.unmet_capabilities || []).join(", ")));
+    }
+    limits.append(r);
+  }
+  if (rv.watermark) {
+    limits.append(r);
+  }
+  // AGR-06: explicit review states — a model failure is never rendered as
+  // "no decisive moment", and a valid empty review is named as such.
+  if ((rv.review_errors || []).length) {
+    for (const e of rv.review_errors) {
+      const r = el("div", "limit-item"); r.append(el("span", "chip", "model review failed"));
+      r.append(document.createTextNode((e.reviewer_key || "model") + " — " + (e.error_type || "error") +
+        "; the deterministic baseline is shown. " + (e.message || "")));
+      limits.append(r);
+    }
+  } else if (rv.review_status === "empty") {
+    const r = el("div", "limit-item"); r.append(el("span", "chip", "review complete"));
+    r.append(document.createTextNode("The model review returned no moments for this run."));
+    limits.append(r);
+  } else if (rv.review_status === "no_selection") {
+    const r = el("div", "limit-item"); r.append(el("span", "chip", "no grounded moments"));
+    r.append(document.createTextNode("Moments were proposed but none passed evidence validation; none are shown."));
     limits.append(r);
   }
   if (rv.watermark) {
@@ -267,7 +296,7 @@ function renderFinalState(rv, f) {
       else vTd.append(el("span", "sig-reason", "no value captured"));
       tr.append(vTd);
 
-      tr.append(evidenceCell([a.observed_at_event_id || a.last_tool_event_id], f));
+      tr.append(evidenceTd([a.observed_at_event_id || a.last_tool_event_id], f));
       t.append(tr);
     }
     card.append(t);
@@ -318,7 +347,7 @@ function renderOpportunitiesChapter(main) {
     tr.append(td(r.observed_behaviour || vocab("opportunity_status", r.status).tip));
     const stTd = el("td"); const v = vocab("opportunity_status", r.status);
     const b = el("span", "stat-badge " + oppStatusClass(r.status), v.label); b.title = v.tip; stTd.append(b); tr.append(stTd);
-    tr.append(evidenceCell(r.evidence, f));
+    tr.append(evidenceTd(r.evidence, f));
     t.append(tr);
   }
   card.append(t); main.append(card);
@@ -428,7 +457,7 @@ function renderAuditChapter(main) {
       if (r.human_statement) fTd.append(el("div", "final-note", r.human_statement));
     }
     tr.append(fTd);
-    tr.append(evidenceCell(
+    tr.append(evidenceTd(
       [].concat(r.evidence_event_ids, r.evidence_check_ids, r.evidence_item_ids), f));
     t.append(tr);
   }
@@ -684,17 +713,22 @@ function sigNoInterp(r) {
   if (r.status === "not_evaluable") return "Evidence unavailable";
   return "No opportunity occurred";
 }
+// Returns an inline <span> container of evidence links/static ids. Callers that
+// need a real table cell wrap it via evidenceTd(); never append this directly
+// to a <tr>, and never nest it inside another <td> (it is not a cell itself).
 function evidenceCell(evidence, f) {
-  const td = el("td", "mono");
+  const wrap = el("span", "ev-cell mono");
   const ids = (evidence || []).filter(Boolean);
-  if (!ids.length) { td.append(el("span", "ev-static", "—")); return td; }
+  if (!ids.length) { wrap.append(el("span", "ev-static", "—")); return wrap; }
   for (const id of ids) {
     const idx = f.steps.findIndex(s => (s.event_ids || []).includes(id));
     if (idx >= 0) {
       const b = el("button", "ev-link", id); b.title = "Open source step " + (idx + 1);
-      b.addEventListener("click", () => openTrace(f.steps[idx].step_id)); td.append(b);
-    } else td.append(el("span", "ev-static", id));
+      b.addEventListener("click", () => openTrace(f.steps[idx].step_id)); wrap.append(b);
+    } else wrap.append(el("span", "ev-static", id));
   }
-  return td;
+  return wrap;
 }
+// Wrap an evidenceCell in a real <td> for table rows.
+function evidenceTd(evidence, f) { const c = el("td", "mono"); c.append(evidenceCell(evidence, f)); return c; }
 

@@ -8,7 +8,7 @@ core reads the ``verifier.checks[]`` array the adapter provides.
 from __future__ import annotations
 
 from . import version
-from .schema import CHECK_SOURCES, CHECK_STATUSES, RunSource, VerifierCheck
+from .schema import CHECK_SOURCES, CHECK_STATUSES, CHECK_TIMINGS, RunSource, VerifierCheck
 
 
 class CheckExtractionError(ValueError):
@@ -26,6 +26,9 @@ def extract_checks(doc: dict, run_source: RunSource) -> list[VerifierCheck]:
         source = raw.get("source", "native_structured")
         if source not in CHECK_SOURCES:
             raise CheckExtractionError(f"invalid check source {source!r}")
+        timing = raw.get("timing")
+        if timing is not None and timing not in CHECK_TIMINGS:
+            raise CheckExtractionError(f"invalid check timing {timing!r}")
         checks.append(
             VerifierCheck(
                 check_id=raw.get("check_id", f"C{i + 1}"),
@@ -39,6 +42,7 @@ def extract_checks(doc: dict, run_source: RunSource) -> list[VerifierCheck]:
                 observed=raw.get("observed"),
                 source_pointers=list(raw.get("source_pointers", [])),
                 derivation_version=version.CHECK_DERIVATION_VERSION,
+                timing=timing,
             )
         )
     return checks

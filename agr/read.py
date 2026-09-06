@@ -184,6 +184,12 @@ def _review_moment_view(m: dict) -> dict:
         "eval_lesson_recommended": bool(m.get("eval_lesson_recommended")),
         "enrichment_source": m.get("enrichment_source"),
         "facts": m.get("validated_facts", []),
+        # AGR-03: the three review statuses the UI must keep apart — evidence
+        # validation (the recomputed facts above), interpretation support (is
+        # the model's explanation linked to run evidence or pure
+        # interpretation), and intervention validation (is the proposed better
+        # action's causal wording within the evidence ceiling).
+        "gate_results": m.get("gate_results", {}),
     }
 
 
@@ -790,6 +796,27 @@ def get_audit(store: Store, run_id: str, capture_id: Optional[str] = None,
     return findings
 
 
+def _review_status(review_moments: Optional[list[dict]], errors: list) -> str:
+    """The served review's state, kept explicit (AGR-06).
+
+    ``failed``       — a model enrichment error occurred; the deterministic
+                       baseline is served and the failure is named.
+    ``empty``        — a VALID review that returned no moments.
+    ``no_selection`` — moments exist but none passed the gates.
+    ``ok``           — at least one selected card.
+    ``deterministic``— only the deterministic baseline exists (normal state).
+    """
+    if errors:
+        return "failed"
+    if review_moments is None:
+        return "deterministic"
+    if not review_moments:
+        return "empty"
+    if not any(m.get("selected") for m in review_moments):
+        return "no_selection"
+    return "ok"
+
+
 def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) -> dict:
     """The full review of one run — the JSON form of ``agr show``.
 
@@ -810,6 +837,7 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
     contract = _read(store, run_id, capture_id, "contract.json", {})
     events = _read(store, run_id, capture_id, "events.json", [])
     detector_results = _read(store, run_id, capture_id, "detector_results.json", [])
+    review_errors = _read(store, run_id, capture_id, "review_errors.json", [])
     moments, review_moments, served_key = _run_moments(
         store, run_id, capture_id, events, detector_results, reviewer_key=reviewer_key)
     chosen_key = served_key if served_key is not None else _default_reviewer_key(store, run_id, capture_id)
@@ -852,6 +880,13 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "missing_capabilities": _missing_capabilities(capabilities),
         "reviewer_key": chosen_key,
         "available_reviews": store.list_reviews(run_id, capture_id),
+        # AGR-06: explicit review states. ``review_errors`` records enrichment
+        # failures (malformed model output, provider error) separately from a
+        # valid empty review; ``review_status`` names the served state so the
+        # UI never renders a failure as "no decisive moment".
+        "review_errors": _read(store, run_id, capture_id, "review_errors.json", []),
+        "review_telemetry": _read(store, run_id, capture_id, "review_telemetry.json", {}),
+        "review_status": _review_status(review_moments, review_errors),
         "moments": moments,
         "review_moments": review_moments if review_moments is not None else [],
         "evidence_slices": _read(store, run_id, capture_id, "evidence_slices.json", []),

@@ -120,6 +120,20 @@ def server(tmp_path):
         yield base
 
 
+def _grounded_facts(envelope_moment):
+    """The judged candidate's facts in model-payload form.
+
+    Since the Terminal-Bench hardening, Stage G drops a model moment with no
+    recomputable-passing fact (an ungrounded claim is unselected, §8.8). A
+    scripted moment that mirrors a deterministic candidate must therefore carry
+    that candidate's structured facts; ``validated_facts`` on the envelope is
+    the original fact plus ``validation``/``recomputed`` annotations, so strip
+    the annotations and the facts recompute identically.
+    """
+    return [{k: v for k, v in f.items() if k not in ("validation", "recomputed")}
+            for f in envelope_moment.get("validated_facts", [])]
+
+
 @pytest.fixture
 def compare_server(tmp_path):
     """A store whose chess run carries two reviews, so §4.16 compare is live.
@@ -137,6 +151,7 @@ def compare_server(tmp_path):
         "kind": m["kind"],
         "polarity": m["polarity"],
         "affected_checks": m["affected_checks"],
+        "structured_facts": _grounded_facts(m),
         "behaviour_tags": ["failed_to_replan"],
         "better_action": "Write every winning move the engine reported.",
         "root_cause_candidates": [{"locus": "agent_decision", "rationale": "stopped at the first move"}],
@@ -283,7 +298,9 @@ def test_workspace_and_full_trace(server):
         # Outcome chapter (§4.5): a disabled detector is listed under review limits.
         page.click('.ochip:has-text("Outcome")')
         page.wait_for_selector(".check-list")
-        assert any("not evaluated" in c.inner_text()
+        # AGR-05: the compaction detector is a registered placeholder — it shows
+        # the honest "not implemented" chip, not a capability-gated skip.
+        assert any("not implemented" in c.inner_text()
                    for c in page.query_selector_all(".limit-item .chip"))
 
         # ...and the final environment/artifact summary (§4.5) states the closing
@@ -366,6 +383,19 @@ def test_triage_inbox_disposition_and_feedback(server):
         browser.close()
 
 
+def _wait_chip(page, text):
+    """Wait until the current chapter chip renders ``text``.
+
+    ``.ochip.current`` already exists when a run is opened from inside another
+    run's view, and ``selectRun`` re-renders asynchronously after two fetches,
+    so a plain ``wait_for_selector`` can return the previous run's chip. Poll
+    for the expected label instead.
+    """
+    page.wait_for_function(
+        "text => (document.querySelector('.ochip.current')?.innerText ?? '').includes(text)",
+        arg=text)
+
+
 def test_entry_preference_chooses_where_a_run_opens(server):
     """§4.3.5 fast/deep entry: the default fast path opens a run on the first key
     moment; switching the workspace preference to Outcome opens the summary instead,
@@ -378,13 +408,13 @@ def test_entry_preference_chooses_where_a_run_opens(server):
 
         # Default fast path: opening a run lands on Key moments.
         page.click('.run[data-run-id="chess_best_move__seed42"]')
-        page.wait_for_selector(".ochip.current")
+        _wait_chip(page, "Key moments")
         assert "Key moments" in page.query_selector(".ochip.current").inner_text()
 
         # Switch the preference to Outcome; the next run opens on the Outcome chapter.
         page.select_option('.sort-row:has-text("Open at") select', "outcome")
         page.click('.run[data-run-id="greeting_report__seed7"]')
-        page.wait_for_selector(".ochip.current")
+        _wait_chip(page, "Outcome")
         assert "Outcome" in page.query_selector(".ochip.current").inner_text()
 
         # The preference is persisted, so a fresh page in the same browser keeps it.
@@ -392,7 +422,7 @@ def test_entry_preference_chooses_where_a_run_opens(server):
         page.reload()
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
-        page.wait_for_selector(".ochip.current")
+        _wait_chip(page, "Outcome")
         assert "Outcome" in page.query_selector(".ochip.current").inner_text()
 
         browser.close()
@@ -672,6 +702,7 @@ def lesson_server(tmp_path):
     payload = {"moments": [{
         "candidate_id": m["candidate_id"], "anchor_event_ids": m["anchor_event_ids"],
         "kind": m["kind"], "polarity": m["polarity"], "affected_checks": m["affected_checks"],
+        "structured_facts": _grounded_facts(m),
         "behaviour_tags": ["stopped_enumeration"],
         "better_action": "Check the complete candidate set before submission",
         "root_cause_candidates": [{"locus": "evaluation_harness",

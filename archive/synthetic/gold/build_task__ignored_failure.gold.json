@@ -1,36 +1,91 @@
 {
-  "run_id": "build_task__ignored_failure",
-  "task_id": "build-app",
-  "schema_version": "gold-0.1",
-  "annotations": [
+ "run_id": "build_task__ignored_failure",
+ "task_id": "build-app",
+ "schema_version": "gold-0.1",
+ "annotations": [
+  {
+   "annotator": "annotator_a",
+   "moments": [
     {
-      "annotator": "annotator_a",
-      "moments": [
-        {
-          "moment_id": "m_ignored_build_failure",
-          "anchor_type": "external",
-          "anchor_step_ids": ["s3", "s5"],
-          "polarity": "negative",
-          "behaviour_tags": ["ignored_error", "premature_submission", "incomplete_execution"],
-          "affected_checks": ["C1"],
-          "affected_requirements": [],
-          "evidence_span_step_ids": ["s2", "s3", "s5"],
-          "attribution_ceiling": "dependency_linked",
-          "opportunity_ability": "error_recovery",
-          "opportunity_window_step_ids": ["s3", "s5"],
-          "root_cause_candidates": [
-            {"locus": "tool", "rank": 1, "rationale": "The build tool failed at s3; the failure is the proximate cause of the unmet check C1."},
-            {"locus": "agent_scaffold", "rank": 2, "rationale": "The agent observed the failure and submitted at s5 without attempting recovery — the scaffold did not force a re-plan on a failed prerequisite."}
-          ],
-          "acceptable_better_actions": [
-            "Diagnose the build failure at s3 and retry with a corrected invocation before submitting.",
-            "Abort submission while a required build step is failing."
-          ],
-          "critical": true
-        }
-      ],
-      "no_decisive_moment": false,
-      "task_verifier_concerns": []
+     "moment_id": "m_ignored_build_failure",
+     "anchor_type": "external",
+     "anchor_step_ids": [
+      "s3",
+      "s5"
+     ],
+     "polarity": "negative",
+     "behaviour_tags": [
+      "ignored_error",
+      "premature_submission",
+      "incomplete_execution"
+     ],
+     "affected_checks": [
+      "C1"
+     ],
+     "affected_requirements": [],
+     "evidence_span_step_ids": [
+      "s2",
+      "s3",
+      "s5"
+     ],
+     "attribution_ceiling": "dependency_linked",
+     "opportunity_ability": "error_recovery",
+     "opportunity_window_step_ids": [
+      "s3",
+      "s5"
+     ],
+     "root_cause_candidates": [
+      {
+       "locus": "tool",
+       "rank": 1,
+       "rationale": "The build tool failed at s3; the failure is the proximate cause of the unmet check C1."
+      },
+      {
+       "locus": "agent_scaffold",
+       "rank": 2,
+       "rationale": "The agent observed the failure and submitted at s5 without attempting recovery \u2014 the scaffold did not force a re-plan on a failed prerequisite."
+      }
+     ],
+     "acceptable_better_actions": [
+      "Diagnose the build failure at s3 and retry with a corrected invocation before submitting.",
+      "Abort submission while a required build step is failing."
+     ],
+     "critical": true
+    },
+    {
+     "moment_id": "m_required_artifact_absent",
+     "anchor_type": "omission",
+     "anchor_step_ids": [
+      "s5"
+     ],
+     "polarity": "negative",
+     "behaviour_tags": [
+      "wrong_artifact_or_path"
+     ],
+     "affected_checks": [],
+     "affected_requirements": [],
+     "evidence_span_step_ids": [
+      "s1",
+      "s5"
+     ],
+     "attribution_ceiling": "dependency_linked",
+     "root_cause_candidates": [
+      {
+       "locus": "agent_policy",
+       "rank": 1,
+       "rationale": "The task declared /app/bin as a required artifact; no observation in the run ever shows it, including at submission."
+      }
+     ],
+     "acceptable_better_actions": [
+      "Verify the declared artifact exists (and build it) before submitting."
+     ],
+     "critical": false
     }
-  ]
+   ],
+   "no_decisive_moment": false,
+   "task_verifier_concerns": [
+    "Dated addendum (AGR-05, 2026-09-05): issue-identity dedup keeps the ignored-failure card and the artifact-absence card as distinct issues \u2014 the build failure and the never-observed declared artifact are separately observable concerns; the gold now annotates both."
+   ]
+  }
+ ]
 }

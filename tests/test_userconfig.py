@@ -128,7 +128,10 @@ def _ingest_two_runs(tmp_path):
     _mk_trial(job, "beta")
     store = tmp_path / "store"
     assert main(["--store", str(store), "ingest-harbor", str(job)]) == 0
-    return Store(str(store)), ["harbor__alpha__tr-alpha", "harbor__beta__tr-beta"]
+    # Adapter-0.6 identity (AGR-02): ids derive from the full task+session
+    # identity, so read back whatever the store registered rather than guessing.
+    live = Store(str(store))
+    return live, sorted(p.name for p in (Path(live.root) / "runs").iterdir())
 
 
 def test_review_all_enriches_then_skips(cfg_path, capsys, monkeypatch, tmp_path):
@@ -162,7 +165,7 @@ def test_review_all_failure_is_isolated(cfg_path, capsys, monkeypatch, tmp_path)
     """One failing run must not stop the batch; all-fail exits non-zero."""
     from agr.cli import main
 
-    store, _ = _ingest_two_runs(tmp_path)
+    store, run_ids = _ingest_two_runs(tmp_path)
 
     def _boom(*a, **k):
         raise ConnectionError("endpoint down")
@@ -173,7 +176,7 @@ def test_review_all_failure_is_isolated(cfg_path, capsys, monkeypatch, tmp_path)
     assert rc == 4 and "endpoint down" in err
 
     # Deterministic runs are untouched by failed model reviews.
-    for run_id in ("harbor__alpha__tr-alpha", "harbor__beta__tr-beta"):
+    for run_id in run_ids:
         keys = store.list_reviews(run_id, store.latest_capture_id(run_id))
         assert "deterministic" in keys
 

@@ -1,38 +1,88 @@
 {
-  "run_id": "greeting_report__seed7",
-  "task_id": "greeting-report",
-  "schema_version": "gold-0.1",
-  "annotations": [
+ "run_id": "greeting_report__seed7",
+ "task_id": "greeting-report",
+ "schema_version": "gold-0.1",
+ "annotations": [
+  {
+   "annotator": "annotator_a",
+   "moments": [
     {
-      "annotator": "annotator_a",
-      "moments": [
-        {
-          "moment_id": "m_missing_summary_artifact",
-          "anchor_type": "omission",
-          "anchor_step_ids": ["s5"],
-          "polarity": "negative",
-          "behaviour_tags": ["incomplete_execution", "lost_requirement"],
-          "affected_checks": [],
-          "affected_requirements": ["summary_artifact"],
-          "evidence_span_step_ids": ["s1", "s3", "s5"],
-          "attribution_ceiling": "dependency_linked",
-          "opportunity_ability": "artifact_management",
-          "opportunity_window_step_ids": ["s1", "s5"],
-          "root_cause_candidates": [
-            {"locus": "agent_scaffold", "rank": 1, "rationale": "The instruction at s1 asks for a greeting to /out.txt and a short summary to /summary.txt; the agent wrote only /out.txt (s3) and submitted at s5, never producing /summary.txt."}
-          ],
-          "acceptable_better_actions": [
-            "Write the required /summary.txt artifact before submitting."
-          ],
-          "critical": true
-        }
-      ],
-      "no_decisive_moment": false,
-      "task_verifier_concerns": [
-        "Verifier check C2 'Greeting is at most 20 characters' reports FAIL with observed=4, though 4 <= 20 satisfies its own stated expectation — the check is broken or misleading and should not be attributed to the agent.",
-        "Contract item R3 (forbid a summary section in /out.txt) contradicts the instruction's request for a /summary.txt summary.",
-        "The declared /summary.txt artifact is covered by no verifier check, so its omission is unverified."
-      ]
+     "moment_id": "m_missing_summary_artifact",
+     "anchor_type": "omission",
+     "anchor_step_ids": [
+      "s5"
+     ],
+     "polarity": "negative",
+     "behaviour_tags": [
+      "incomplete_execution",
+      "lost_requirement"
+     ],
+     "affected_checks": [],
+     "affected_requirements": [
+      "summary_artifact"
+     ],
+     "evidence_span_step_ids": [
+      "s1",
+      "s3",
+      "s5"
+     ],
+     "attribution_ceiling": "dependency_linked",
+     "opportunity_ability": "artifact_management",
+     "opportunity_window_step_ids": [
+      "s1",
+      "s5"
+     ],
+     "root_cause_candidates": [
+      {
+       "locus": "agent_scaffold",
+       "rank": 1,
+       "rationale": "The instruction at s1 asks for a greeting to /out.txt and a short summary to /summary.txt; the agent wrote only /out.txt (s3) and submitted at s5, never producing /summary.txt."
+      }
+     ],
+     "acceptable_better_actions": [
+      "Write the required /summary.txt artifact before submitting."
+     ],
+     "critical": true
+    },
+    {
+     "moment_id": "m_check_failed_at_submission",
+     "anchor_type": "decision",
+     "anchor_step_ids": [
+      "s5"
+     ],
+     "polarity": "negative",
+     "behaviour_tags": [
+      "premature_submission",
+      "ignored_error"
+     ],
+     "affected_checks": [
+      "C2"
+     ],
+     "affected_requirements": [],
+     "evidence_span_step_ids": [
+      "s5"
+     ],
+     "attribution_ceiling": "dependency_linked",
+     "root_cause_candidates": [
+      {
+       "locus": "agent_policy",
+       "rank": 1,
+       "rationale": "The agent submitted while check C2 (greeting length) was recorded as failing; the trace shows no observation or resolution of that failure before submission."
+      }
+     ],
+     "acceptable_better_actions": [
+      "Observe the failing C2 result and address or contest it before submitting."
+     ],
+     "critical": false
     }
-  ]
+   ],
+   "no_decisive_moment": false,
+   "task_verifier_concerns": [
+    "Verifier check C2 'Greeting is at most 20 characters' reports FAIL with observed=4, though 4 <= 20 satisfies its own stated expectation \u2014 the check is broken or misleading and should not be attributed to the agent.",
+    "Contract item R3 (forbid a summary section in /out.txt) contradicts the instruction's request for a /summary.txt summary.",
+    "The declared /summary.txt artifact is covered by no verifier check, so its omission is unverified.",
+    "Dated addendum (AGR-05, 2026-09-05): the reviewer's corrected issue-identity dedup keeps the C2 requirement-status card and the artifact-absence card as distinct issues (the README already described this run as a verifier concern + an omitted artifact); the gold now annotates both moments so the redundancy metric scores against the full issue set."
+   ]
+  }
+ ]
 }
