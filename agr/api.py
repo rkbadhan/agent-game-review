@@ -40,6 +40,7 @@ workflow beside the immutable source (never mutating it) via :mod:`agr.workflow`
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from . import instrumentation, lessons, queue, read, version, versions, workflow
 from .store import Store
@@ -372,8 +373,17 @@ def create_app(store_root: str = ".agr-store"):
         return {"lesson": lesson}
 
     @app.get("/runs/{run_id:path}")
-    def review(run_id: str) -> dict:
-        """Full deterministic review for a run. Defined last: :path is greedy."""
-        return _run_or_404(read.get_review, run_id)
+    def review(run_id: str, reviewer: Optional[str] = None) -> dict:
+        """Full review for a run. Defined last: :path is greedy.
+
+        ``?reviewer=<key>`` serves a specific reviewer's snapshot (AGR-07 UX:
+        the browser can flip between the deterministic baseline and a model
+        pass without leaving the page); the default is the most-enriched
+        available review.
+        """
+        try:
+            return read.get_review(store, run_id, reviewer_key=reviewer)
+        except read.RunNotFound:
+            raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
 
     return app

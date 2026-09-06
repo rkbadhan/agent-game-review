@@ -222,7 +222,11 @@ def test_moments_project_the_submission_omission(tmp_path):
     assert m["phase_id"] == "ph_04"        # the submission phase
     # The reviewer envelope renders the card from a controlled template grounded
     # in the recomputed fact — a status statement, never an authored verdict.
-    assert "check C3 was still failing at submission" in m["summary"]
+    # AGR-03 timing rule: this fixture's C3 comes from the post-run verifier
+    # result, which the agent never observed, so the card must not claim the
+    # agent saw it failing at submission.
+    assert "check C3 failed the run's final verifier" in m["summary"]
+    assert "records no observation of this check" in m["summary"]
     assert "mistake" not in m["summary"].lower()
     # The envelope carries the attribution ceiling the evidence slice licenses.
     assert m["attribution_ceiling"] == "dependency_linked"

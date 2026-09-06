@@ -174,16 +174,51 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # evidence slice licenses, and selects/de-duplicates the final cards. No model
     # call: in deterministic_only mode the candidates it reviews are the detector
     # candidates. Stage F's model reviewer plugs into the same seam later.
-    review_moments = run_reviewer(ReviewerContext(
-        run_id=rs.run_id,
-        source_capture_id=rs.source_capture_id,
-        candidates=[c for r in detector_results if r.evaluated for c in r.candidates],
-        slices=slices,
-        checks=checks,
-        events=events,
-        recoveries=recoveries,
-        contract=contract,
-    ), reviewer=reviewer)
+    telemetry: dict = {"reviewer_key": getattr(reviewer, "reviewer_key", "deterministic")}
+    review_error: dict | None = None
+    try:
+        review_moments = run_reviewer(ReviewerContext(
+            run_id=rs.run_id,
+            source_capture_id=rs.source_capture_id,
+            candidates=[c for r in detector_results if r.evaluated for c in r.candidates],
+            slices=slices,
+            checks=checks,
+            events=events,
+            recoveries=recoveries,
+            contract=contract,
+            # AGR-03: model discoveries meet the same capability requirements as
+            # detectors, and absence claims validate against what the task declared.
+            profile=profile,
+            declared_artifacts=[a.get("path") for a in (doc.get("task") or {}).get("artifacts", [])
+                                if a.get("path")],
+            # AGR-04: the complete task instruction travels to the reviewer as its
+            # own field, not as a 220-character timeline excerpt.
+            task_instruction=(doc.get("task") or {}).get("instruction"),
+        ), reviewer=reviewer, telemetry=telemetry)
+    except Exception as exc:  # noqa: BLE001 — every failure state must be explicit
+        # AGR-06: a model failure (malformed output, provider error) is an
+        # explicit enrichment-error state — never silently a "no decisive
+        # moment" result. The deterministic baseline is preserved and served.
+        review_error = {
+            "reviewer_key": getattr(reviewer, "reviewer_key", "deterministic"),
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:500],
+        }
+        telemetry["error"] = review_error
+        review_moments = run_reviewer(ReviewerContext(
+            run_id=rs.run_id,
+            source_capture_id=rs.source_capture_id,
+            candidates=[c for r in detector_results if r.evaluated for c in r.candidates],
+            slices=slices,
+            checks=checks,
+            events=events,
+            recoveries=recoveries,
+            contract=contract,
+            profile=profile,
+            declared_artifacts=[a.get("path") for a in (doc.get("task") or {}).get("artifacts", [])
+                                if a.get("path")],
+            task_instruction=(doc.get("task") or {}).get("instruction"),
+        ))
     # The stable slot key under which this reviewer's snapshot is persisted so a
     # later review by a different reviewer coexists rather than overwrites it
     # (the reviewer-diff view). The default reviewer's key is
@@ -225,7 +260,19 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # still mirrored as the most-recent review for backward compatibility with
     # older readers and the CLI eval harness until those are updated.
     review_payload = [m.to_dict() for m in review_moments]
-    store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
+    if review_error is None:
+        store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
+    else:
+        # AGR-06: the model's slot stays EMPTY on failure — the deterministic
+        # baseline (its own slot) is never overwritten, and the error state is
+        # explicit and separate. The fallback moments still mirror to the
+        # legacy file so older readers see a served review.
+        errors = store.read_derived(rs.run_id, rs.source_capture_id, "review_errors.json") \
+            if store.has_derived(rs.run_id, rs.source_capture_id, "review_errors.json") else []
+        errors.append({**review_error, "reviewer_key": reviewer_key})
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", errors)
+    if telemetry.get("proposed") is not None or reviewer is not None:
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", telemetry)
     store.write_derived(
         rs.run_id, rs.source_capture_id, "review_moments.json", review_payload
     )

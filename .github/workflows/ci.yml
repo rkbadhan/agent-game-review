@@ -30,3 +30,64 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  installed-package:
+    # AGR-01 regression check: build the wheel, install it into a clean
+    # environment, and serve the demo OUTSIDE the checkout. The wheel must ship
+    # the SPA's HTML, CSS, and every referenced JS module — a missing asset
+    # renders the installed demo unstyled or dead while the source suite (which
+    # reads files from the checkout) still passes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Install wheel into a clean venv (with the api extra)
+        run: |
+          uv venv /tmp/agr-clean
+          uv pip install --python /tmp/agr-clean/bin/python "dist/agent_game_review-0.1.0-py3-none-any.whl[api]"
+          # Guard the glob shortcut this replaces: uv does not expand wildcards,
+          # so a renamed wheel must fail loudly here, not silently install nothing.
+          test -f dist/agent_game_review-0.1.0-py3-none-any.whl
+
+      - name: Serve the installed demo outside the repository
+        # Run from / so the test cannot accidentally import assets from the
+        # checkout; `agr demo` builds its own store and serves on :8377.
+        working-directory: /
+        run: |
+          /tmp/agr-clean/bin/agr --store /tmp/agr-clean-demo demo --port 8377 &
+          echo $! > /tmp/agr.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8377/ >/dev/null && break
+            sleep 1
+          done
+      - name: Smoke-check every referenced asset
+        run: |
+          python3 - <<'EOF'
+          import re, sys, urllib.request
+
+          base = "http://127.0.0.1:8377"
+          html = urllib.request.urlopen(base + "/").read().decode("utf-8")
+          refs = sorted(set(re.findall(r'(?:href|src)="(/static/[^"]+)"', html)))
+          assert refs, "no static assets referenced — served the wrong page?"
+          for ref in refs:
+              with urllib.request.urlopen(base + ref) as resp:
+                  assert resp.status == 200, f"{ref} -> {resp.status}"
+                  body = resp.read()
+                  assert body, f"{ref} is empty"
+          css = [r for r in refs if r.endswith(".css")]
+          js = [r for r in refs if r.endswith(".js")]
+          assert css and len(js) >= 20, f"expected stylesheet + JS modules, got {refs}"
+          print(f"OK: / plus {len(css)} stylesheet(s) and {len(js)} scripts load from the installed wheel")
+          EOF
+      - name: Stop the server
+        if: always()
+        run: kill "$(cat /tmp/agr.pid)" 2>/dev/null || true

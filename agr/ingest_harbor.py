@@ -33,11 +33,13 @@ warning.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from .adapter import AdapterResult
+from .schema import CHECK_STATUSES
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
@@ -55,7 +57,20 @@ from .adapter import AdapterResult
 #      step carries provenance="synthetic"; source-fanned-out steps carry
 #      provenance="observed". A normal-looking end without an observed
 #      submission is run_completed, never an agent submission.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.5"
+# 0.5: execution identity repair (AGR-02). A trial's logical run id is now
+#      derived from the full Harbor trial UUID when result.json supplies one,
+#      else from a hash of the COMPLETE namespaced execution identity (task id
+#      + full session id) — never from the first 12 characters of a
+#      task-prefixed session string, which collided across attempts of the
+#      same task ("nginx-request-logging__vTNAJM8__agent" and its siblings all
+#      truncated to "nginx-reque") and merged distinct executions into one
+#      logical run whose capture revisions silently overwrote each other in
+#      latest-capture reads. Distinct executions now always get distinct run
+#      ids; capture revisions are reserved for re-recordings/reprocessing of
+#      the SAME execution. The trial uuid/name are preserved on the run for
+#      lineage. Bump requires re-ingest: run ids change for every trial whose
+#      session id shares a 12-char prefix with a sibling's.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.7"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -129,6 +144,68 @@ def _trial_markers(p: Path) -> bool:
     )
 
 
+def iter_trials_detailed(source: str | Path) -> list[tuple[Path, str | None]]:
+    """Like :func:`iter_trials`, but every candidate directory is accounted for.
+
+    Returns ``(path, exclusion_reason)`` pairs: ``reason is None`` for trials
+    that will be ingested, a human-readable reason for directories that were
+    found but skipped (errored trials, bare job roll-ups, unrelated dirs).
+    The reason is None only where a trial is actually reviewable, so a batch
+    run can report "every discovered trial ingested or excluded with a
+    reason" (AGR-02) instead of silently disappearing directories.
+    """
+    p = Path(source)
+    if p.is_file():
+        return [(p.parent if p.name == "result.json" else p, None)]
+    if p.is_dir():
+        if _trial_markers(p):
+            return [(p, None)]
+        accounted: list[tuple[Path, str | None]] = []
+        for child in sorted(p.iterdir()):
+            if not child.is_dir():
+                continue
+            if _trial_markers(child):
+                accounted.append((child, None))
+            else:
+                accounted.append((child, "no reviewable trajectory (agent/trajectory.json missing "
+                                          "— errored trial or job roll-up)"))
+        if any(reason is None for _, reason in accounted):
+            return accounted
+        # A directory *of* job directories (e.g. a committed corpus root):
+        # descend one more level and collect each job's trials.
+        nested: list[tuple[Path, str | None]] = []
+        for job in sorted(p.iterdir()):
+            if not job.is_dir():
+                continue
+            job_children = sorted(job.iterdir())
+            if not job_children:
+                nested.append((job, "empty job directory"))
+                continue
+            for trial in job_children:
+                if not trial.is_dir():
+                    continue
+                if _trial_markers(trial):
+                    nested.append((trial, None))
+                else:
+                    nested.append((trial, "no reviewable trajectory (agent/trajectory.json missing "
+                                              "— errored trial or job roll-up)"))
+        if any(reason is None for _, reason in nested):
+            # A job whose trials were collected is not itself an exclusion —
+            # drop level-1 reasons for directories that turned out to be jobs.
+            included_parents = {trial.parent for trial, reason in nested if reason is None}
+            nested.extend((job, reason) for job, reason in accounted
+                          if reason is not None and job not in included_parents)
+            return nested
+        if nested:
+            return nested
+        raise ValueError(
+            f"no Harbor trial with a reviewable trajectory found under {p}: "
+            f"expected trial directories containing agent/trajectory.json (or "
+            f"trajectory.json). Note: oracle runs record no trajectory."
+        )
+    raise ValueError(f"no such Harbor source: {p}")
+
+
 def iter_trials(source: str | Path) -> list[Path]:
     """Resolve a Harbor path to the list of trial directories it contains.
 
@@ -138,32 +215,7 @@ def iter_trials(source: str | Path) -> list[Path]:
     cases are what make batch review of an eval sweep one command.
     Raises ``ValueError`` with the searched layout when nothing is found.
     """
-    p = Path(source)
-    if p.is_file():
-        return [p.parent if p.name == "result.json" else p]
-    if p.is_dir():
-        if _trial_markers(p):
-            return [p]
-        trials = sorted(child for child in p.iterdir() if child.is_dir() and _trial_markers(child))
-        if trials:
-            return trials
-        # A directory *of* job directories (e.g. a committed corpus root):
-        # descend one more level and collect each job's trials.
-        nested = sorted(
-            trial
-            for job in p.iterdir()
-            if job.is_dir()
-            for trial in job.iterdir()
-            if trial.is_dir() and _trial_markers(trial)
-        )
-        if nested:
-            return nested
-        raise ValueError(
-            f"no Harbor trial with a reviewable trajectory found under {p}: "
-            f"expected trial directories containing agent/trajectory.json (or "
-            f"trajectory.json). Note: oracle runs record no trajectory."
-        )
-    raise ValueError(f"no such Harbor source: {p}")
+    return [path for path, reason in iter_trials_detailed(source) if reason is None]
 
 
 def _resolve_paths(source: str | Path) -> tuple[Path, Path | None, list[str]]:
@@ -200,6 +252,35 @@ def _resolve_paths(source: str | Path) -> tuple[Path, Path | None, list[str]]:
         )
         result = None
     return traj, result, warnings
+
+
+def _execution_run_id(task_id: str, session_id: str, result_data: dict,
+                      warnings: list[str]) -> str:
+    """The logical run id for ONE Harbor execution (adapter 0.6, AGR-02).
+
+    The full Harbor trial UUID is the primary identity: it is what the harness
+    itself uses to distinguish attempts. Without one, the id derives from a
+    hash of the COMPLETE namespaced identity (task id + full session id) —
+    stable across machines and re-ingests, and collision-free where the old
+    12-character prefix merged distinct attempts ("…vTNAJM8__agent",
+    "…h6dA2go__agent" and "…rwPp8Q4__agent" all began "nginx-reque").
+
+    A hash id is warned about so its provenance stays visible: without a UUID,
+    two trials of the same task that honestly report the same session id are
+    indistinguishable from the source, and the hash would merge them too —
+    the warning tells the reader exactly what evidence identity rests on.
+    """
+    uuid = result_data.get("id")
+    if uuid:
+        return f"harbor__{task_id}__{uuid}"
+    identity = f"{task_id}|{session_id}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    warnings.append(
+        "run id derived from a hash of the full task+session identity "
+        "(no Harbor trial UUID in result.json); distinct attempts that "
+        "report identical session ids cannot be told apart from this source"
+    )
+    return f"harbor__{task_id}__{digest}"
 
 
 def _read_result(result_path: Path) -> dict:
@@ -283,11 +364,100 @@ def _verifier_from_result(data: dict, source_name: str) -> tuple[dict, list[str]
         raw["exception"] = exc
     check = {
         "check_id": "terminal_bench_reward",
-        "name": "Terminal-Bench task reward",
+        "name": "Terminal-Bench task reward (aggregate)",
         "status": status,
         "source": "native_structured",
+        "timing": "post_run",
+        "source_pointers": [source_name],
     }
     return {"raw_output": json.dumps(raw, ensure_ascii=False), "checks": [check]}, warnings
+
+
+# AGR-04: cap on verifier log excerpts carried into the capture. Post-run
+# verifier output is diagnostic evidence, not agent-visible context; keep it
+# bounded and source-referenced either way.
+_VERIFIER_LOG_CAP = 16_384
+
+
+def _verifier_from_ctrf(trial_dir: Path, result_data: dict) -> tuple[dict | None, list[str]]:
+    """Import ``verifier/ctrf.json`` test results as atomic checks (AGR-04).
+
+    CTRF (Candidate Test Report Format) is what Terminal-Bench 2.0 verifiers
+    write behind the aggregate reward: one record per test with an explicit
+    status, file path, and timing. Each test becomes its own check so a
+    single failing test is visible next to the passes — the aggregate reward
+    stays the run outcome and is retained as an explicitly aggregate check.
+    Statuses the source does not state are preserved as ``unknown``, never
+    guessed into pass/fail.
+    """
+    ctrf_path = trial_dir / "verifier" / "ctrf.json"
+    if not ctrf_path.is_file():
+        return None, []
+    try:
+        ctrf = json.loads(ctrf_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        return None, [f"verifier/ctrf.json unreadable ({exc}); falling back to the aggregate reward"]
+
+    results = ctrf.get("results") if isinstance(ctrf, dict) else None
+    tests = results.get("tests") if isinstance(results, dict) else None
+    if not isinstance(tests, list) or not tests:
+        return None, ["verifier/ctrf.json carries no test results; falling back to the aggregate reward"]
+
+    warnings: list[str] = []
+    checks: list[dict] = []
+    for i, test in enumerate(tests):
+        if not isinstance(test, dict) or not test.get("name"):
+            warnings.append(f"ctrf test {i} has no name; skipped, not dropped silently")
+            continue
+        raw_status = test.get("status")
+        status = raw_status if raw_status in CHECK_STATUSES else "unknown"
+        if raw_status is not None and raw_status not in CHECK_STATUSES:
+            warnings.append(
+                f"ctrf test {test['name']!r}: unmapped status {raw_status!r} preserved as 'unknown'"
+            )
+        pointers = ["verifier/ctrf.json"]
+        if test.get("file_path"):
+            pointers.append(f"verifier/{test['file_path']}")
+        checks.append({
+            "check_id": str(test["name"]),
+            "name": str(test["name"]),
+            "status": status,
+            "source": "native_structured",
+            "timing": "post_run",
+            "source_pointers": pointers,
+        })
+
+    # The aggregate reward remains the run outcome — keep it, clearly labelled
+    # as an aggregate so per-test results and the overall verdict stay apart.
+    reward_verifier, reward_warnings = _verifier_from_result(result_data, "result.json")
+    warnings.extend(reward_warnings)
+    if reward_verifier:
+        checks.extend(reward_verifier["checks"])
+
+    verifier: dict = {
+        "raw_output": json.dumps({"ctrf_summary": results.get("summary")}, ensure_ascii=False)
+        if isinstance(results, dict) else "",
+        "checks": checks,
+    }
+
+    # Attach the verifier's own log output, capped and source-referenced.
+    stdout_path = trial_dir / "verifier" / "test-stdout.txt"
+    if stdout_path.is_file():
+        try:
+            text = stdout_path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError as exc:
+            warnings.append(f"verifier/test-stdout.txt unreadable ({exc})")
+            text = ""
+        if text:
+            if len(text) > _VERIFIER_LOG_CAP:
+                text = text[:_VERIFIER_LOG_CAP] + "\n[truncated]"
+                warnings.append("verifier/test-stdout.txt truncated to 16384 chars")
+            verifier["log_excerpts"] = [{
+                "source": "verifier/test-stdout.txt",
+                "content": text,
+                "timing": "post_run",
+            }]
+    return verifier, warnings
 
 
 def convert(
@@ -334,7 +504,12 @@ def convert(
         # Source-fanned-out steps are observed; adapter-written terminal events
         # override with provenance="synthetic" at their call site.
         payload.setdefault("provenance", "observed")
-        steps.append({"step_id": f"h{seq}", "kind": kind, "actor": actor, **payload})
+        step = {"step_id": f"h{seq}", "kind": kind, "actor": actor, **payload}
+        # AGR-04: preserve the source's own timestamp when the step carries one
+        # (mini-swe-agent records agent turns only) — never synthesise one.
+        if timestamp is not None:
+            step["timestamp"] = timestamp
+        steps.append(step)
 
     first_user_text: str | None = None
     model: str | None = agent.get("model_name")
@@ -348,6 +523,7 @@ def convert(
             continue
         src = hstep.get("source")
         model = hstep.get("model_name") or model
+        timestamp = hstep.get("timestamp")  # AGR-04: preserve available timing
 
         if src == "user":
             text = _text_of(hstep.get("message"))
@@ -462,7 +638,7 @@ def convert(
     derived_task_id = task_id or _task_name(result_data) or f"harbor-trial-{traj_id[:12]}"
     if task_id is None and _task_name(result_data):
         warnings.append(f"task_id taken from result.json ({derived_task_id}); confirm the contract")
-    resolved_run_id = run_id or f"harbor__{derived_task_id}__{traj_id[:12]}"
+    resolved_run_id = run_id or _execution_run_id(derived_task_id, traj_id, result_data, warnings)
     run: dict[str, Any] = {
         "logical_run_id": resolved_run_id,
         "task_id": derived_task_id,
@@ -470,6 +646,19 @@ def convert(
         "agent": agent.get("name") or "harbor-agent",
         "harness_version": f"harbor/{schema_version}",
     }
+    # Execution lineage (adapter 0.6): preserve what the source recorded about
+    # WHICH execution this is, so distinct attempts stay distinguishable and
+    # old-capture→new-execution mappings stay auditable. A stable identifier
+    # goes on the run; the truncated session prefix never decides identity.
+    trial_uuid = result_data.get("id")
+    trial_name = result_data.get("trial_name")
+    if trial_uuid:
+        run["trial_uuid"] = str(trial_uuid)
+    if trial_name:
+        run["trial_name"] = str(trial_name)
+    # The full session/trajectory id the source recorded — lineage for old-
+    # store mappings, which truncated exactly this value (AGR-02).
+    run["source_session_id"] = traj_id
     agent_version = agent.get("version")
     if agent_version:
         run["agent"] = f"{run['agent']}@{agent_version}"
@@ -477,6 +666,16 @@ def convert(
         run["sweep_id"] = sweep_id
     if configuration_id:
         run["configuration_id"] = configuration_id
+    # AGR-04: task version/hash fields only when the source supports them —
+    # the checksum/ref go on the run verbatim; nothing is invented for
+    # sources that don't record them.
+    if result_data.get("task_checksum"):
+        run["task_checksum"] = str(result_data["task_checksum"])
+    task_ref = result_data.get("task_id")
+    if isinstance(task_ref, dict):
+        for key in ("org", "name", "ref"):
+            if task_ref.get(key):
+                run[f"task_{key}"] = str(task_ref[key])
 
     # --- capabilities: only what Harbor genuinely captured ------------------
     capabilities = {
@@ -489,13 +688,29 @@ def convert(
         "process_state": "partial",
     }
 
-    # --- verifier: explicit sidecar wins; else synthesise from result.json --
+    # --- verifier: CTRF atomic tests first; else explicit sidecar; else the
+    # aggregate reward from result.json (AGR-04 priority) ---------------------
+    trial_dir = traj_path.parent.parent if traj_path.parent.name == "agent" else traj_path.parent
     synth_warnings: list[str] = []
+    if verifier is None:
+        verifier, ctrf_warnings = _verifier_from_ctrf(trial_dir, result_data)
+        synth_warnings.extend(ctrf_warnings)
     if verifier is None and result_path is not None:
-        verifier, synth_warnings = _verifier_from_result(result_data, result_path.name)
+        verifier, reward_warnings = _verifier_from_result(result_data, result_path.name)
+        synth_warnings.extend(reward_warnings)
     warnings.extend(synth_warnings)
     if verifier:
-        capabilities["verifier_code"] = "complete"
+        # Honest capability reporting (AGR-04): the trial bundle carries the
+        # verifier's *results* (reward, CTRF test records, log output) but not
+        # the verifier's code. Seeing a reward sidecar does not make the code
+        # visible — report the results capture as complete, the code as partial.
+        capabilities["verifier_code"] = "partial"
+        capabilities["verifier_results"] = "complete"
+        warnings.append(
+            "verifier results captured (aggregate reward"
+            + (" + ctrf.json" if any(c.get("check_id") != "terminal_bench_reward" and "::" in str(c.get("check_id", "")) for c in verifier.get("checks", [])) else "")
+            + "); the verifier's own code is not in the trial bundle — verifier_code is 'partial', not 'complete'"
+        )
 
     resolved_instruction = instruction if instruction is not None else (first_user_text or "")
     if instruction is None and first_user_text:

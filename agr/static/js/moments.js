@@ -32,7 +32,15 @@ function renderMomentCard(rv, f, moment) {
 
   if (moment.enrichment_source && (moment.root_cause_candidates || []).length) {
     const rcc = moment.root_cause_candidates[0];
-    body.append(mcBlock("Likely impact", "interpretation · " + vocab("attribution", moment.attribution_ceiling).label.toLowerCase(),
+    // AGR-03: interpretation support is its own review status, kept apart from
+    // the validated facts above — an explanation with no evidence link is
+    // labelled as such, never rendered as if the run proved it.
+    const support = (moment.gate_results || {}).explanation_support;
+    const supportLabel = support === "evidence_linked" ? "evidence-linked"
+      : support === "dangling_references" ? "references missing evidence"
+      : support === "interpretation_only" ? "no evidence link — claim not validated"
+      : vocab("attribution", moment.attribution_ceiling).label.toLowerCase();
+    body.append(mcBlock("Likely impact", "interpretation · " + supportLabel,
       (rcc.rationale || "See root-cause analysis.") + " (locus: " + rcc.locus + ")", "interp"));
   } else {
     body.append(mcBlock("Likely impact", "interpretation", "Not generated — this is a deterministic review.", "absent"));

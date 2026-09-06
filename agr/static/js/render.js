@@ -122,6 +122,36 @@ function renderShellMeta(rv) {
   const modeCls = mode === "not_reviewable" ? "warn" : mode === "model_enriched" ? "enriched" : "det";
   const modeChip = el("span", "shell-chip mode-" + modeCls, mv.label);
   modeChip.title = mv.tip; wrap.append(modeChip);
+  // AGR-07 UX: reviewer flip — when more than one reviewer has scored this
+  // capture, the reader can switch snapshots inline instead of re-running CLI
+  // commands. The active reviewer's key is marked in the tab set.
+  const avail = rv.available_reviews || [];
+  if (avail.length >= 2) {
+    const flip = el("span", "shell-chip reviewer-flip");
+    const active = rv.reviewer_key;
+    for (const key of avail) {
+      const label = key === "deterministic" ? "Deterministic"
+        : key.startsWith("model:") ? "AI · " + key.slice(6) : key;
+      const tab = el("button", "seg flip-tab" + (key === active ? " active" : ""), label);
+      tab.title = "Serve this reviewer's snapshot of the run";
+      tab.addEventListener("click", async () => {
+        if (key === state.reviewerKey || (key === active && state.reviewerKey == null)) return;
+        state.reviewerKey = key === "deterministic" && avail.includes(active) ? key : (key === active ? null : key);
+        state.momentIdx = 0;
+        toast("Serving " + label + " review…");
+        state.review = await api(reviewUrl(state.runId, state.reviewerKey));
+        render();
+      });
+      flip.append(tab);
+    }
+    wrap.append(flip);
+  } else {
+    // Honest affordance: the AI review has not been run — name the command.
+    const hint = el("span", "shell-chip ai-hint", "AI review: not run");
+    hint.title = "Run the model reviewer from the CLI:\n  agr --store <store> review \"" + (rv.reviewer_key ? state.runId : state.runId)
+      + "\" --provider anthropic\n(or --provider openai). It spends tokens; every fact it asserts is still recomputed.";
+    wrap.append(hint);
+  }
   const wf = rv.workflow || {};
   const handled = wf.review_progress === "handled";
   const wfVocab = handled && wf.disposition ? vocab("disposition", wf.disposition)

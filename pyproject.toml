@@ -39,7 +39,11 @@ dev = ["pytest", "httpx>=0.24", "fastapi>=0.100", "uvicorn>=0.23"]
 packages = ["agr"]
 
 [tool.setuptools.package-data]
-agr = ["static/*.html", "demo_fixtures/*.json"]
+# The SPA is index.html + app.css + the per-phase JS modules under static/js/;
+# all three must ship or the installed demo renders unstyled and dead (AGR-01:
+# the wheel previously omitted the CSS and every script). demo_fixtures/*.json
+# backs `agr demo-store`.
+agr = ["static/*.html", "static/*.css", "static/js/*.js", "demo_fixtures/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

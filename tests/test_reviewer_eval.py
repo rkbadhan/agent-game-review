@@ -201,6 +201,9 @@ def test_reviewer_envelope_recovers_every_decisive_moment(tmp_path):
     # De-duplication removes the redundant cards that dragged the raw-detector
     # baseline to Precision@3 = 0.625 / redundant = 0.375, while every decisive
     # gold moment is still recovered — the measurable win a model Stage F must beat.
+    # (AGR-05: the fetch_task gold annotation was reconciled — its negative
+    # repetition moment claimed outputs were identical when they differ; see
+    # the dated addendum in the gold file. Formal re-publication is AGR-07.)
     assert summary["recall_at_3"] == 1.0
     assert summary["redundant_card_rate"] == 0.0
     assert summary["precision_at_3"] == 1.0
@@ -232,3 +235,94 @@ def test_moments_from_review_maps_anchors_to_source_steps(tmp_path):
     # source step s8, not a derived event id.
     assert p.anchor_step_ids == ["s8"]
     assert p.attribution_ceiling == "dependency_linked"
+
+
+# --- AGR-07: polarity-aware semantics, abstentions, fabrication ---------------
+
+
+def _pred_p(mid, steps, polarity, ceiling="dependency_linked", checks=()):
+    return rev.PredictedMoment(
+        moment_id=mid, anchor_step_ids=list(steps), polarity=polarity,
+        affected_checks=list(checks), attribution_ceiling=ceiling,
+        evidence_span_step_ids=list(steps),
+    )
+
+
+def test_positive_prediction_for_negative_gold_cannot_score():
+    """Acceptance (AGR-07): a positive prediction overlapping a negative gold
+    moment cannot receive semantic precision or recall credit."""
+    traj = _gold_traj("r", [_moment("g", ["s8"], critical=True)])  # negative gold
+    ev = rev.evaluate_run([_pred_p("p", ["s8"], "positive")], traj)
+    d = ev.to_dict()
+    assert d["precision_at_3"] == 0.0
+    assert d["recall_at_3"] == 0.0
+    assert d["missed_critical_rate"] == 1.0  # the negative gold is still missed
+    assert d["matches"][0]["status"] == "polarity_mismatch"
+
+
+def test_polarity_agreement_still_matches():
+    traj = _gold_traj("r", [_moment("g", ["s8"], critical=True)])
+    ev = rev.evaluate_run([_pred_p("p", ["s8"], "negative")], traj)
+    d = ev.to_dict()
+    assert d["precision_at_3"] == 1.0 and d["recall_at_3"] == 1.0
+    assert d["matches"][0]["status"] == "matched"
+
+
+def test_quality_dimensions_scored_separately():
+    """AGR-07: mechanism specificity and claim support are their own metrics,
+    never folded into the match decision."""
+    traj = _gold_traj("r", [_moment("g", ["s8"], critical=True, checks=["C1"],
+                                    ceiling="hypothesized")])
+    # Localises correctly, names the check, stays under the gold ceiling
+    # (hypothesized is the strongest language this evidence licenses).
+    ev = rev.evaluate_run([_pred_p("p", ["s8"], "negative", ceiling="hypothesized",
+                                   checks=["C1"])], traj)
+    match = ev.to_dict()["matches"][0]
+    assert match["status"] == "matched"
+    assert match["mechanism_specificity"] == "check_agreement"
+    assert match["claim_support"] == "within_ceiling"
+    m = ev.to_dict()
+    assert m["mechanism_agreement_rate"] == 1.0
+    assert m["claim_support_rate"] == 1.0
+    assert m["attribution_overclaim_rate"] == 0.0
+
+
+def test_topk_cut_respects_selection_ranking():
+    """AGR-07: the top-k cut uses the reviewer's intended ranking, not an
+    incidental timeline order — rank 1 survives over an earlier-but-lower card."""
+    traj = _gold_traj("r", [_moment("g", ["s8"], critical=True)])
+    early = _pred_p("p_early", ["s2"], "negative")   # timeline-first, rank 1
+    late = _pred_p("p_ranked", ["s8"], "negative")   # rank 0 — reviewer's top pick
+    late.selection_rank = 0
+    early.selection_rank = 1
+    ev = rev.evaluate_run([early, late], traj, k=1)
+    assert ev.to_dict()["recall_at_3"] == 1.0  # the ranked-top card was the cut
+
+
+def test_abstained_review_stays_in_the_denominator():
+    """AGR-07: an incomplete review (model failure) is an explicit abstention —
+    in the denominator with zero credit, never silently skipped."""
+    traj = _gold_traj("r", [_moment("g", ["s8"], critical=True)])
+    ev = rev.evaluate_run([], traj, abstained=True)
+    d = ev.to_dict()
+    assert d["abstained"] is True
+    assert d["recall_at_3"] == 0.0
+    assert d["missed_critical_rate"] == 1.0
+    # The fabrication metric does NOT fire — the reviewer did not fabricate;
+    # it failed. Calibration is not judged on a broken review.
+    assert "n_fabricated" not in d or not d.get("no_moment_case")
+
+
+def test_fabricated_findings_on_clean_pass_counted():
+    traj = _gold_traj("r", [_moment("g", ["s1"])], no_moment=True)
+    traj.annotations[0].no_decisive_moment = True
+    traj.annotations[0].no_moment_rationale = "clean pass"
+    ev = rev.evaluate_run([_pred_p("p", ["s2"], "negative"),
+                           _pred_p("p2", ["s3"], "negative")], traj)
+    d = ev.to_dict()
+    assert d["no_moment_case"] is True
+    assert d["calibrated"] is False
+    assert d["n_fabricated"] == 2
+    summary = rev.SetEval(runs=[ev]).metrics()
+    assert summary["n_fabricated_on_clean_pass"] == 2
+    assert summary["fabrication_on_clean_pass_rate"] == 1.0

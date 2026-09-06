@@ -32,6 +32,7 @@ existing detector candidates, so the model reviewer drops in later with no rewir
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
@@ -72,6 +73,15 @@ class ReviewerContext:
     events: list[DerivedEvent]
     recoveries: list[RecoveryEpisode] = field(default_factory=list)
     contract: Optional[TaskContract] = None
+    # What the capture actually observed (§6.2) and what the task declared.
+    # Model discoveries pass the same capability requirements deterministic
+    # detectors meet before their findings publish (AGR-03).
+    profile: Optional[CapabilityProfile] = None
+    declared_artifacts: list[str] = field(default_factory=list)
+    # AGR-04: the complete task instruction, kept as its own reviewer input —
+    # never a truncated timeline excerpt. Requirements are diagnosed against
+    # what the task actually asked for, in full.
+    task_instruction: Optional[str] = None
 
 
 @dataclass
@@ -129,12 +139,17 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
         for e in ctx.events
         if e.event_type == "artifact_observation"
     }
+    declared_artifacts = set(ctx.declared_artifacts)
     ep_by_failure = {ep.failure_event_id: ep for ep in ctx.recoveries}
     sig_by_event = {
         e.event_id: action_signature(e) for e in ctx.events if e.event_type == "tool_call"
     }
     strat_after = _strategy_change_between(ctx.events)
     terminal_type = _terminal_event_type(ctx.events)
+    # Whether the agent's own trace shows it observing this check failing
+    # before the run ended — the only basis for "still failing at submission"
+    # phrasing. A post-run verifier result is not something the agent saw.
+    observed_check_failures = _agent_observed_check_failures(ctx.events, terminal_type)
 
     out: list[dict] = []
     for fact in candidate.structured_facts:
@@ -146,10 +161,39 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             # "status" accepted as an alias for "status_at_submission".
             claimed_failed = (fact.get("status_at_submission") or fact.get("status")) == "failed"
             passed = check is not None and (check.status == "failed") == claimed_failed
+            # What the recomputation can honestly support: the FINAL verifier
+            # status is always known; "at submission" is only known when the
+            # agent's own trace observed the failure before the run ended (AGR-03:
+            # a later failing check is not an agent-observed failure unless the
+            # trace supports that timing and visibility).
+            annotated["status_basis"] = "final_verifier"
+            annotated["agent_observed_failure"] = bool(
+                passed and claimed_failed and fact.get("check_id") in observed_check_failures)
         elif ftype == "absence":
             artifact = fact.get("declared_artifact")
-            recomputed = "observed" if artifact in observed_artifacts else "absent"
-            passed = artifact not in observed_artifacts
+            if artifact not in declared_artifacts:
+                # Nothing in the task declares this artifact required — "absent"
+                # is meaningless without a requirement to be absent from (AGR-03:
+                # undeclared-artifact claims do not validate).
+                annotated["validation"] = "failed"
+                annotated["recomputed"] = "undeclared"
+                out.append(annotated)
+                continue
+            in_scope = ctx.profile.meets("filesystem", "complete") if ctx.profile else True
+            if artifact in observed_artifacts:
+                recomputed = "observed"
+                passed = False
+            elif in_scope:
+                # Filesystem was captured at checkpoints or better: not seeing
+                # the artifact there is evidence it was absent from the run.
+                recomputed = "absent_from_run"
+                passed = True
+            else:
+                # Filesystem never captured: this is only "not observed in the
+                # available evidence", never a claim about the environment.
+                recomputed = "not_observed_in_captured_evidence"
+                passed = True
+            annotated["observation_scope"] = recomputed
         elif ftype == "repetition":
             evs = fact.get("events", [])
             sigs = [sig_by_event.get(e) for e in evs]
@@ -172,14 +216,22 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             if ep is None:
                 passed = fev in event_ids
         elif ftype == "event_support":
-            # Semantic-moment grounding: every named event must exist AND the
-            # quoted span must actually appear in that event's text (normalised).
+            # Semantic-moment grounding: every named event must exist AND a
+            # nonempty quoted span must actually appear in that event's text
+            # (normalised). An empty quote matches everything, so it is
+            # rejected, not silently matched (AGR-03).
             quotes = fact.get("quotes") or []
             recomputed = []
             for q in quotes:
                 eid = q.get("event_id")
+                quote = _norm_text(q.get("quote") or "")
+                if not quote:
+                    recomputed.append({"event_id": eid, "matched": False,
+                                       "event_present": eid in event_ids,
+                                       "reason": "empty_quote"})
+                    continue
                 ev = next((e for e in ctx.events if e.event_id == eid), None)
-                matched = ev is not None and _norm_text(q.get("quote", "")) in _norm_text(ev.text())
+                matched = ev is not None and quote in _norm_text(ev.text())
                 recomputed.append({"event_id": eid, "matched": matched,
                                    "event_present": ev is not None})
             passed = bool(quotes) and all(r["matched"] for r in recomputed)
@@ -199,6 +251,99 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
 def _norm_text(s: str) -> str:
     """Normalise for quote matching: lowercase, collapse whitespace."""
     return " ".join((s or "").lower().split())
+
+
+def _agent_observed_check_failures(events: list[DerivedEvent], terminal_type: str | None) -> set[str]:
+    """Check ids whose failure the agent's OWN trace shows before the run ended.
+
+    Only tool results / observations inside the trajectory can be something the
+    agent saw. The verifier result is computed after the run; a failure that
+    appears only there was never observed by the agent (AGR-03 timing rule).
+    """
+    observed: set[str] = set()
+    for e in events:
+        if e.event_type == terminal_type:
+            break
+        if e.event_type not in ("tool_result", "environment_observation"):
+            continue
+        # Raw text: check ids are conventionally uppercase, so normalization
+        # (lowercasing) would hide them.
+        for cid in _CHECK_ID_PATTERN.findall(e.text()):
+            observed.add(cid.upper())
+    return observed
+
+
+# Bare check-id tokens like C3, T2, CHK12 — how tool output usually names them.
+_CHECK_ID_PATTERN = re.compile(r"\b([A-Z]{1,4}\d{1,3})\b")
+
+
+def validate_references(candidate: Candidate, ctx: ReviewerContext) -> dict:
+    """Structural reference validation (AGR-03): no phantom or dangling pointers.
+
+    Every anchor event, affected check, and affected contract item must resolve
+    against the actual capture. A reference to an entity that does not exist is
+    malformed evidence — the finding may still be *about* something real, but as
+    authored it points nowhere, so it cannot publish until it points somewhere.
+    """
+    event_ids = {e.event_id for e in ctx.events}
+    check_ids = {c.check_id for c in ctx.checks}
+    item_ids = {i.id for i in ctx.contract.items} if ctx.contract else None
+
+    dangling: dict[str, list[str]] = {}
+    anchors = candidate.anchor_event_ids
+    if not anchors:
+        dangling["anchor_event_ids"] = ["<empty>"]
+    else:
+        missing = [a for a in anchors if a not in event_ids]
+        if missing:
+            dangling["anchor_event_ids"] = missing
+    missing_checks = [c for c in candidate.affected_checks if c not in check_ids]
+    if missing_checks:
+        dangling["affected_checks"] = missing_checks
+    if item_ids is not None:
+        missing_items = [i for i in candidate.affected_contract_items if i not in item_ids]
+        if missing_items:
+            dangling["affected_contract_items"] = missing_items
+
+    if not dangling:
+        return {"status": "resolved"}
+    return {"status": "dangling", "dangling": dangling}
+
+
+def observability_for(candidate: Candidate, ctx: ReviewerContext) -> str:
+    """Computed observability gate (AGR-03) — never a hardcoded "supported".
+
+    Deterministic detectors are capability-gated before they reach the envelope
+    (``evaluated=False`` otherwise), so their findings publish only when the
+    profile met the requirement. Model discoveries have no detector gate, so
+    the requirements implied by the fact types they assert are checked here
+    against the same capability profile. A candidate whose facts need evidence
+    the capture does not contain is "unsupported", never published as if the
+    capture backed it.
+    """
+    if candidate.detector != "model":
+        return "supported"  # the detector's own capability gate already ran
+    profile = ctx.profile
+    if profile is None:
+        return "unverifiable"
+    required: dict[tuple[str, str], None] = {}
+    for fact in candidate.structured_facts:
+        ftype = fact.get("type")
+        if ftype == "event_support":
+            required[("messages", "complete")] = None
+        elif ftype in ("repetition", "state_transition"):
+            required[("tool_results", "complete")] = None
+        elif ftype == "requirement_status":
+            required[("messages", "complete")] = None
+        elif ftype == "absence":
+            required[("filesystem", "checkpoint_only")] = None
+        elif ftype == "termination":
+            required[("messages", "complete")] = None
+    unmet = [f"{cap}<{minimum}" for cap, minimum in required
+             if not profile.meets(cap, minimum)]
+    if unmet:
+        return "unsupported: " + ", ".join(sorted(unmet))
+    return "supported"
 
 
 # Event types that can terminate a run (adapter 0.4 semantics).
@@ -325,11 +470,23 @@ def render(fact: dict, ceiling: str, polarity: str) -> str:
         detail = ""
         if fact.get("expected") is not None:
             detail = f" (expected {fact.get('expected')}, observed {fact.get('observed')})"
-        return f"Requirement check {fact.get('check_id')} was still failing at submission{detail}."
+        if fact.get("agent_observed_failure"):
+            # The agent's own trace shows it seeing this failure before the run
+            # ended, so "still failing at submission" is evidence-backed.
+            return f"Requirement check {fact.get('check_id')} was still failing at submission{detail}."
+        # A post-run verifier result is not something the agent saw (AGR-03:
+        # final verifier status ≠ status known at submission).
+        return (f"Requirement check {fact.get('check_id')} failed the run's final verifier"
+                f"{detail}; the agent's trace records no observation of this check.")
     if ftype == "repetition":
         evs = fact.get("events", [])
         return f"The same action was repeated with no new information in between ({', '.join(evs)})."
     if ftype == "absence":
+        if fact.get("observation_scope") == "not_observed_in_captured_evidence":
+            # Filesystem was never captured: absence is only observational.
+            return (f"The declared artifact {fact.get('declared_artifact')} was not observed in the "
+                    f"captured evidence; the capture does not establish it was absent from the "
+                    f"environment{link}.")
         return f"The declared artifact {fact.get('declared_artifact')} was never observed in the run{link}."
     if ftype == "state_transition":
         if fact.get("resolution_event"):
@@ -375,18 +532,48 @@ def _primary_anchor(m: ReviewMoment) -> str:
     return m.anchor_event_ids[0] if m.anchor_event_ids else m.moment_id
 
 
+def _fact_subject(m: ReviewMoment) -> str | None:
+    """The mechanical subject of a card's first determinable validated fact —
+    the issue identity its evidence supports (AGR-05). ``requirement_status``
+    → its check, ``state_transition`` → the failing event, ``absence`` → the
+    artifact, ``repetition`` → the action signature, ``event_support`` → the
+    quoted events. None when no fact determines a subject."""
+    for f in m.validated_facts:
+        t = f.get("type")
+        if t == "requirement_status" and f.get("check_id"):
+            return f"check:{f['check_id']}"
+        if t == "state_transition" and f.get("failure_event"):
+            return f"failure:{f['failure_event']}"
+        if t == "absence" and f.get("declared_artifact"):
+            return f"artifact:{f['declared_artifact']}"
+        if t == "repetition" and f.get("signature"):
+            return "repetition:" + "|".join(str(x) for x in f["signature"])
+        if t == "event_support" and f.get("quotes"):
+            ids = sorted(q.get("event_id", "") for q in f["quotes"] if isinstance(q, dict))
+            if ids:
+                return "quote:" + ",".join(ids)
+    return None
+
+
 def _same_moment(a: ReviewMoment, b: ReviewMoment) -> bool:
     """Whether two cards are facets of the *same* decisive moment (spec §8.10 gate 4).
 
-    Same polarity, and either they share an **affected check** (the same
-    requirement — this is what collapses a chatty model reviewer's duplicate cards
-    even when it anchors them differently), or they share a **primary anchor** while
-    at least one carries no check (a check card and a behaviour/omission card about
-    the same spot). Two cards with *different* checks are never merged just for
-    sharing an anchor, so distinct requirements stay distinct and recall is preserved.
+    AGR-05: deduplication runs on supported issue identity, not merely on a
+    shared affected check. Same polarity and the same fact subject (same
+    requirement, same failing event, same artifact…) collapse — this folds a
+    chatty model reviewer's duplicate cards even when it anchors them
+    differently. Cards sharing a check but asserting DIFFERENT subjects are
+    distinct contributing problems and both survive — even against a shared
+    aggregate check. When neither card's facts determine a subject, fall back
+    to the anchor rule: a shared primary anchor while at least one carries no
+    check. Two cards with different subjects are never merged for sharing an
+    anchor, so distinct issues stay distinct and recall is preserved.
     """
     if a.polarity != b.polarity:
         return False
+    subject_a, subject_b = _fact_subject(a), _fact_subject(b)
+    if subject_a is not None and subject_b is not None:
+        return subject_a == subject_b
     checks_a, checks_b = set(a.affected_checks), set(b.affected_checks)
     if checks_a & checks_b:
         return True
@@ -406,8 +593,9 @@ def select_moments(moments: list[ReviewMoment]) -> list[ReviewMoment]:
     only ever superseded by a higher-value card for the same moment.
     """
     passing = [m for m in moments if m.gate_results.get("fact_validation") == "passed"
-               and m.gate_results.get("contract_link") == "present"
+               and m.gate_results.get("references", {}).get("status") == "resolved"
                and m.gate_results.get("observability") == "supported"
+               and m.gate_results.get("contract_link") == "present"
                and m.gate_results.get("attribution") == "within_ceiling"]
 
     # Union-find over "same moment": transitively group facets so a card that links
@@ -506,6 +694,48 @@ class DeterministicReviewer:
         return None  # no model to re-ask — a failed fact simply drops
 
 
+def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
+    """Semantic support status for model explanations (AGR-03).
+
+    Separates factual assertions inside explanation fields from interpretation:
+    an explanation that references concrete run entities (check ids, event ids)
+    is "evidence_linked" only when every referenced entity exists; references
+    to entities that do not exist make it "dangling_references"; an explanation
+    that references nothing is "interpretation_only" — kept and labelled, but
+    never rendered as if the run's evidence proved it (the invented-database-
+    outage class of claim).
+    """
+    texts = [enr.consequence or "", enr.instructional_value or ""]
+    texts += [str(rc.get("rationale") or "") for rc in enr.root_cause_candidates]
+    check_ids = {c.check_id for c in ctx.checks}
+    event_ids = {e.event_id for e in ctx.events}
+    referenced = False
+    for text in texts:
+        for cid in _CHECK_ID_PATTERN.findall(text):
+            referenced = True
+            if cid.upper() not in check_ids and cid not in event_ids:
+                return "dangling_references"
+    if not referenced:
+        return "interpretation_only"
+    return "evidence_linked"
+
+
+def _explanation_attribution(enr: Enrichment, ceiling: str) -> str:
+    """Attribution check applied to every displayed explanation field (AGR-03).
+
+    Phrase lists cannot guarantee causal correctness, so this is recorded and
+    displayed, not treated as proof: an explanation whose wording implies more
+    causality than the evidence ceiling licenses is flagged "overclaim".
+    """
+    texts = [enr.better_action or "", enr.consequence or ""]
+    texts += [str(rc.get("rationale") or "") for rc in enr.root_cause_candidates]
+    for text in texts:
+        implied = implied_attribution(text)
+        if _ATTR_RANK.get(implied, 0) > _ATTR_RANK.get(ceiling, 0):
+            return "overclaim"
+    return "within_ceiling"
+
+
 def _apply_enrichment(moment: ReviewMoment, enr: Enrichment) -> None:
     """Copy an :class:`Enrichment` onto a moment, filtered to the active taxonomy.
 
@@ -529,13 +759,17 @@ def _apply_enrichment(moment: ReviewMoment, enr: Enrichment) -> None:
     moment.taxonomy_version = version.TAXONOMY_VERSION
 
 
-def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None) -> list[ReviewMoment]:
+def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
+                 telemetry: Optional[dict] = None) -> list[ReviewMoment]:
     """Build the reviewed moments for one run (Stages G→H→I).
 
     Analogous to :func:`agr.detectors.run_detectors`. Every proposed candidate is
     validated (G, with the §8.8 return-once revise loop), given an attribution
     ceiling and a controlled rendering (H), enriched with the model's gated
     taxonomy judgement, then collectively gated, de-duplicated, and ranked (I).
+
+    ``telemetry``, when given, is filled with measurable review-cost records
+    (AGR-06): how many proposals were rejected and by which gate.
     """
     reviewer = reviewer or DeterministicReviewer()
     seq_of = {e.event_id: e.sequence for e in ctx.events}
@@ -557,8 +791,12 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None) -> l
                 attempts = 2
 
         ceiling = attribution_ceiling_for(cand, ctx.slices)
-        primary = cand.structured_facts[0] if cand.structured_facts else {}
-        statement = render(primary, ceiling, cand.polarity)
+        # Render from the first fact that actually PASSED validation — never
+        # from a failed or unrecomputable fact, whose "recomputed" basis does
+        # not exist (AGR-03: unknown fact types must not become validated prose).
+        primary = next((f for f in validated if f.get("validation") == "passed"), None)
+        statement = render(primary, ceiling, cand.polarity) if primary else \
+            "No deterministic evidence supports this finding."
         gate_ok, _ = attribution_gate(statement, ceiling)
         anchor = cand.anchor_event_ids[0] if cand.anchor_event_ids else None
         linked = _linked_slices(cand, ctx.slices)
@@ -573,14 +811,24 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None) -> l
         better_action = (
             "model_provided" if (enr and enr.better_action) else "not_available_deterministic"
         )
+        refs = validate_references(cand, ctx)
         gate_results = {
             "fact_validation": "passed" if _facts_valid(validated) else "failed",
             "validation_attempts": attempts,
+            "references": refs,  # resolved | dangling (+ dangling detail)
             "contract_link": contract_link,
-            "observability": "supported",  # only evaluated detectors reach the envelope
+            # Computed from the capability profile for model discoveries;
+            # deterministic detectors were capability-gated before this envelope.
+            "observability": observability_for(cand, ctx),
             "attribution": "within_ceiling" if gate_ok else "overclaim",
             "better_action": better_action,
         }
+        if enr is not None:
+            # Model explanations are interpretation until evidence links them:
+            # semantic support gets its own review status (AGR-03), separate
+            # from the validated facts above.
+            gate_results["explanation_support"] = _explanation_support(enr, ctx)
+            gate_results["explanation_attribution"] = _explanation_attribution(enr, ceiling)
         moment = ReviewMoment(
             moment_id=f"mom_{cand.candidate_id}",
             run_id=ctx.run_id,
@@ -608,4 +856,23 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None) -> l
         moments.append(moment)
 
     select_moments(moments)
+    if telemetry is not None:
+        # AGR-06: measurable rejection reasons — which gate dropped each
+        # unselected moment (facts, references, observability, …).
+        rejections: dict[str, int] = {}
+        for m in moments:
+            if m.selected:
+                continue
+            for gate, result in m.gate_results.items():
+                ok = result == "passed" if gate == "fact_validation" \
+                    else (result.get("status") == "resolved" if gate == "references"
+                          else result in ("present", "supported", "within_ceiling"))
+                if not ok:
+                    rejections[gate] = rejections.get(gate, 0) + 1
+                    break
+            else:
+                rejections["not_selected"] = rejections.get("not_selected", 0) + 1
+        telemetry["rejections"] = rejections
+        telemetry["proposed"] = len(moments)
+        telemetry["selected"] = sum(1 for m in moments if m.selected)
     return moments

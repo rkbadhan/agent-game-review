@@ -240,7 +240,9 @@
   .final-block .eyebrow { margin-bottom:8px; }
 
   /* opportunities + signature tables */
-  .opp-table td, .sig-table td { font-size:12px; }
+  .opp-table td, .sig-table td, .audit-table td { font-size:12px; overflow-wrap:anywhere; word-break:break-word; }
+  .opp-table, .sig-table, .audit-table { table-layout:auto; width:100%; }
+  .sig-table td .ev-cell, .audit-table td .ev-cell { display:inline-flex; flex-wrap:wrap; gap:0 6px; min-width:0; }
   .stat-badge { display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:999px;
     font-size:10px; font-weight:720; letter-spacing:.02em; white-space:nowrap; border:1px solid; }
   .stat-badge.measured { color:var(--moss); background:var(--moss-soft); border-color:color-mix(in srgb,var(--moss) 34%,transparent); }
@@ -327,14 +329,14 @@
   .nav-arrow { width:28px; height:28px; border:1px solid var(--line); border-radius:7px; background:transparent; }
   .nav-arrow:hover { background:var(--navy-soft); border-color:var(--line-strong); }
   .moment-body { padding:20px 22px 16px; }
-  .moment-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; }
-  .moment-heading h2 { margin:0; max-width:640px; font-family:var(--serif); font-size:22px; font-weight:500;
-    line-height:1.22; letter-spacing:-.02em; }
+  .moment-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; min-width:0; }
+  .moment-heading h2 { margin:0; max-width:none; flex:1 1 auto; min-width:0; font-family:var(--serif); font-size:22px; font-weight:500;
+    line-height:1.22; letter-spacing:-.02em; overflow-wrap:anywhere; }
   .moment-anchor { flex:none; padding-top:5px; color:var(--muted); font:10px var(--mono); white-space:nowrap; }
   .mc-block { display:grid; grid-template-columns:120px minmax(0,1fr); gap:16px; padding:12px 0; border-top:1px solid var(--line); }
   .mc-label { padding-top:2px; color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.07em; text-transform:uppercase; }
   .mc-label span { display:block; margin-top:4px; color:var(--faint); font-size:8.5px; font-weight:500; letter-spacing:.03em; text-transform:none; }
-  .mc-text { margin:0; color:var(--ink-soft); font-size:13px; line-height:1.55; }
+  .mc-text { margin:0; color:var(--ink-soft); font-size:13px; line-height:1.55; min-width:0; overflow-wrap:anywhere; word-break:break-word; }
   .mc-block.action .mc-text { color:var(--ink); font-weight:600; }
   .mc-block.consequence .mc-text { color:var(--rust); }
   .mc-block.interp, .mc-block.hypo { grid-template-columns:120px minmax(0,1fr); margin:4px -10px; padding:12px 10px; border:0; border-radius:9px; }
@@ -393,15 +395,17 @@
   .evidence-group h3 { margin:0 0 9px; color:var(--muted); font-size:9px; font-weight:760; letter-spacing:.1em; text-transform:uppercase; }
   .evidence-item { margin-bottom:8px; padding:10px 11px; border:1px solid var(--line); border-radius:9px; background:var(--paper-strong); }
   .evidence-item:last-child { margin-bottom:0; }
-  .evidence-label { display:flex; align-items:center; gap:7px; margin-bottom:6px; font-size:10.5px; font-weight:700; }
+  .evidence-label { display:flex; align-items:center; flex-wrap:wrap; gap:4px 7px; margin-bottom:6px; font-size:10.5px; font-weight:700; min-width:0; }
+  .evidence-label > span { min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+  .evidence-label > span.evidence-type { overflow-wrap:normal; }
   .evidence-type { padding:2px 5px; border-radius:4px; color:var(--muted); background:var(--canvas-deep); font:8px var(--mono); text-transform:uppercase; }
   .evidence-detail { margin:0; color:var(--ink-soft); font:10.5px/1.5 var(--mono); word-break:break-word; }
-  .evidence-cap { margin-top:5px; color:var(--muted); font-size:9.5px; }
+  .evidence-cap { margin-top:5px; color:var(--muted); font-size:9.5px; overflow-wrap:anywhere; word-break:break-word; }
   .source-link { width:100%; margin-top:7px; padding:6px 0 0; border:0; color:var(--navy); background:transparent;
     text-align:left; font-size:10px; font-weight:650; }
   :root[data-theme="dark"] .source-link, .source-link { color:var(--rust); }
   .source-link:hover { text-decoration:underline; }
-  .judgment-note { padding:11px; border-radius:9px; color:var(--violet); background:var(--violet-soft); font-size:10.5px; line-height:1.5; }
+  .judgment-note { padding:11px; border-radius:9px; color:var(--violet); background:var(--violet-soft); font-size:10.5px; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
   .panel-dim { padding:24px 16px; color:var(--muted); font-size:12px; }
 
   /* Review / Source generic tables */

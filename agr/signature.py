@@ -68,7 +68,7 @@ def _requirement_rows(checks) -> list[SignatureRow]:
 
 
 def _recovery_row(analysis) -> SignatureRow:
-    from .recovery import GOOD_RECOVERY
+    from .recovery import GOOD_RECOVERY, UNCHANGED_RETRY
 
     has_failure = any(o.trigger == "tool_failure" for o in analysis.opportunities)
     if not has_failure:
@@ -80,11 +80,24 @@ def _recovery_row(analysis) -> SignatureRow:
             measured=False,
         )
     good = any(ep.classification == GOOD_RECOVERY for ep in analysis.recoveries)
+    unchanged = any(ep.classification == UNCHANGED_RETRY for ep in analysis.recoveries)
+    if good:
+        observed = "Strategy change resolved the failure"
+        result, interp = RESULT_SUCCESS, INTERP_POSITIVE
+    elif unchanged:
+        # AGR-05: a successful unchanged retry IS a recovery — a strategy
+        # change is not a universal requirement for sensible recovery. The
+        # wording stays honest about what resolved it.
+        observed = "Same action retried unchanged and succeeded — resolved without a strategy change"
+        result, interp = RESULT_SUCCESS, INTERP_POSITIVE
+    else:
+        observed = "Failure not resolved"
+        result, interp = RESULT_FAILED, INTERP_NEGATIVE
     return SignatureRow(
         ability="Recover from tool failure",
-        observed_behaviour="Strategy change resolved the failure" if good else "Failure not resolved by a strategy change",
-        result=RESULT_SUCCESS if good else RESULT_FAILED,
-        interpretation=INTERP_POSITIVE if good else INTERP_NEGATIVE,
+        observed_behaviour=observed,
+        result=result,
+        interpretation=interp,
         measured=True,
         evidence=[ep.failure_event_id for ep in analysis.recoveries],
     )
@@ -120,11 +133,15 @@ def _verification_row(analysis) -> SignatureRow:
             measured=True,
             evidence=[verify_opp.start_event_id, verify_opp.end_event_id],
         )
+    # AGR-05: verification is scored independently of the final outcome. A
+    # passing run with no observed verification action provides NO positive
+    # evidence of verification — success is not verification.
     return SignatureRow(
         ability="Verify before submission",
         observed_behaviour="No verification action before submission",
-        result=RESULT_FAILED if any_failed else RESULT_SUCCESS,
-        interpretation=INTERP_NEGATIVE if any_failed else INTERP_POSITIVE,
+        result=RESULT_NOT_OBSERVED,
+        interpretation="No positive evidence — a passing outcome is not verification evidence"
+        if not any_failed else INTERP_NEGATIVE,
         measured=True,
         evidence=[verify_opp.start_event_id, verify_opp.end_event_id],
     )

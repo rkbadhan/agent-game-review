@@ -15,12 +15,15 @@ from agr import read, reviewer
 from agr.model_packet import build_packet
 from agr.model_reviewer import (
     AnthropicReviewer,
+    ModelOutputError,
     OpenAIReviewer,
     ScriptedReviewer,
     make_reviewer,
 )
+from agr.model_reviewer import _LazyModelReviewer
 from agr.pipeline import analyze
 from agr.reviewer import ReviewerContext, run_reviewer
+from agr.schema import CapabilityProfile, DerivedEvent
 from agr.schema import Candidate, EvidenceSlice, VerifierCheck
 from agr.store import Store
 
@@ -47,9 +50,36 @@ def _slice(cid, ceiling):
                          event_ids=[], attribution_ceiling=ceiling, rationale="")
 
 
-def _ctx(candidates, checks=(), slices=()):
+def _ctx(candidates, checks=(), slices=(), profile=None, declared_artifacts=(), anchor_ids=(), events=None):
+    # AGR-03: synthesise an event for every referenced anchor so hand-built
+    # candidates resolve, and default to a full-capability profile so model
+    # candidates pass the computed observability gate unless a test says otherwise.
+    events = list(events or [])
+    supplied = {e.event_id for e in events}
+    for aid in anchor_ids:
+        if aid in supplied:
+            continue
+        events.append(DerivedEvent(
+            event_id=aid, run_id="r", source_capture_id="c",
+            sequence=len(supplied) + 1, source_step_ids=[aid],
+            event_type="tool_call", actor="agent"))
+        supplied.add(aid)
+    for cand in candidates:
+        for aid in cand.anchor_event_ids:
+            if aid not in supplied:
+                events.append(DerivedEvent(
+                    event_id=aid, run_id="r", source_capture_id="c",
+                    sequence=len(supplied) + 1, source_step_ids=[aid],
+                    event_type="tool_call", actor="agent"))
+                supplied.add(aid)
+    if profile is None:
+        profile = CapabilityProfile(
+            run_id="r", source_capture_id="c",
+            capabilities={"messages": "complete", "tool_calls": "complete",
+                          "tool_results": "complete", "filesystem": "checkpoint_only"})
     return ReviewerContext(run_id="r", source_capture_id="c", candidates=list(candidates),
-                           slices=list(slices), checks=list(checks), events=[], recoveries=[])
+                           slices=list(slices), checks=list(checks), events=events, recoveries=[],
+                           profile=profile, declared_artifacts=list(declared_artifacts))
 
 
 def _moment(cid, checks, facts, **enr):
@@ -140,7 +170,8 @@ def test_two_model_cards_for_one_check_collapse_even_at_different_anchors():
           "structured_facts": facts, "taxonomy_verdict": "premature_submission"}
     moments = run_reviewer(
         _ctx([_cand("c1", affected_checks=["C3"]), _cand("c2", affected_checks=["C3"])],
-             checks=checks, slices=[_slice("C3", "dependency_linked")]),
+             checks=checks, slices=[_slice("C3", "dependency_linked")],
+             anchor_ids=["evt_008", "evt_004"]),
         ScriptedReviewer({"moments": [m1, m2]}))
     assert len([m for m in moments if m.selected]) == 1
 
@@ -356,7 +387,19 @@ def test_eval_comparison_renders_and_verdicts(tmp_path, load_fixture, capsys):
 def test_lenient_json_parse_tolerates_prose():
     from agr.model_reviewer import _loads_lenient
     assert _loads_lenient('Here is the review:\n{"moments": []}\ndone') == {"moments": []}
-    assert _loads_lenient("not json at all") == {"moments": []}
+
+
+def test_malformed_model_output_is_an_explicit_error_not_empty():
+    """AGR-06: unparsable output raises ModelOutputError — parsing failure
+    must not silently become 'no decisive moment'."""
+    import pytest
+
+    from agr.model_reviewer import ModelOutputError, _loads_lenient
+    with pytest.raises(ModelOutputError):
+        _loads_lenient("not json at all")
+    # An empty response is still a valid empty review.
+    assert _loads_lenient("") == {"moments": []}
+    assert _loads_lenient(None) == {"moments": []}
 
 
 @pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"),
@@ -368,3 +411,127 @@ def test_anthropic_live_beats_or_holds_baseline(tmp_path, load_fixture):
     review = read.get_review(store, "chess_best_move__seed42")
     assert review["review_mode"] == "model_enriched"
     assert review["moments"], "the live reviewer surfaced no moment"
+
+
+# --- AGR-06: reviewer access with explicit failure states ----------------------
+
+_TOKEN = "AKIAABCDEFGHIJKLMNOP"  # synthetic AWS-shaped secret the redactor knows
+
+
+def test_no_outbound_string_escapes_redaction():
+    """Acceptance (AGR-06): a synthetic token recognized by the redactor cannot
+    survive in an `expected` field or ANY other outbound field of the packet."""
+    check = VerifierCheck(check_id="C9", run_id="r", source_capture_id="c",
+                          name=f"credential is {_TOKEN}", status="failed",
+                          source="native_structured", expected=[_TOKEN],
+                          observed=[f"leaked {_TOKEN}"])
+    cand = _cand("cand_x", affected_checks=["C9"],
+                 structured_facts=[{"type": "requirement_status", "check_id": "C9",
+                                    "status_at_submission": "failed", "note": _TOKEN}])
+    packet, _red = build_packet(_ctx([cand], checks=[check]))
+    serialized = json.dumps(packet)
+    assert _TOKEN not in serialized
+    # The traversal pass also redacts nested values inside facts and errors.
+    from agr.redaction import redact_value
+    obj, _m = redact_value({"expected": [_TOKEN], "nested": {"deep": _TOKEN}})
+    assert _TOKEN not in json.dumps(obj)
+
+
+def test_small_trace_keeps_full_text_large_trace_gets_excerpts():
+    """AGR-06: traces that fit the budget are not truncated unnecessarily."""
+    long_text = "x" * 900  # > the 220-char excerpt budget
+    ev = DerivedEvent(event_id="evt_big", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": long_text})
+    small = _ctx([], events=[ev])
+    packet, _ = build_packet(small)
+    digest = packet["timeline_digest"][0]["excerpt"]
+    assert digest == long_text  # full text — no unnecessary truncation
+    # An absurdly small budget forces the 220-char excerpt fallback.
+    tiny = build_packet(small, budget_chars=10)
+    assert len(tiny[0]["timeline_digest"][0]["excerpt"]) == 220
+
+
+class _FakeProvider(_LazyModelReviewer):
+    """Offline stand-in with canned responses and a captured outbound log."""
+
+    provider = "fake"
+
+    def __init__(self, responses):
+        super().__init__("fake-model")
+        self._responses = list(responses)
+        self.sent = []
+
+    def _complete(self, system, user_json):
+        self.sent.append(user_json)
+        return self._responses.pop(0)
+
+
+def test_expansion_round_returns_full_redacted_evidence():
+    """Acceptance (AGR-06): a bounded second pass retrieves the FULL text of
+    requested events (redacted), and unknown ids are rejected explicitly."""
+    full_cmd = "nginx -t -c /etc/nginx/nginx.conf && echo config-ok-details-" + "y" * 300
+    ev = DerivedEvent(event_id="evt_nginx", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": full_cmd})
+    ctx = _ctx([], events=[ev], anchor_ids=["evt_nginx"])
+    rev = _FakeProvider([
+        {"expansion_requests": [{"event_ids": ["evt_nginx", "evt_ghost"], "reason": "need the command"}]},
+        {"moments": []},
+    ])
+    rev.propose(ctx)
+    # Two rounds were spent; the second carried the FULL event text.
+    assert len(rev.sent) == 2
+    second = json.loads(rev.sent[1])
+    ev_block = second["expansion"]["evidence"][0]
+    assert ev_block["event_id"] == "evt_nginx"
+    assert ev_block["content"] == full_cmd
+    # Unknown id rejected with an explicit reason, never guessed.
+    assert second["expansion"]["rejected"] == [
+        {"event_id": "evt_ghost", "reason": "unknown event id — not in the captured evidence"}
+    ]
+    # Telemetry records the requested evidence and both rounds; every provider
+    # round carries its cost measurements.
+    kinds = [t["kind"] for t in rev.telemetry]
+    assert kinds.count("propose") == 1 and kinds.count("expansion") == 1
+    assert all("latency_ms" in t for t in rev.telemetry if t["kind"].endswith(("propose", "propose_expanded", "revise")))
+
+
+def test_pipeline_preserves_deterministic_baseline_on_model_failure(tmp_path, load_fixture):
+    """Acceptance (AGR-06): invalid model output produces an explicit error
+    state; the deterministic baseline is preserved and served."""
+    class _Broken(ScriptedReviewer):
+        review_mode = "model_enriched"
+
+        def propose(self, ctx):
+            raise ModelOutputError("model response was not parsable as a JSON object")
+
+    store = Store(str(tmp_path / "store"))
+    a = analyze(load_fixture("chess_best_move.atif.json"), store, reviewer=_Broken({}, source="model:broken"))
+    # Moments still served — the deterministic baseline.
+    assert any(m.selected for m in a.review_moments)
+    # The error state is explicit, separate, and names the reviewer.
+    errors = store.read_derived(a.run_source.run_id, a.run_source.source_capture_id, "review_errors.json")
+    assert errors and errors[-1]["error_type"] == "ModelOutputError"
+    assert errors[-1]["reviewer_key"] == "model:broken"
+    # The model's review slot was never written — no failure disguised as a review.
+    assert store.list_reviews(a.run_source.run_id, a.run_source.source_capture_id) == ["deterministic"]
+    # The read view names the state.
+    view = read.get_review(store, a.run_source.run_id)
+    assert view["review_status"] == "failed"
+    assert view["review_errors"]
+
+
+def test_rejection_reasons_recorded_in_telemetry():
+    """AGR-06: measurable rejections — which gate dropped each unselected card."""
+    checks = [_check("C3", "failed")]
+    facts = [{"type": "requirement_status", "check_id": "C3", "status_at_submission": "failed"}]
+    payload = {"moments": [_moment("cand_C3", ["C3"], facts,
+                                   root_cause_candidates=[{"locus": "agent_policy", "rank": 1, "rationale": "gave up"}],
+                                   better_action="try again")]}
+    telemetry: dict = {}
+    run_reviewer(_ctx([_cand("cand_C3", affected_checks=["C3"])],
+                      checks=checks, slices=[_slice("C3", "dependency_linked")]),
+                 ScriptedReviewer(payload), telemetry=telemetry)
+    assert telemetry["selected"] >= 1
+    assert "rejections" in telemetry

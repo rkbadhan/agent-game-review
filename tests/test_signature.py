@@ -34,7 +34,10 @@ def test_verification_row_negative_when_unverified_and_failed(tmp_path, load_fix
     a = _analyze(tmp_path, load_fixture, "chess_best_move.atif.json")
     row = _row(a, "Verify before submission")
     assert row.measured is True
-    assert row.result == "Failed"
+    # AGR-05: the row scores the verification BEHAVIOUR, independent of the
+    # final outcome — no verification action was observed, whatever the run
+    # returned. With failing checks the absence is still negative evidence.
+    assert row.result == RESULT_NOT_OBSERVED
     assert row.interpretation == "Negative evidence in this run"
 
 
@@ -62,4 +65,31 @@ def test_signature_never_conflates_not_measured_with_result(tmp_path, load_fixtu
                 assert row.measured is False
                 assert row.result == RESULT_NOT_OBSERVED
             else:
-                assert row.result in {"Successful", "Failed"}
+                # AGR-05: a measured row may also report NOT_OBSERVED when the
+                # qualifying opportunity existed but the behaviour never did
+                # (e.g. no verification action) — that is an observation about
+                # the behaviour, not a verdict laundered from the outcome.
+                assert row.result in {"Successful", "Failed", RESULT_NOT_OBSERVED}
+
+
+# --- AGR-05: honest recovery representation; verification scored on its own ---
+
+def test_recovery_row_positive_on_successful_unchanged_retry(tmp_path, load_fixture):
+    """Acceptance (AGR-05): a strategy change is not a universal requirement —
+    a successful unchanged retry is a recovery, worded honestly."""
+    a = _analyze(tmp_path, load_fixture, "stuck_retry.atif.json")
+    row = _row(a, "Recover from tool failure")
+    assert row.measured is True
+    assert row.result == "Successful"
+    assert row.interpretation == "Positive evidence"
+    assert "unchanged" in row.observed_behaviour.lower()
+
+
+def test_verification_row_gets_no_credit_on_a_pass_without_verification(tmp_path, load_fixture):
+    """Acceptance (AGR-05): a passing run without an observed verification
+    action provides no positive evidence of verification."""
+    a = _analyze(tmp_path, load_fixture, "stuck_retry.atif.json")
+    row = _row(a, "Verify before submission")
+    assert row.measured is True
+    assert row.result == RESULT_NOT_OBSERVED
+    assert "no positive evidence" in row.interpretation.lower()

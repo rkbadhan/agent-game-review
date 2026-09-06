@@ -1,0 +1,525 @@
+{
+  "migration": "AGR-02 harbor execution identity (adapter 0.6)",
+  "old_store": ".agr-store",
+  "new_store": ".agr-store-v2",
+  "executions": [
+    {
+      "new_run_id": "harbor__terminal-bench/crack-7z-hash__0b9b1946-1866-4e40-ac98-b0510a611a78",
+      "trial_uuid": "0b9b1946-1866-4e40-ac98-b0510a611a78",
+      "trial_name": "crack-7z-hash__aNeynGE",
+      "source_session_id": "crack-7z-hash__aNeynGE__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/fix-git__b9985cb5-d986-4874-9aeb-e00a98903930",
+      "trial_uuid": "b9985cb5-d986-4874-9aeb-e00a98903930",
+      "trial_name": "fix-git__BYvpzSU",
+      "source_session_id": "fix-git__BYvpzSU__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/raman-fitting__81e7ac3f-04b0-4339-a26c-36cc7b122524",
+      "trial_uuid": "81e7ac3f-04b0-4339-a26c-36cc7b122524",
+      "trial_name": "raman-fitting__gJ5LS7D",
+      "source_session_id": "raman-fitting__gJ5LS7D__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/crack-7z-hash__5bceed45-feeb-435a-be5c-5982a4dac5be",
+      "trial_uuid": "5bceed45-feeb-435a-be5c-5982a4dac5be",
+      "trial_name": "crack-7z-hash__S25oipk",
+      "source_session_id": "crack-7z-hash__S25oipk__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/prove-plus-comm__df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+      "trial_uuid": "df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+      "trial_name": "prove-plus-comm__UfS8uMD",
+      "source_session_id": "prove-plus-comm__UfS8uMD__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/raman-fitting__14767a87-2b85-4998-9ae2-193a2d3d29f0",
+      "trial_uuid": "14767a87-2b85-4998-9ae2-193a2d3d29f0",
+      "trial_name": "raman-fitting__FpPoN5F",
+      "source_session_id": "raman-fitting__FpPoN5F__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/crack-7z-hash__bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+      "trial_uuid": "bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+      "trial_name": "crack-7z-hash__6nSnEWX",
+      "source_session_id": "ec926a5a-3d7f-48c3-86bb-cd3d4812a161",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/fix-git__afe33965-1d9e-4de0-8f48-4adce2968bbd",
+      "trial_uuid": "afe33965-1d9e-4de0-8f48-4adce2968bbd",
+      "trial_name": "fix-git__XAZ696F",
+      "source_session_id": "42ccd466-dd6f-4b5c-8ca4-63a116d23de6",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/prove-plus-comm__180d8e8d-f2c9-4b8e-a556-852a04ced7e1",
+      "trial_uuid": "180d8e8d-f2c9-4b8e-a556-852a04ced7e1",
+      "trial_name": "prove-plus-comm__GyarhZG",
+      "source_session_id": "e4187c91-6e56-4f52-a92c-66a10ab2d3b9",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/make-mips-interpreter__d2f1dfd2-3c71-438b-8ca6-e12379e321fa",
+      "trial_uuid": "d2f1dfd2-3c71-438b-8ca6-e12379e321fa",
+      "trial_name": "make-mips-interpreter__Fj4RpHV",
+      "source_session_id": "make-mips-interpreter__Fj4RpHV__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/make-mips-interpreter__17431147-613e-4033-81e8-5366a84cd2d2",
+      "trial_uuid": "17431147-613e-4033-81e8-5366a84cd2d2",
+      "trial_name": "make-mips-interpreter__mU7gNZv",
+      "source_session_id": "5426bb92-ddfb-4a2e-917c-b7748729a325",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/raman-fitting__12583792-cbe3-433c-a425-1a18ac3db3d1",
+      "trial_uuid": "12583792-cbe3-433c-a425-1a18ac3db3d1",
+      "trial_name": "raman-fitting__jCu2BAS",
+      "source_session_id": "raman-fitting__jCu2BAS__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/nginx-request-logging__96cfb6ac-cbf9-4858-b9b3-8916b3f86827",
+      "trial_uuid": "96cfb6ac-cbf9-4858-b9b3-8916b3f86827",
+      "trial_name": "nginx-request-logging__vTNAJM8",
+      "source_session_id": "nginx-request-logging__vTNAJM8__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__db052e3f-fe3a-4589-b023-ced3a07c815a",
+      "trial_uuid": "db052e3f-fe3a-4589-b023-ced3a07c815a",
+      "trial_name": "polyglot-c-py__9P28G8w",
+      "source_session_id": "polyglot-c-py__9P28G8w__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/raman-fitting__8b21a3a7-8411-470e-96db-ac4157077ee1",
+      "trial_uuid": "8b21a3a7-8411-470e-96db-ac4157077ee1",
+      "trial_name": "raman-fitting__LMDAdti",
+      "source_session_id": "19c58efb-1149-4664-9f1c-942a847312ae",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/nginx-request-logging__334402ee-61ba-42b7-8f6d-358f1db33edc",
+      "trial_uuid": "334402ee-61ba-42b7-8f6d-358f1db33edc",
+      "trial_name": "nginx-request-logging__h6dA2go",
+      "source_session_id": "nginx-request-logging__h6dA2go__agent",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__c6345d74-dc73-4e87-a201-d878150e7804",
+      "trial_uuid": "c6345d74-dc73-4e87-a201-d878150e7804",
+      "trial_name": "polyglot-c-py__2chrYuM",
+      "source_session_id": "polyglot-c-py__2chrYuM__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/nginx-request-logging__87eba7e3-08bf-43a1-a075-7acc4374db5f",
+      "trial_uuid": "87eba7e3-08bf-43a1-a075-7acc4374db5f",
+      "trial_name": "nginx-request-logging__SLfAhLz",
+      "source_session_id": "4e941d41-a666-4ad1-9caf-43192105bd74",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/nginx-request-logging__09d92d58-8cf2-4000-839b-8aa66579c051",
+      "trial_uuid": "09d92d58-8cf2-4000-839b-8aa66579c051",
+      "trial_name": "nginx-request-logging__rwPp8Q4",
+      "source_session_id": "nginx-request-logging__rwPp8Q4__agent",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__77f91867-96ed-47f2-9214-27a252697a62",
+      "trial_uuid": "77f91867-96ed-47f2-9214-27a252697a62",
+      "trial_name": "polyglot-c-py__CGnNC78",
+      "source_session_id": "6c3b4b8b-9910-4bdd-a2d4-8cbf515303b9",
+      "outcome": "FAILED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__b9c3e1ba-8503-483a-b35b-bde945507e77",
+      "trial_uuid": "b9c3e1ba-8503-483a-b35b-bde945507e77",
+      "trial_name": "polyglot-c-py__85wAj7j",
+      "source_session_id": "f03be3af-66ce-4be7-839d-0454533e2c19",
+      "outcome": "PASSED"
+    },
+    {
+      "new_run_id": "harbor__terminal-bench/fix-git__9979f4ed-15d1-471d-b738-d4edff291940",
+      "trial_uuid": "9979f4ed-15d1-471d-b738-d4edff291940",
+      "trial_name": "fix-git__sTxRfrg",
+      "source_session_id": "fix-git__sTxRfrg__agent",
+      "outcome": "PASSED"
+    }
+  ],
+  "mapping": [
+    {
+      "old_run_id": "harbor__terminal-bench/crack-7z-hash__crack-7z-has",
+      "captures": [
+        {
+          "capture_id": "capture_a02b1d13eadd",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T17:57:09Z"
+        },
+        {
+          "capture_id": "capture_7586eeb24abb",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:03Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/crack-7z-hash__0b9b1946-1866-4e40-ac98-b0510a611a78",
+        "harbor__terminal-bench/crack-7z-hash__5bceed45-feeb-435a-be5c-5982a4dac5be",
+        "harbor__terminal-bench/crack-7z-hash__bc70a0f9-021b-4a9f-9c15-7425a2458ece"
+      ]
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/crack-7z-hash__ec926a5a-3d7",
+      "captures": [
+        {
+          "capture_id": "capture_29849a3a7675",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T12:42:53Z"
+        },
+        {
+          "capture_id": "capture_2f64a695be9a",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:08Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/crack-7z-hash__bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+      "trial_uuid": "bc70a0f9-021b-4a9f-9c15-7425a2458ece"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/fix-git__42ccd466-dd6",
+      "captures": [
+        {
+          "capture_id": "capture_10a7475848b6",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T12:42:52Z"
+        },
+        {
+          "capture_id": "capture_26b04f76a4ef",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:07Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/fix-git__afe33965-1d9e-4de0-8f48-4adce2968bbd",
+      "trial_uuid": "afe33965-1d9e-4de0-8f48-4adce2968bbd"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/fix-git__fix-git__sTx",
+      "captures": [
+        {
+          "capture_id": "capture_b152b0fa3987",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T17:34:51Z"
+        },
+        {
+          "capture_id": "capture_93e7875b323e",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:03Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/fix-git__9979f4ed-15d1-471d-b738-d4edff291940",
+      "trial_uuid": "9979f4ed-15d1-471d-b738-d4edff291940"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/make-mips-interpreter__5426bb92-ddf",
+      "captures": [
+        {
+          "capture_id": "capture_f93e32e91cfa",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T15:22:39Z"
+        },
+        {
+          "capture_id": "capture_2c801a804ecf",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:59Z"
+        },
+        {
+          "capture_id": "capture_64816c410391",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:05Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/make-mips-interpreter__17431147-613e-4033-81e8-5366a84cd2d2",
+      "trial_uuid": "17431147-613e-4033-81e8-5366a84cd2d2"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
+      "captures": [
+        {
+          "capture_id": "capture_b169741966fc",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T15:22:39Z"
+        },
+        {
+          "capture_id": "capture_5728948a6195",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:58Z"
+        },
+        {
+          "capture_id": "capture_c9fb281f28ce",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:04Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/make-mips-interpreter__d2f1dfd2-3c71-438b-8ca6-e12379e321fa",
+        "harbor__terminal-bench/make-mips-interpreter__17431147-613e-4033-81e8-5366a84cd2d2"
+      ]
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
+      "captures": [
+        {
+          "capture_id": "capture_2e5caf712a06",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:22:43Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/nginx-request-logging__87eba7e3-08bf-43a1-a075-7acc4374db5f",
+      "trial_uuid": "87eba7e3-08bf-43a1-a075-7acc4374db5f"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/nginx-request-logging__nginx-reques",
+      "captures": [
+        {
+          "capture_id": "capture_347ebc907305",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:13:25Z"
+        },
+        {
+          "capture_id": "capture_dda86e468537",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:22:42Z"
+        },
+        {
+          "capture_id": "capture_3262fd41bf66",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:31:59Z"
+        },
+        {
+          "capture_id": "capture_4ed0683d92b3",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:59Z"
+        },
+        {
+          "capture_id": "capture_6cbc9510b33a",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:05Z"
+        },
+        {
+          "capture_id": "capture_d99b549cec3b",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:05Z"
+        },
+        {
+          "capture_id": "capture_401ea0d2d711",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:06Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/nginx-request-logging__96cfb6ac-cbf9-4858-b9b3-8916b3f86827",
+        "harbor__terminal-bench/nginx-request-logging__334402ee-61ba-42b7-8f6d-358f1db33edc",
+        "harbor__terminal-bench/nginx-request-logging__87eba7e3-08bf-43a1-a075-7acc4374db5f",
+        "harbor__terminal-bench/nginx-request-logging__09d92d58-8cf2-4000-839b-8aa66579c051"
+      ]
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
+      "captures": [
+        {
+          "capture_id": "capture_a6aed59ddce5",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:36:07Z"
+        },
+        {
+          "capture_id": "capture_742d09baa518",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:06Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__77f91867-96ed-47f2-9214-27a252697a62",
+      "trial_uuid": "77f91867-96ed-47f2-9214-27a252697a62"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/polyglot-c-py__f03be3af-66c",
+      "captures": [
+        {
+          "capture_id": "capture_d9be225ebb4a",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:36:07Z"
+        },
+        {
+          "capture_id": "capture_cc6cef2fa030",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:07Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/polyglot-c-py__b9c3e1ba-8503-483a-b35b-bde945507e77",
+      "trial_uuid": "b9c3e1ba-8503-483a-b35b-bde945507e77"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/polyglot-c-py__polyglot-c-p",
+      "captures": [
+        {
+          "capture_id": "capture_83e757385807",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:13:25Z"
+        },
+        {
+          "capture_id": "capture_25b148c88734",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:22:43Z"
+        },
+        {
+          "capture_id": "capture_4f0e8a5bfb15",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:06Z"
+        },
+        {
+          "capture_id": "capture_c1a0d8d82cb6",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:06Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/polyglot-c-py__db052e3f-fe3a-4589-b023-ced3a07c815a",
+        "harbor__terminal-bench/polyglot-c-py__c6345d74-dc73-4e87-a201-d878150e7804",
+        "harbor__terminal-bench/polyglot-c-py__77f91867-96ed-47f2-9214-27a252697a62",
+        "harbor__terminal-bench/polyglot-c-py__b9c3e1ba-8503-483a-b35b-bde945507e77"
+      ]
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/prove-plus-comm__e4187c91-6e5",
+      "captures": [
+        {
+          "capture_id": "capture_ba7ebef66412",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T12:42:53Z"
+        },
+        {
+          "capture_id": "capture_821e7d07651a",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:07Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/prove-plus-comm__180d8e8d-f2c9-4b8e-a556-852a04ced7e1",
+      "trial_uuid": "180d8e8d-f2c9-4b8e-a556-852a04ced7e1"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/prove-plus-comm__prove-plus-c",
+      "captures": [
+        {
+          "capture_id": "capture_8a2c0b5fd469",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T17:57:09Z"
+        },
+        {
+          "capture_id": "capture_a30d77a74dd5",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:03Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/prove-plus-comm__df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+        "harbor__terminal-bench/prove-plus-comm__180d8e8d-f2c9-4b8e-a556-852a04ced7e1"
+      ]
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
+      "captures": [
+        {
+          "capture_id": "capture_04fa4a42e4e2",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T14:13:25Z"
+        },
+        {
+          "capture_id": "capture_c2b88714f44c",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:59Z"
+        },
+        {
+          "capture_id": "capture_1f0cfef86f9b",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:04Z"
+        }
+      ],
+      "status": "mapped",
+      "new_run_id": "harbor__terminal-bench/raman-fitting__8b21a3a7-8411-470e-96db-ac4157077ee1",
+      "trial_uuid": "8b21a3a7-8411-470e-96db-ac4157077ee1"
+    },
+    {
+      "old_run_id": "harbor__terminal-bench/raman-fitting__raman-fittin",
+      "captures": [
+        {
+          "capture_id": "capture_ce9e90572d5d",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-23T17:57:09Z"
+        },
+        {
+          "capture_id": "capture_d23146a96bd2",
+          "adapter_version": "harbor-adapter-0.2",
+          "ingested_at": "2026-08-24T12:42:53Z"
+        },
+        {
+          "capture_id": "capture_39aac76ed426",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:51Z"
+        },
+        {
+          "capture_id": "capture_bbd6937cb718",
+          "adapter_version": "harbor-adapter-0.3",
+          "ingested_at": "2026-08-24T16:04:58Z"
+        },
+        {
+          "capture_id": "capture_2c93c42bb3e7",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:04Z"
+        },
+        {
+          "capture_id": "capture_8e14ba40f8a0",
+          "adapter_version": "harbor-adapter-0.4",
+          "ingested_at": "2026-08-24T16:41:04Z"
+        }
+      ],
+      "status": "ambiguous",
+      "candidates": [
+        "harbor__terminal-bench/raman-fitting__81e7ac3f-04b0-4339-a26c-36cc7b122524",
+        "harbor__terminal-bench/raman-fitting__14767a87-2b85-4998-9ae2-193a2d3d29f0",
+        "harbor__terminal-bench/raman-fitting__12583792-cbe3-433c-a425-1a18ac3db3d1",
+        "harbor__terminal-bench/raman-fitting__8b21a3a7-8411-470e-96db-ac4157077ee1"
+      ]
+    }
+  ],
+  "summary": {
+    "new_executions": 22,
+    "old_runs": 15,
+    "mapped": 9,
+    "ambiguous": 6,
+    "feedback_moved": 0,
+    "note": "no feedback.json records existed under old harbor run ids; nothing to move. Ambiguous mappings are reported, never guessed."
+  }
+}

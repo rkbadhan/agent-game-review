@@ -96,3 +96,43 @@ trace-summarizer-as-analysis), but it overclaimed "content parity reached" —
 it was not: Harbor identified the decisive pattern on 7/7 vs AGR ~5/7, with
 higher concrete-mechanism specificity. Kept above for provenance; the
 authoritative statements are the Gate B1 verdict and scope-limit sections.
+
+---
+
+## ADDENDUM (2026-09-05, AGR-07 — label reconciliation and protocol change notice)
+
+**1. The `PROVISIONAL HOLD` label is correct under the frozen rule — reconciled
+here explicitly.** The registered rule (see `gate-b-eval-design.md`) defines an
+AGR run-win as matching-or-beating Harbor on decisive-moment **recall** with no
+honesty failures, ties counting to Harbor:
+
+- **GO fails**: AGR run-wins 0/7 (0% < 60%), and question 7 (evidence linking)
+  was not a scored win condition in the table above.
+- **REVISE / NO-GO does not apply**: it requires Harbor winning an outright
+  majority of runs. Harbor was strictly better on 2/7 (runs 5 and 7,
+  root-cause specificity); the other five were ties, which the rule assigns to
+  Harbor for win-counting but which are not Harbor *wins*. 2/7 is not a
+  majority.
+- **HOLD is therefore the unique correct label**: the GO threshold failed, no
+  disqualifying failure mode was found, and no majority was crossed. The
+  original outcome stands unrewritten.
+
+**2. Metric and protocol changes since this comparison (AGR-03/04/05/07) mean
+its numbers are NOT comparable to any future run.** The repairs that followed
+the B1 scoring changed the reviewer's semantics and the harness itself:
+
+- evidence validation with verifier-timing honesty (AGR-03);
+- CTRF atomic checks and the full task instruction as reviewer input (AGR-04);
+- recovery linkage, repetition output-comparison, identity-based dedup (AGR-05);
+- polarity-aware semantic matching, abstention/fabrication tracking, and
+  per-dimension quality scoring in the harness (this ticket).
+
+Any new comparison must be collected under a **newly registered, dated
+protocol** (and, per the design doc, human-adjudicated gold) — the historical
+result above is preserved as a historical version, not extended.
+
+**3. Execution-identity correction (AGR-02).** The corpus this experiment drew
+from collapsed 22 Harbor trials into 16 logical runs; identities were
+re-derived from the full trial UUID (see `docs/harbor-identity-migration.json`
+and `docs/repair-baseline.md`). Run links in the tables above refer to the
+pre-correction identities and are kept as historical labels.

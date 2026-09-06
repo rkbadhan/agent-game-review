@@ -101,14 +101,16 @@ def cmd_ingest_harbor(args) -> int:
     ``result.json`` unless ``--verifier`` supplies an explicit sidecar.
     """
     from .adapter import get_adapter
-    from .ingest_harbor import iter_trials
+    from .ingest_harbor import iter_trials_detailed
     from .ingest_pi import load_verifier
 
     try:
-        trials = iter_trials(args.path)
+        discovered = iter_trials_detailed(args.path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    trials = [path for path, reason in discovered if reason is None]
+    excluded = [(path, reason) for path, reason in discovered if reason is not None]
     if len(trials) > 1 and args.run_id:
         print("--run-id cannot name a single run when PATH holds multiple trials",
               file=sys.stderr)
@@ -118,6 +120,9 @@ def cmd_ingest_harbor(args) -> int:
     verifier = load_verifier(args.verifier) if args.verifier else None
     store = Store(args.store)
     ingested = skipped = 0
+    for trial, reason in excluded:
+        print(f"excluded {Path(trial).name}: {reason}")
+        skipped += 1
     for trial in trials:
         label = Path(trial).name
         try:
@@ -131,7 +136,7 @@ def cmd_ingest_harbor(args) -> int:
                 configuration_id=args.configuration_id,
             )
         except ValueError as exc:
-            print(f"skip {label}: {exc}", file=sys.stderr)
+            print(f"excluded {label}: {exc}", file=sys.stderr)
             skipped += 1
             continue
         print(f"— {label}")
@@ -139,9 +144,10 @@ def cmd_ingest_harbor(args) -> int:
             print(f"  adapter warning: {w}")
         _ingest_doc(result.doc, store)
         ingested += 1
-    if len(trials) > 1:
+    if len(discovered) > 1:
         print(f"\n{ingested} trial(s) ingested"
-              + (f", {skipped} skipped" if skipped else ""))
+              + (f", {skipped} excluded with a reason" if skipped else "")
+              + f" — {ingested + skipped} of {len(discovered)} discovered accounted for")
     return 0 if ingested else 1
 
 
@@ -724,6 +730,49 @@ def cmd_eval(args) -> int:
                 print(f"    - only {d['annotators'][0]}: {mid}")
             for mid in d["b_only_moments"]:
                 print(f"    - only {d['annotators'][1]}: {mid}")
+
+    # AGR-07: reproducibility manifest — versions, gold status, invocation, and
+    # the full report, so another person can regenerate the same numbers.
+    if getattr(args, "manifest", None):
+        import hashlib
+        import platform
+
+        from . import version
+        gold_files = sorted(glob.glob(os.path.join(args.gold, "*.gold.json")))
+        manifest = {
+            "manifest_version": 1,
+            "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "invocation": {
+                "command": "agr eval",
+                "fixtures": args.fixtures,
+                "gold_dir": args.gold,
+                "k": 3,
+                "provider": provider or "deterministic-only",
+                "model": (args.model or os.environ.get("AGR_REVIEW_MODEL")) if provider else None,
+            },
+            "versions": {
+                "python": platform.python_version(),
+                "agr_package": getattr(version, "AGR_VERSION", None),
+                "reviewer_eval": version.REVIEWER_EVAL_VERSION,
+                "detector": version.DETECTOR_VERSION,
+                "reviewer": version.REVIEWER_VERSION,
+                "redaction": version.REDACTION_VERSION,
+            },
+            "gold_set": {
+                "files": [
+                    {"path": os.path.basename(f),
+                     "sha256": hashlib.sha256(open(f, "rb").read()).hexdigest()}
+                    for f in gold_files
+                ],
+                "adjudication_status": {
+                    t.run_id: "double_labelled" if t.double_labelled else "single_labelled"
+                    for t in gold_set.trajectories
+                },
+            },
+        }
+        with open(args.manifest, "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2, sort_keys=True)
+        print(f"\nmanifest written to {args.manifest}")
     return 0
 
 
@@ -1043,6 +1092,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="model id for --provider (default: $AGR_REVIEW_MODEL or the provider default)")
     pe.add_argument("--base-url", default=None,
                     help="OpenAI/Anthropic-compatible endpoint for --provider (any model)")
+    pe.add_argument("--manifest", default=None, metavar="PATH",
+                    help="write a reproducibility manifest (versions, gold hashes, "
+                         "adjudication status, invocation) to PATH (AGR-07)")
     pe.set_defaults(func=cmd_eval)
 
     prv = sub.add_parser(
