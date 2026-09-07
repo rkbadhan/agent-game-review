@@ -60,13 +60,14 @@ def test_outcome_distinguishes_the_four_verdict_families():
 
 def test_observed_pass_is_not_an_observed_failure():
     """A captured 'C1 PASSED' is a pass observation: a later verifier failure
-    must not be phrased as something the agent saw failing."""
+    must not be phrased as something the agent saw failing. Statuses use the
+    canonical lowercase vocabulary end to end (review 2026-09-07)."""
     events = [
         _event("evt_1", "running checks... C1 PASSED", seq=1),
         _event("evt_2", "final answer submitted", etype="final_submission", seq=2),
     ]
     statuses = _agent_observed_check_statuses(events, "final_submission")
-    assert statuses.get("C1") == "PASSED"
+    assert statuses.get("C1") == "passed"
 
 
 def test_observed_failure_then_later_pass_resolves_in_order():
@@ -78,12 +79,12 @@ def test_observed_failure_then_later_pass_resolves_in_order():
         _event("evt_3", "final answer submitted", etype="final_submission", seq=3),
     ]
     statuses = _agent_observed_check_statuses(events, "final_submission")
-    assert statuses.get("C1") == "PASSED"
+    assert statuses.get("C1") == "passed"
 
     # And the reverse order leaves the failure as the last observation.
     events[1] = _event("evt_2", "rerun: C1 FAILED", seq=2)
     statuses = _agent_observed_check_statuses(events, "final_submission")
-    assert statuses.get("C1") == "FAILED"
+    assert statuses.get("C1") == "failed"
 
 
 def test_bare_check_id_mention_observes_nothing():

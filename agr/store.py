@@ -125,8 +125,11 @@ class Store:
 
     def write_derived(self, run_id: str, capture_id: str, name: str, payload: Any) -> None:
         cap_dir = self._capture_dir(run_id, capture_id)
-        os.makedirs(cap_dir, exist_ok=True)
-        with open(os.path.join(cap_dir, name), "w", encoding="utf-8") as fh:
+        path = os.path.join(cap_dir, name)
+        # Nested names (e.g. ``review_telemetry/att_0001.json``) create their
+        # subdirectory; flat names are unchanged.
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
 
     def read_derived(self, run_id: str, capture_id: str, name: str) -> Any:

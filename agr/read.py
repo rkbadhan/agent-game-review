@@ -273,18 +273,22 @@ def _active_error_keys(store: Store, run_id: str, capture_id: str) -> set[str]:
 
 
 def _default_reviewer_key(store: Store, run_id: str, capture_id: str) -> str:
-    """The most-enriched available review: model if present, else deterministic.
+    """The most-enriched HEALTHY review: model if present, else deterministic.
 
-    F1 follow-up: a reviewer slot whose review FAILED is not servable as the
-    default — its snapshot is stale (or absent) while the UI wording says the
-    deterministic baseline is shown, so a slot with an active error is skipped
-    unless it is all there is.
+    Review 2026-09-07 (R4): a reviewer slot whose review FAILED is never
+    servable as the default while a healthy alternative exists — its snapshot
+    is stale (or absent) while the UI wording says the deterministic baseline
+    is shown. Serving order: a healthy model slot, then the deterministic
+    baseline, and only an errored model slot when no baseline was ever
+    written (an errored slot beats nothing at all).
     """
     errored = _active_error_keys(store, run_id, capture_id)
     keys = store.list_reviews(run_id, capture_id)
     for k in keys:
         if k != "deterministic" and k not in errored:
             return k
+    if "deterministic" in keys:
+        return "deterministic"
     for k in keys:
         if k != "deterministic":
             return k  # explicit fallback: an errored slot beats nothing at all
@@ -870,7 +874,23 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
     # F1 follow-up: review_errors.json holds only each reviewer's ACTIVE error
     # (pipeline resolves an entry on a successful retry) — historical attempts
     # are in review_attempts.json and never flip a fixed review back to failed.
-    review_errors = _read(store, run_id, capture_id, "review_errors.json", [])
+    all_active_errors = _read(store, run_id, capture_id, "review_errors.json", [])
+    # Review 2026-09-07 (R4): the served review's status is not contaminated by
+    # OTHER reviewers' errors. An explicitly requested reviewer reports only
+    # its own state — a healthy model:B must not read as an abstention because
+    # model:A failed. On the default surface, the deterministic baseline is
+    # served when a model reviewer is failing, and the view says exactly that:
+    # enrichment failed, deterministic baseline shown.
+    if reviewer_key:
+        review_errors = [e for e in all_active_errors if e.get("reviewer_key") == reviewer_key]
+    elif chosen_key != "deterministic":
+        review_errors = [e for e in all_active_errors if e.get("reviewer_key") == chosen_key]
+    else:
+        review_errors = all_active_errors
+    # Errors from reviewers other than the one serving this view stay visible
+    # as those reviewers' status — never merged into the served review's state.
+    other_reviewer_errors = [e for e in all_active_errors
+                             if e not in review_errors]
     # Attach a deterministic evidence grade for the §4.7.1 moment-card header.
     completeness = entry.get("capture_completeness")
     for m in moments:
@@ -909,6 +929,10 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         # not_reviewable review can name exactly what is absent.
         "missing_capabilities": _missing_capabilities(capabilities),
         "reviewer_key": chosen_key,
+        # Review 2026-09-07 (R4): requested vs served are named separately, so a
+        # fallback (or a stale-slot skip) is observable instead of silent.
+        "requested_reviewer_key": reviewer_key,
+        "served_reviewer_key": chosen_key,
         "available_reviews": store.list_reviews(run_id, capture_id),
         # AGR-06: explicit review states. ``review_errors`` records the served
         # reviewer's ACTIVE enrichment failure (malformed model output, provider
@@ -917,6 +941,7 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         # moment". F1 follow-up: a successful retry resolves its active error,
         # and per-attempt history lives in review_attempts.json.
         "review_errors": review_errors,
+        "other_reviewer_errors": other_reviewer_errors,
         "review_attempts": _read(store, run_id, capture_id, "review_attempts.json", []),
         "review_telemetry": _read(store, run_id, capture_id, "review_telemetry.json", {}),
         "review_status": _review_status(review_moments, review_errors),

@@ -176,6 +176,10 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # candidates. Stage F's model reviewer plugs into the same seam later.
     telemetry: dict = {"reviewer_key": getattr(reviewer, "reviewer_key", "deterministic")}
     review_error: dict | None = None
+    # Review 2026-09-07: a reused reviewer accumulates provider rounds across
+    # runs — persist only the rounds THIS attempt added, and stamp them with
+    # the attempt id, so downstream run-cost aggregation cannot double-count.
+    _rounds_before = len(getattr(reviewer, "telemetry", None) or [])
     try:
         review_moments = run_reviewer(ReviewerContext(
             run_id=rs.run_id,
@@ -313,9 +317,17 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         # redaction/redaction-map, per-call latency, and token ESTIMATES
         # (character-derived; actual provider usage is not available from the
         # parsed response and is never fabricated).
-        rounds = getattr(reviewer, "telemetry", None)
-        if rounds:
-            record["provider_rounds"] = [dict(r) for r in rounds]
+        rounds = getattr(reviewer, "telemetry", None) or []
+        # Review 2026-09-07: slice to THIS attempt's rounds (a reused reviewer
+        # carries earlier runs' rounds in its telemetry list) and store the
+        # record under the attempt id — per-attempt telemetry coexists instead
+        # of one latest record overwriting the last.
+        attempt_rounds = rounds[_rounds_before:]
+        if attempt_rounds:
+            record["provider_rounds"] = [dict(r) for r in attempt_rounds]
+        record["attempt_id"] = attempt_id
+        store.write_derived(rs.run_id, rs.source_capture_id,
+                            f"review_telemetry/{attempt_id}.json", record)
         store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", record)
     store.write_derived(
         rs.run_id, rs.source_capture_id, "review_moments.json", review_payload

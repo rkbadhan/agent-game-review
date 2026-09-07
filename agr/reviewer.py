@@ -334,6 +334,17 @@ def _outputs_equivalent(events: list[DerivedEvent], event_ids: list[str]) -> boo
     return True
 
 
+# Canonical observed-status vocabulary (review 2026-09-07): the parser emits
+# one normalized vocabulary consumed identically by fact validation and
+# rendering — a real ``C1 FAILED`` observation must yield
+# ``agent_observed_failure: true`` end to end, never a case-mismatched miss.
+_CANONICAL_STATUS = {
+    "PASS": "passed", "PASSED": "passed",
+    "FAIL": "failed", "FAILED": "failed",
+    "ERROR": "error", "SKIPPED": "skipped",
+}
+
+
 def _agent_observed_check_statuses(events: list[DerivedEvent], terminal_type: str | None) -> dict[str, str]:
     """Check-id -> the agent's LAST observed status, from the agent's own trace.
 
@@ -342,7 +353,8 @@ def _agent_observed_check_statuses(events: list[DerivedEvent], terminal_type: st
     alone is NOT an observation of its failure (F1 follow-up): an observed
     status requires the id AND a status word together, and the most recent
     observation wins — a check captured failing and later passing is not
-    "still failing at submission".
+    "still failing at submission". Values are the canonical lowercase status
+    vocabulary (``passed`` / ``failed`` / ``error`` / ``skipped``).
     """
     statuses: dict[str, str] = {}
     for e in events:
@@ -353,7 +365,7 @@ def _agent_observed_check_statuses(events: list[DerivedEvent], terminal_type: st
         # Raw text: check ids are conventionally uppercase, so normalization
         # (lowercasing) would hide them.
         for cid, word in _CHECK_STATUS_PATTERN.findall(e.text()):
-            statuses[cid.upper()] = word.upper()
+            statuses[cid.upper()] = _CANONICAL_STATUS.get(word.upper(), word.lower())
     return statuses
 
 
@@ -547,12 +559,18 @@ _LINK_CLAUSE = {
 }
 
 
-def render(fact: dict, ceiling: str, polarity: str) -> str:
+def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = False) -> str:
     """Render a card statement from controlled templates, gated by ``ceiling``.
 
     Causal language is chosen to match the attribution level: ``dependency_linked``
     yields "linked to", never "produced". Pure status facts carry no causal verb
     and read the same at any ceiling.
+
+    ``observation_scope`` (review 2026-09-07 R1) marks a negative finding whose
+    support is recorded tool evidence but which carries NO check/contract link
+    (typically: no verifier exists). The template states the observation and
+    its coverage limit explicitly — task correctness stays unknown, and the
+    final implementation is never asserted incorrect.
     """
     ftype = fact.get("type")
     link = _LINK_CLAUSE.get(ceiling, _LINK_CLAUSE["hypothesized"])
@@ -592,8 +610,14 @@ def render(fact: dict, ceiling: str, polarity: str) -> str:
         if fact.get("resolution_event"):
             return (
                 f"A failure at {fact.get('failure_event')} was recovered via a strategy "
-                f"change at {fact.get('resolution_event')}."
-            )
+                f"change at {fact.get('resolution_event')}.")
+        if observation_scope:
+            # R1: no check/contract link exists (usually no verifier). The
+            # observation states what the capture recorded and its limit —
+            # never that the task outcome or final implementation is wrong.
+            return (f"The recorded tool call at {fact.get('failure_event')} failed, and no "
+                    f"resolving check appears in the available capture; whether the task's "
+                    f"final state is correct remains unknown.")
         return f"A tool failure at {fact.get('failure_event')} was left unresolved before submission{link}."
     if ftype == "event_support":
         evs = [q.get("event_id") for q in (fact.get("quotes") or []) if q.get("event_id")]
@@ -623,6 +647,20 @@ _REJECTION_GATES = {
     "observability": "supported",
     "attribution": "within_ceiling",
 }
+
+
+def _link_gate(m: "ReviewMoment") -> bool:
+    """The §8.10 concern gate, with the R1 observation path.
+
+    Passes when the moment carries a check/contract concern — or, failing
+    that, when it is a supported observation backed by recorded tool evidence
+    (review 2026-09-07 R1). Shared by selection and rejection accounting so
+    the two never disagree.
+    """
+    if m.gate_results.get("contract_link") == "present":
+        return True
+    return (m.gate_results.get("contract_link") == "absent"
+            and m.gate_results.get("observation_basis") == "tool_evidence")
 
 
 def _value_key(m: ReviewMoment) -> tuple:
@@ -703,11 +741,22 @@ def select_moments(moments: list[ReviewMoment]) -> list[ReviewMoment]:
     so a model reviewer that surfaces the same moment twice does not cost precision.
     Recall is preserved because distinct requirements are never merged and a card is
     only ever superseded by a higher-value card for the same moment.
+
+    Review 2026-09-07 (R1): a negative finding with NO check/contract link can
+    still be selected as a supported OBSERVATION — its ``observation_basis``
+    gate must show the claim is backed by recorded tool evidence (facts
+    validated, references resolved, observability supported). The stronger
+    failed-task/causal claim still requires the contract link; the
+    observation-scoped card renders with its coverage limits and never asserts
+    the task outcome.
     """
+    def _passes_link(m: ReviewMoment) -> bool:
+        return _link_gate(m)
+
     passing = [m for m in moments if m.gate_results.get("fact_validation") == "passed"
                and m.gate_results.get("references", {}).get("status") == "resolved"
                and m.gate_results.get("observability") == "supported"
-               and m.gate_results.get("contract_link") == "present"
+               and _passes_link(m)
                and m.gate_results.get("attribution") == "within_ceiling"]
 
     # Union-find over "same moment": transitively group facets so a card that links
@@ -806,20 +855,42 @@ class DeterministicReviewer:
         return None  # no model to re-ask — a failed fact simply drops
 
 
+def _quote_authenticity(enr: Enrichment, ctx: ReviewerContext) -> str:
+    """Whether the explanation's quoted spans actually appear in the named
+    events' recorded text (review 2026-09-07): its own dimension, separate
+    from whether the prose around it is supported. ``authentic`` | ``dangling``
+    | ``none``."""
+    quotes = enr.quotes or []
+    if not quotes:
+        return "none"
+    for q in quotes:
+        eid = q.get("event_id")
+        quote = _norm_text(q.get("quote") or "")
+        ev = next((e for e in ctx.events if e.event_id == eid), None)
+        if not quote or ev is None or quote not in _norm_text(ev.text()):
+            return "dangling"
+    return "authentic"
+
+
 def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
     """Semantic support status for model explanations (AGR-03; F1 follow-up).
 
-    Three dimensions, never conflated:
+    Three dimensions, never conflated (review 2026-09-07: matching a quote
+    establishes QUOTE AUTHENTICITY — it does not support the accompanying
+    factual assertions, so an authentic quote no longer upgrades invented
+    explanation prose to evidence-linked):
 
     * *reference validity* — an identifier the prose names must exist, else
       ``dangling_references``;
-    * *observational support* — only a quoted span that actually appears in the
-      named event's recorded text is run evidence; that is the only thing that
-      earns ``evidence_linked``;
-    * everything else is ``interpretation_only`` — prose that merely mentions a
-      real check or event id is NOT evidence-linked, because identifier
-      existence is not semantic validation (the invented-database-outage class
-      of claim). It stays visible, labelled as interpretation.
+    * *quote authenticity* — reported separately (``quote_authenticity``):
+      every quoted span must actually appear in the named event's recorded
+      text; a failed quote is misrepresentation and fails the explanation;
+    * *explanation support* — prose is ``evidence_linked`` only when the
+      explanation states nothing beyond the quoted evidence (each nonempty
+      prose field's text is contained in the quoted spans). Everything else
+      is ``interpretation_only`` — invented database/outage rationales stay
+      interpretation, however true an unrelated quoted span is. It stays
+      visible, labelled as interpretation.
     """
     texts = [enr.consequence or "", enr.instructional_value or ""]
     texts += [str(rc.get("rationale") or "") for rc in enr.root_cause_candidates]
@@ -829,16 +900,23 @@ def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
         for cid in _CHECK_ID_PATTERN.findall(text):
             if cid.upper() not in check_ids and cid not in event_ids:
                 return "dangling_references"
-    # Quoted spans are the only observational support: verify each against the
-    # recorded event text, exactly like an event_support fact (empty quotes and
-    # non-matching spans fail — never silently match).
+    # Quote authenticity: every quoted span must actually appear in the
+    # recorded event text, exactly like an event_support fact (empty quotes
+    # and non-matching spans fail — never silently match).
+    quoted: list[str] = []
     for q in (enr.quotes or []):
         eid = q.get("event_id")
         quote = _norm_text(q.get("quote") or "")
         ev = next((e for e in ctx.events if e.event_id == eid), None)
         if not quote or ev is None or quote not in _norm_text(ev.text()):
             return "dangling_references"
-    if enr.quotes:
+        quoted.append(quote)
+    if not quoted:
+        return "interpretation_only"
+    # Evidence-linked prose only when it says nothing beyond the quotes: every
+    # nonempty prose field must be contained in the quoted evidence itself.
+    joined = " ".join(quoted)
+    if all((not t.strip()) or (_norm_text(t) and _norm_text(t) in joined) for t in texts):
         return "evidence_linked"
     return "interpretation_only"
 
@@ -914,13 +992,6 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
                 attempts = 2
 
         ceiling = attribution_ceiling_for(cand, ctx.slices)
-        # Render from the first fact that actually PASSED validation — never
-        # from a failed or unrecomputable fact, whose "recomputed" basis does
-        # not exist (AGR-03: unknown fact types must not become validated prose).
-        primary = next((f for f in validated if f.get("validation") == "passed"), None)
-        statement = render(primary, ceiling, cand.polarity) if primary else \
-            "No deterministic evidence supports this finding."
-        gate_ok, _ = attribution_gate(statement, ceiling)
         anchor = cand.anchor_event_ids[0] if cand.anchor_event_ids else None
         linked = _linked_slices(cand, ctx.slices)
         # Gate 2 (§8.10) requires a relevant contract/verifier concern for a
@@ -930,6 +1001,25 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         has_concern = bool(cand.affected_checks or cand.affected_contract_items or linked)
         contract_link = "present" if (has_concern or cand.polarity == "positive"
                                        or cand.kind == "recovery") else "absent"
+        # Review 2026-09-07 (R1): a negative finding with no check/contract
+        # link (typically: no verifier exists at all) is a SUPPORTED
+        # OBSERVATION when its facts validate against recorded tool evidence —
+        # selectable, but rendered with coverage limits and never as a
+        # task-outcome claim. The stronger failed-task/causal claim types keep
+        # their existing additional evidence requirements. With a verifier
+        # present, concern linkage is establishable — the §8.10 gate keeps
+        # applying and unlinked negatives stay unselected (selecting them
+        # would only duplicate the check-backed cards).
+        observation_scoped = (cand.polarity == "negative" and cand.kind != "recovery"
+                              and not has_concern and not ctx.checks)
+        # Render from the first fact that actually PASSED validation — never
+        # from a failed or unrecomputable fact, whose "recomputed" basis does
+        # not exist (AGR-03: unknown fact types must not become validated prose).
+        primary = next((f for f in validated if f.get("validation") == "passed"), None)
+        statement = render(primary, ceiling, cand.polarity,
+                           observation_scope=observation_scoped) if primary else \
+            "No deterministic evidence supports this finding."
+        gate_ok, _ = attribution_gate(statement, ceiling)
         enr = proposal.enrichment
         better_action = (
             "model_provided" if (enr and enr.better_action) else "not_available_deterministic"
@@ -940,6 +1030,15 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             "validation_attempts": attempts,
             "references": refs,  # resolved | dangling (+ dangling detail)
             "contract_link": contract_link,
+            # R1: for an observation-scoped negative finding, whether the claim
+            # is backed by recorded tool evidence (the thing that makes it
+            # selectable without a contract link). ``n/a`` when a contract
+            # link already carries the moment.
+            "observation_basis": (
+                "tool_evidence" if (observation_scoped and _facts_valid(validated)
+                                    and refs.get("status") == "resolved")
+                else ("unsupported" if observation_scoped else "n/a")
+            ),
             # Computed from the capability profile for model discoveries;
             # deterministic detectors were capability-gated before this envelope.
             "observability": observability_for(cand, ctx),
@@ -949,8 +1048,11 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         if enr is not None:
             # Model explanations are interpretation until evidence links them:
             # semantic support gets its own review status (AGR-03), separate
-            # from the validated facts above.
+            # from the validated facts above. Review 2026-09-07: quote
+            # authenticity is reported as its OWN dimension — a matching quote
+            # never upgrades the accompanying prose to evidence-linked.
             gate_results["explanation_support"] = _explanation_support(enr, ctx)
+            gate_results["quote_authenticity"] = _quote_authenticity(enr, ctx)
             gate_results["explanation_attribution"] = _explanation_attribution(enr, ceiling)
         moment = ReviewMoment(
             moment_id=f"mom_{cand.candidate_id}",
@@ -998,6 +1100,7 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
                 ok = result == "passed" if gate == "fact_validation" \
                     else (isinstance(result, dict) and result.get("status") == "resolved"
                           if gate == "references"
+                          else _link_gate(m) if gate == "contract_link"
                           else result == _REJECTION_GATES[gate])
                 if not ok:
                     rejections[gate] = rejections.get(gate, 0) + 1

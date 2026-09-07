@@ -273,22 +273,28 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     # string in the packet — check names/values, structured facts, anything a
     # future edit adds — so no trace-derived token can reach the model unredacted.
     packet, traversal_map = redact_value(packet)
-    # F1 follow-up (budget enforcement): the budget is ENFORCED on the actual
-    # final payload — measured AFTER metadata, candidates, and the traversal
-    # pass, not estimated from raw trace text alone. The enforced ceiling
-    # reserves room for the system prompt and one bounded expansion round.
-    # Over budget, the timeline digest is rebuilt with scaled per-event
-    # excerpts (bounded below) until the serialized packet fits or the excerpt
-    # floor is reached. The measured size and enforcement outcome are reported
-    # in the redaction/telemetry map — never inside the packet itself, where
-    # the annotation would change the size it reports.
+    # Review 2026-09-07: the budget is enforced on the ACTUAL final payload on
+    # EVERY packet — not gated on the raw-trace estimate. Metadata, candidates,
+    # and newly delivered diagnostics can push a small raw trace over budget,
+    # so the previous ``trace_chars > budget_chars`` gate let real requests
+    # exceed the advertised limit. Over budget, the timeline digest is rebuilt
+    # with scaled per-event excerpts (bounded below) until the serialized
+    # packet fits or the excerpt floor is reached; past the floor, oldest
+    # digest entries are dropped (run_shape still shows the whole run) until
+    # the packet fits. The result is explicit: ``budget_met`` is true only
+    # when the serialized request actually fits the effective budget, and an
+    # over-budget result is recorded — never silently submitted.
     effective_budget = max(1000, budget_chars - _BUDGET_RESERVE_CHARS)
-    if trace_chars > budget_chars:
-        excerpt = _EXCERPT_CHARS
-        while len(json.dumps(packet)) > effective_budget and excerpt > _MIN_EXCERPT_CHARS:
-            excerpt = max(_MIN_EXCERPT_CHARS, excerpt // 2)
-            packet["timeline_digest"] = _timeline_digest(ctx.events, redacted,
-                                                          excerpt_chars=excerpt)
+    excerpt = _EXCERPT_CHARS
+    while len(json.dumps(packet)) > effective_budget and excerpt > _MIN_EXCERPT_CHARS:
+        excerpt = max(_MIN_EXCERPT_CHARS, excerpt // 2)
+        packet["timeline_digest"] = _timeline_digest(ctx.events, redacted,
+                                                      excerpt_chars=excerpt)
+    # Past the excerpt floor the digest itself is trimmed from the front (the
+    # oldest events go first; run_shape and the candidates still describe the
+    # whole run) — the serialized request is a hard limit, not an aspiration.
+    while len(json.dumps(packet)) > effective_budget and packet["timeline_digest"]:
+        packet["timeline_digest"] = packet["timeline_digest"][1:]
     packet_size = len(json.dumps(packet))
     red_map = dict(red_result.to_dict())
     red_map["traversal"] = traversal_map.to_dict()
@@ -296,6 +302,11 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     red_map["budget_chars"] = budget_chars
     red_map["effective_budget_chars"] = effective_budget
     red_map["budget_met"] = packet_size <= effective_budget
+    if not red_map["budget_met"]:
+        # Explicit over-budget result: the enforced ceiling could not be met
+        # even at the excerpt floor with an empty digest. Recorded for the
+        # operator — the caller decides whether submission proceeds.
+        red_map["budget_overrun_chars"] = packet_size - effective_budget
     return packet, red_map
 
 

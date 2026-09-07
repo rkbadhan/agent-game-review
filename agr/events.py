@@ -36,7 +36,13 @@ KIND_TO_EVENT = {
 }
 
 # Keys copied verbatim from an ATIF step into the derived event payload.
-_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason")
+# ``tool_use_id`` (R2): the call↔result link, so downstream pairing helpers
+# match results to the call they answer instead of guessing by adjacency.
+# ``tool_input`` (R2): the COMPLETE structured tool input the source recorded —
+# display excerpts stay separate; the evidence retains the full content.
+# ``status``: tool-result status (ok|error) where the source records a flag
+# rather than an OS exit code.
+_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason", "tool_use_id", "tool_input", "status")
 
 
 class EventDerivationError(ValueError):

@@ -104,19 +104,43 @@ def test_rejection_telemetry_does_not_count_status_fields_as_gates(fixtures_dir,
 
 def test_provider_round_telemetry_persists(fixtures_dir, tmp_path):
     """Per-attempt provider-round records reach the persisted telemetry —
-    not just reviewer-key and counts. Estimates stay labelled as estimates."""
+    not just reviewer-key and counts. Estimates stay labelled as estimates.
+
+    Review 2026-09-07: only the rounds THIS attempt added are persisted, and
+    the record carries the attempt id — a reused reviewer's earlier rounds
+    must not be re-counted into a later run's record."""
     doc = _load(FIXTURE, fixtures_dir)
     store = Store(str(tmp_path / "store"))
 
     class _RoundLogging(ScriptedReviewer):
-        telemetry = [{
-            "kind": "propose", "provider": "scripted", "model": "probe",
-            "input_chars": 1234, "input_tokens_est": 308, "latency_ms": 5,
-            "redaction": {"removed": []},
-        }]
+        review_mode = "model_enriched"
 
-    analyze(doc, store, reviewer=_RoundLogging({"moments": []}, source="model:probe"))
+        def __init__(self, payload, source):
+            super().__init__(payload, source=source)
+            self.telemetry = []  # instance-level: rounds accumulate per reviewer
+
+        def propose(self, ctx):
+            self.telemetry.append({
+                "kind": "propose", "provider": "scripted", "model": "probe",
+                "input_chars": 1234, "input_tokens_est": 308, "latency_ms": 5,
+                "redaction": {"removed": []},
+            })
+            return super().propose(ctx)
+
+    reviewer = _RoundLogging({"moments": []}, source="model:probe")
+    analyze(doc, store, reviewer=reviewer)
     t = read.get_review(store, "chess_best_move__seed42")["review_telemetry"]
     rounds = t.get("provider_rounds")
     assert rounds and rounds[0]["input_tokens_est"] == 308
     assert "est" in rounds[0] or "input_tokens_est" in rounds[0]
+    assert t.get("attempt_id")
+
+    # A reused reviewer's second run records ONLY its own round — the first
+    # run's round is not double-counted (review 2026-09-07).
+    analyze(doc, store, reviewer=reviewer)
+    t2 = read.get_review(store, "chess_best_move__seed42")["review_telemetry"]
+    assert len(t2.get("provider_rounds", [])) == 1
+    assert t2.get("attempt_id") != t.get("attempt_id")
+    # Per-attempt records coexist instead of one latest record overwriting.
+    attempts = read.get_review(store, "chess_best_move__seed42")["review_attempts"]
+    assert [a["attempt_id"] for a in attempts] == [t.get("attempt_id"), t2.get("attempt_id")]
