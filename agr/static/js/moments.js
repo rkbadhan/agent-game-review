@@ -40,7 +40,12 @@ function renderMomentCard(rv, f, moment) {
       : support === "dangling_references" ? "references missing evidence"
       : support === "interpretation_only" ? "no evidence link — claim not validated"
       : vocab("attribution", moment.attribution_ceiling).label.toLowerCase();
-    body.append(mcBlock("Likely impact", "interpretation · " + supportLabel,
+    // F1 follow-up: the attribution flag is surfaced, not silently recorded —
+    // wording that implies more causality than the ceiling licenses is marked
+    // on the card where the claim is made.
+    const overclaim = (moment.gate_results || {}).explanation_attribution === "overclaim";
+    body.append(mcBlock("Likely impact",
+      overclaim ? supportLabel + " · overclaims causality" : supportLabel,
       (rcc.rationale || "See root-cause analysis.") + " (locus: " + rcc.locus + ")", "interp"));
   } else {
     body.append(mcBlock("Likely impact", "interpretation", "Not generated — this is a deterministic review.", "absent"));
@@ -72,7 +77,15 @@ function actionText(m, f) { if (m.kind === "omission") return "The required acti
   if (idx >= 0) return "At trace step " + (idx + 1) + " the agent performed a " + (f.steps[idx].kind || "?") + " action.";
   return m.summary || "See evidence."; }
 function consequenceText(m) { const f = (m.facts || [])[0] || {};
-  if (f.type === "requirement_status") return "Check " + f.check_id + " was " + f.status_at_submission + " at submission (observed " + fmtVal(f.observed) + ").";
+  if (f.type === "requirement_status") {
+    // F1 follow-up: state timing honestly. The final verifier status is a
+    // post-run result; "still failing at submission" is claimed only when the
+    // validated fact carries the agent's own observed failure.
+    if (f.agent_observed_failure) return "Check " + f.check_id + " was still failing at submission (observed " + fmtVal(f.observed) + ").";
+    const observedBy = f.agent_observed_status && f.agent_observed_status !== "failed"
+      ? "; the agent's trace last observed it " + f.agent_observed_status : "; the agent's trace records no observation of this check";
+    return "Check " + f.check_id + " ended '" + (f.status || f.status_at_submission) + "' in the run's final verifier (observed " + fmtVal(f.observed) + ")" + observedBy + ".";
+  }
   if (f.type === "state_transition") return f.resolution_event ? "The failure was later resolved by a strategy change." : "The failure was left unresolved before submission.";
   if (m.consequence) return m.consequence; return "See the evidence panel for the observed result."; }
 

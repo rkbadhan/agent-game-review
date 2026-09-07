@@ -261,12 +261,33 @@ def _run_moments(store: Store, run_id: str, capture_id: str,
     return moments, review_moments, served_key
 
 
+def _active_error_keys(store: Store, run_id: str, capture_id: str) -> set[str]:
+    """Reviewer keys with a CURRENT (unresolved) error (F1 follow-up).
+
+    ``review_errors.json`` holds each reviewer's active error only — pipeline
+    resolves a reviewer's entry on a successful retry — so a historical
+    failure never makes a healthy retry look failed.
+    """
+    errors = _read(store, run_id, capture_id, "review_errors.json", [])
+    return {e.get("reviewer_key") for e in errors if isinstance(e, dict)}
+
+
 def _default_reviewer_key(store: Store, run_id: str, capture_id: str) -> str:
-    """The most-enriched available review: model if present, else deterministic."""
+    """The most-enriched available review: model if present, else deterministic.
+
+    F1 follow-up: a reviewer slot whose review FAILED is not servable as the
+    default — its snapshot is stale (or absent) while the UI wording says the
+    deterministic baseline is shown, so a slot with an active error is skipped
+    unless it is all there is.
+    """
+    errored = _active_error_keys(store, run_id, capture_id)
     keys = store.list_reviews(run_id, capture_id)
     for k in keys:
-        if k != "deterministic":
+        if k != "deterministic" and k not in errored:
             return k
+    for k in keys:
+        if k != "deterministic":
+            return k  # explicit fallback: an errored slot beats nothing at all
     return "deterministic"
 
 
@@ -799,8 +820,13 @@ def get_audit(store: Store, run_id: str, capture_id: Optional[str] = None,
 def _review_status(review_moments: Optional[list[dict]], errors: list) -> str:
     """The served review's state, kept explicit (AGR-06).
 
-    ``failed``       — a model enrichment error occurred; the deterministic
-                       baseline is served and the failure is named.
+    ``errors`` is the ACTIVE error list for the reviewer whose snapshot is
+    served (F1 follow-up) — historical attempts live in review_attempts.json
+    and never flip a successful retry back to failed.
+
+    ``failed``       — an active model enrichment error for the served
+                       reviewer; the deterministic baseline is served and the
+                       failure is named.
     ``empty``        — a VALID review that returned no moments.
     ``no_selection`` — moments exist but none passed the gates.
     ``ok``           — at least one selected card.
@@ -841,6 +867,10 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
     moments, review_moments, served_key = _run_moments(
         store, run_id, capture_id, events, detector_results, reviewer_key=reviewer_key)
     chosen_key = served_key if served_key is not None else _default_reviewer_key(store, run_id, capture_id)
+    # F1 follow-up: review_errors.json holds only each reviewer's ACTIVE error
+    # (pipeline resolves an entry on a successful retry) — historical attempts
+    # are in review_attempts.json and never flip a fixed review back to failed.
+    review_errors = _read(store, run_id, capture_id, "review_errors.json", [])
     # Attach a deterministic evidence grade for the §4.7.1 moment-card header.
     completeness = entry.get("capture_completeness")
     for m in moments:
@@ -880,11 +910,14 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "missing_capabilities": _missing_capabilities(capabilities),
         "reviewer_key": chosen_key,
         "available_reviews": store.list_reviews(run_id, capture_id),
-        # AGR-06: explicit review states. ``review_errors`` records enrichment
-        # failures (malformed model output, provider error) separately from a
-        # valid empty review; ``review_status`` names the served state so the
-        # UI never renders a failure as "no decisive moment".
-        "review_errors": _read(store, run_id, capture_id, "review_errors.json", []),
+        # AGR-06: explicit review states. ``review_errors`` records the served
+        # reviewer's ACTIVE enrichment failure (malformed model output, provider
+        # error) separately from a valid empty review; ``review_status`` names
+        # the served state so the UI never renders a failure as "no decisive
+        # moment". F1 follow-up: a successful retry resolves its active error,
+        # and per-attempt history lives in review_attempts.json.
+        "review_errors": review_errors,
+        "review_attempts": _read(store, run_id, capture_id, "review_attempts.json", []),
         "review_telemetry": _read(store, run_id, capture_id, "review_telemetry.json", {}),
         "review_status": _review_status(review_moments, review_errors),
         "moments": moments,

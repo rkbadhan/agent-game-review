@@ -541,12 +541,18 @@ def cmd_compare_versions(args) -> int:
 _EVAL_KEYS = ("precision_at_3", "recall_at_3", "redundant_card_rate",
               "missed_critical_rate", "no_moment_calibration",
               "evidence_span_precision", "evidence_span_recall",
-              "attribution_overclaim_rate")
+              "attribution_overclaim_rate",
+              # F1 follow-up: the semantic structural proxies print too —
+              # named for what they measure, not what they imply.
+              "affected_check_overlap_rate",
+              "attribution_ceiling_respected_rate")
 
 # For the M4 acceptance check: which direction is an improvement, and which
 # metrics the model must not regress on to "beat" the deterministic baseline.
 _HIGHER_BETTER = {"precision_at_3", "recall_at_3", "no_moment_calibration",
-                  "evidence_span_precision", "evidence_span_recall"}
+                  "evidence_span_precision", "evidence_span_recall",
+                  "affected_check_overlap_rate",
+                  "attribution_ceiling_respected_rate"}
 _ACCEPTANCE = ("precision_at_3", "recall_at_3", "missed_critical_rate",
                "attribution_overclaim_rate")
 
@@ -739,9 +745,17 @@ def cmd_eval(args) -> int:
 
         from . import version
         gold_files = sorted(glob.glob(os.path.join(args.gold, "*.gold.json")))
+        fixture_files = sorted(glob.glob(os.path.join(args.fixtures, "*.atif.json")))
+        # F1 follow-up: the manifest carries the full derivation — the reviewed
+        # source commit, fixture hashes, the scored report(s), and the package
+        # version — so results are reproducible and auditable.
+        report = baseline.report()
+        if provider:
+            report = {"baseline": report, "model": model.report()}
         manifest = {
-            "manifest_version": 1,
+            "manifest_version": 2,
             "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source_commit": _git_sha(),
             "invocation": {
                 "command": "agr eval",
                 "fixtures": args.fixtures,
@@ -752,7 +766,7 @@ def cmd_eval(args) -> int:
             },
             "versions": {
                 "python": platform.python_version(),
-                "agr_package": getattr(version, "AGR_VERSION", None),
+                "agr_package": version.AGR_VERSION,
                 "reviewer_eval": version.REVIEWER_EVAL_VERSION,
                 "detector": version.DETECTOR_VERSION,
                 "reviewer": version.REVIEWER_VERSION,
@@ -769,11 +783,34 @@ def cmd_eval(args) -> int:
                     for t in gold_set.trajectories
                 },
             },
+            "fixtures": [
+                {"path": os.path.basename(f),
+                 "sha256": hashlib.sha256(open(f, "rb").read()).hexdigest()}
+                for f in fixture_files
+            ],
+            "report": report,
         }
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=2, sort_keys=True)
         print(f"\nmanifest written to {args.manifest}")
     return 0
+
+
+def _git_sha() -> Optional[str]:
+    """The checked-out commit of this checkout, when git is available.
+
+    Recorded so an eval manifest is auditable against the exact source that
+    produced it; None when the checkout is not a git repo (e.g. an installed
+    wheel run outside a checkout) — absent, never invented.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                             text=True, timeout=5)
+        sha = out.stdout.strip()
+        return sha or None
+    except Exception:
+        return None
 
 
 def _review_one(store: Store, run_id: str, reviewer):

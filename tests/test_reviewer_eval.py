@@ -282,8 +282,8 @@ def test_quality_dimensions_scored_separately():
     assert match["mechanism_specificity"] == "check_agreement"
     assert match["claim_support"] == "within_ceiling"
     m = ev.to_dict()
-    assert m["mechanism_agreement_rate"] == 1.0
-    assert m["claim_support_rate"] == 1.0
+    assert m["affected_check_overlap_rate"] == 1.0
+    assert m["attribution_ceiling_respected_rate"] == 1.0
     assert m["attribution_overclaim_rate"] == 0.0
 
 

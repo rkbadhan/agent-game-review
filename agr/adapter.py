@@ -105,6 +105,7 @@ class Adapter(Protocol):
 _BUILTIN_ADAPTERS: dict[str, tuple[str, str]] = {
     "harbor": ("agr.ingest_harbor", "HARBOR_ADAPTER"),
     "pi": ("agr.ingest_pi", "PI_ADAPTER"),
+    "claude": ("agr.ingest_claude", "CLAUDE_ADAPTER"),
 }
 
 

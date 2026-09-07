@@ -135,10 +135,24 @@ function renderOutcomeChapter(main) {
   const oc = el("div");
   oc.append(el("p", "eyebrow", "What happened"));
   const failed = checks.filter(c => c.status === "failed");
-  oc.append(el("h2", null, failed.length ? (failed.length + " check(s) failed") : "All checks passed."));
-  oc.append(el("p", null, failed.length
-    ? "Failed: " + failed.map(c => c.check_id + " — " + c.name).join("; ")
-    : "No deterministic warnings were detected."));
+  const undetermined = checks.filter(c => ["unknown", "skipped", "error"].includes(c.status));
+  // F1 follow-up: explicit outcome semantics — a run with no checks was never
+  // verified, and checks that ended unknown/skipped/error recorded no verdict,
+  // so neither can be headed "All checks passed."
+  if (!checks.length) {
+    oc.append(el("h2", null, "No verifier checks were recorded."));
+    oc.append(el("p", null, "This run is UNVERIFIED — the capture carries no atomic check evidence, so nothing here should be read as a pass."));
+  } else if (failed.length) {
+    oc.append(el("h2", null, failed.length + " check(s) failed"));
+    oc.append(el("p", null, "Failed: " + failed.map(c => c.check_id + " — " + c.name).join("; ")));
+  } else if (undetermined.length) {
+    oc.append(el("h2", null, "Check outcomes undetermined."));
+    oc.append(el("p", null, "No check failed, but " + undetermined.map(c => c.check_id + " (" + c.status + ")").join(", ")
+      + " recorded no verdict — the run is UNDETERMINED, not passed."));
+  } else {
+    oc.append(el("h2", null, "All checks passed."));
+    oc.append(el("p", null, "No deterministic warnings were detected."));
+  }
   outcome.append(oc);
   const rq = el("div", "req-summary");
   rq.append(el("div", "req-count " + statusClass(o.status), (o.passed ?? "?") + "/" + (o.total ?? "?")));
@@ -223,9 +237,6 @@ function renderOutcomeChapter(main) {
       r.append(el("span", "chip", "not evaluated"));
       r.append(document.createTextNode(d.detector + " — missing capability: " + (d.unmet_capabilities || []).join(", ")));
     }
-    limits.append(r);
-  }
-  if (rv.watermark) {
     limits.append(r);
   }
   // AGR-06: explicit review states — a model failure is never rendered as

@@ -391,15 +391,25 @@ def test_lenient_json_parse_tolerates_prose():
 
 def test_malformed_model_output_is_an_explicit_error_not_empty():
     """AGR-06: unparsable output raises ModelOutputError — parsing failure
-    must not silently become 'no decisive moment'."""
+    must not silently become 'no decisive moment'. F1 follow-up: an EMPTY
+    response is also malformed — only an explicit {\"moments\": []} means
+    'no findings', and a parseable non-review object (a refusal) is not a
+    zero-moment review either."""
     import pytest
 
-    from agr.model_reviewer import ModelOutputError, _loads_lenient
+    from agr.model_reviewer import ModelOutputError, _loads_lenient, _validate_envelope
     with pytest.raises(ModelOutputError):
         _loads_lenient("not json at all")
-    # An empty response is still a valid empty review.
-    assert _loads_lenient("") == {"moments": []}
-    assert _loads_lenient(None) == {"moments": []}
+    with pytest.raises(ModelOutputError):
+        _loads_lenient("")
+    with pytest.raises(ModelOutputError):
+        _loads_lenient(None)
+    # An explicit empty review is valid; a refusal object is not a review.
+    assert _loads_lenient('{"moments": []}') == {"moments": []}
+    with pytest.raises(ModelOutputError):
+        _validate_envelope({"error": "model refused"})
+    with pytest.raises(ModelOutputError):
+        _validate_envelope({"moments": ["not an object"]})
 
 
 @pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"),

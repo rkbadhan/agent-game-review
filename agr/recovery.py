@@ -7,12 +7,22 @@ repeating the *same* action unchanged is recorded as
 ``retry_succeeded_without_strategy_change`` — never promoted to good recovery.
 
 AGR-05: the resolving success must be LINKED to the failed operation. The
-episode closes only on a success of the same tool working on the same
-objective — same action signature, or (for changed-argument retries) the same
-primary command token (e.g. ``pytest …`` after a failed ``pytest …``). An
-unrelated successful command (failed ``pytest``, then a successful ``pwd``)
-cannot close the failure episode; the episode stays open and is classified
-``unrecovered_failure`` unless a linked success or a run-stop event follows.
+episode closes only on a success of the same objective — same tool and same
+operation identity (executable + meaningful subcommand, e.g. ``python -m pytest``
+≠ ``python --version``). An unrelated successful command (failed ``pytest``,
+then a successful ``pwd``) cannot close the failure episode.
+
+F1 follow-up (review 2026-09-06): episodes are tracked per failed operation —
+
+* an unrelated failure stays an independent episode; it is never consumed as
+  part of another operation's episode;
+* change evidence attaches to the RESOLVING attempt: an unrelated intervening
+  call does not turn an identical successful retry into a "changed action";
+* the operation key is a mechanical approximation (executable + first
+  meaningful subcommand token). Narrowed test selection (``pytest`` →
+  ``pytest -k fast``) links as the same objective; whether the narrowed scope
+  still covers the originally failed check cannot be established from command
+  text alone and is not inferred here.
 """
 
 from __future__ import annotations
@@ -30,32 +40,52 @@ _STOP = {
 }
 
 
-def _primary_token(content: str) -> str:
-    """First token of a command-like content string — the operation's objective
-    stem (``pytest test_x.py -k f`` → ``pytest``). A mechanical, documented
-    approximation for linking a retry to the operation that failed."""
-    return content.strip().split(" ", 1)[0] if content else ""
+# Flags whose next token is a VALUE, not a subcommand (mechanical approximation;
+# a fuller parser would need per-tool grammar, which the capture does not carry).
+_VALUE_FLAGS = {"-k", "-m", "-c", "-o", "-D", "--tb", "--cov", "--rootdir", "--filter"}
+
+
+def _operation_key(call_sig: tuple | None) -> tuple | None:
+    """Objective identity of a tool call: (tool, executable, subcommand).
+
+    The subcommand is the first token after the executable that is neither a
+    flag nor the value of a value-taking flag — so ``python -m pytest tests/``
+    identifies as ``pytest``, distinct from ``python --version``. This is the
+    objective the review's F1 probes require: the same tool alone is not the
+    same objective.
+    """
+    if call_sig is None:
+        return None
+    tool, content = call_sig[0], str(call_sig[1] or "")
+    tokens = content.split()
+    if not tokens:
+        return (tool, "", "")
+    exe, sub, skip_next = tokens[0], "", False
+    for t in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if t.startswith("-"):
+            skip_next = t in _VALUE_FLAGS
+            continue
+        sub = t
+        break
+    return (tool, exe, sub)
 
 
 def _links_to_failed_operation(success_sig: tuple | None, failed_sig: tuple | None) -> bool:
     """Whether a successful tool result plausibly resolves the failed operation.
 
     Both sides are CALL signatures (the resolving success is linked through
-    the call that produced it). Linkage is mechanical: same tool, and either
-    the identical action signature (an unchanged retry) or the same primary
-    token (a changed-argument retry of the same operation). A success on a
-    different objective never links — a successful ``pwd`` does not resolve a
-    failed ``pytest``.
+    the call that produced it). Linkage is mechanical: the same objective —
+    same tool, executable, and meaningful subcommand (F1 follow-up). A success
+    on a different objective never links: a successful ``python --version``
+    does not resolve a failed ``python -m pytest tests/``, and a successful
+    ``pwd`` does not resolve a failed ``pytest``.
     """
     if failed_sig is None or success_sig is None:
         return False  # cannot establish the operations — cannot link
-    if success_sig[0] != failed_sig[0]:
-        return False
-    if success_sig[1] == failed_sig[1]:
-        return True  # unchanged retry of the same operation
-    # Changed-argument retry: same operation stem only.
-    return (_primary_token(str(success_sig[1])) != ""
-            and _primary_token(str(success_sig[1])) == _primary_token(str(failed_sig[1])))
+    return _operation_key(success_sig) == _operation_key(failed_sig)
 
 
 def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str) -> list[RecoveryEpisode]:
@@ -68,9 +98,11 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             continue
 
         failed_sig = preceding_call_signature(events, idx)
+        failed_key = _operation_key(failed_sig)
         strategy_changed = False
-        changed_action = False
         resolution: DerivedEvent | None = None
+        resolution_sig: tuple | None = None
+        last_same_op_call: tuple | None = None  # last attempt at this objective
         evidence = [ev.event_id]
         pending_call_sig: tuple | None = None  # the call the next result answers
 
@@ -82,19 +114,24 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 evidence.append(e2.event_id)
             elif e2.event_type == "tool_call":
                 pending_call_sig = action_signature(e2)
-                if failed_sig is not None and pending_call_sig != failed_sig:
-                    changed_action = True
+                if _operation_key(pending_call_sig) == failed_key:
+                    last_same_op_call = pending_call_sig
                 evidence.append(e2.event_id)
             elif is_tool_failure(e2):
-                consumed.add(j)  # a retry of the same episode
+                # F1 follow-up: only a failure of the SAME operation belongs to
+                # this episode. An unrelated failure stays unconsumed so it
+                # forms its own episode and is never silently absorbed here.
+                if _operation_key(preceding_call_signature(events, j)) == failed_key:
+                    consumed.add(j)
                 evidence.append(e2.event_id)
             elif is_tool_success(e2):
                 # AGR-05: only a success LINKED to the failed operation closes
                 # the episode — linked via the CALL that produced this result.
                 # Unrelated successes are recorded as evidence (the run
                 # continued) but resolve nothing.
-                if _links_to_failed_operation(pending_call_sig, failed_sig):
+                if _operation_key(pending_call_sig) == failed_key:
                     resolution = e2
+                    resolution_sig = pending_call_sig
                     evidence.append(e2.event_id)
                     break
                 evidence.append(e2.event_id)
@@ -103,8 +140,16 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             j += 1
 
         if resolution is not None:
+            # F1 follow-up: change evidence attaches to the RESOLVING attempt —
+            # an unrelated intervening call (a successful pwd, a curl) does not
+            # make an identical successful retry a "changed action".
+            changed_action = resolution_sig != failed_sig
             classification = GOOD_RECOVERY if (strategy_changed or changed_action) else UNCHANGED_RETRY
         else:
+            # No resolving attempt: changed_action records whether the agent
+            # tried a DIFFERENT approach to this same objective and still
+            # failed — not whether unrelated work happened in between.
+            changed_action = last_same_op_call is not None and last_same_op_call != failed_sig
             classification = UNRECOVERED
 
         episodes.append(

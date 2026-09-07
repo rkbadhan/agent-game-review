@@ -82,6 +82,11 @@ class ReviewerContext:
     # never a truncated timeline excerpt. Requirements are diagnosed against
     # what the task actually asked for, in full.
     task_instruction: Optional[str] = None
+    # F1 follow-up (diagnostic delivery): the verifier's own post-run log
+    # output, as attached by ingestion (``verifier.log_excerpts``). This is
+    # explicitly post-run diagnostic evidence — labelled as such so the reviewer
+    # never mistakes assertion output for something the agent observed.
+    verifier_logs: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -104,6 +109,11 @@ class Enrichment:
     better_action: Optional[str] = None
     instructional_value: Optional[str] = None
     eval_lesson_recommended: bool = False
+    # Optional quoted spans the model cites as observational support for its
+    # explanation prose. Each is verified against the recorded event text before
+    # an explanation may be labelled evidence-linked (AGR follow-up F7: identifier
+    # existence alone is reference validity, not semantic support).
+    quotes: list[dict] = field(default_factory=list)
     source: Optional[str] = None  # e.g. "model:claude-opus-4-8"
 
 
@@ -149,7 +159,10 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
     # Whether the agent's own trace shows it observing this check failing
     # before the run ended — the only basis for "still failing at submission"
     # phrasing. A post-run verifier result is not something the agent saw.
-    observed_check_failures = _agent_observed_check_failures(ctx.events, terminal_type)
+    # The map carries the agent's LAST observed status per check id (F1
+    # follow-up): a captured "C1 PASSED" is a pass observation, and a later
+    # observation supersedes an earlier one in order.
+    observed_check_statuses = _agent_observed_check_statuses(ctx.events, terminal_type)
 
     out: list[dict] = []
     for fact in candidate.structured_facts:
@@ -157,10 +170,13 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
         annotated = dict(fact)
         if ftype == "requirement_status":
             check = check_by_id.get(fact.get("check_id"))
+            claimed = fact.get("status_at_submission") or fact.get("status")
+            # Exact status equality (AGR follow-up F1): a claim must match the
+            # check's recorded status precisely. The old failed/nonfailed
+            # agreement let a passing check submitted as ``passed`` validate and
+            # then render as a failure.
+            passed = check is not None and claimed == check.status
             recomputed = check.status if check else None
-            # "status" accepted as an alias for "status_at_submission".
-            claimed_failed = (fact.get("status_at_submission") or fact.get("status")) == "failed"
-            passed = check is not None and (check.status == "failed") == claimed_failed
             # What the recomputation can honestly support: the FINAL verifier
             # status is always known; "at submission" is only known when the
             # agent's own trace observed the failure before the run ended (AGR-03:
@@ -168,7 +184,20 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             # trace supports that timing and visibility).
             annotated["status_basis"] = "final_verifier"
             annotated["agent_observed_failure"] = bool(
-                passed and claimed_failed and fact.get("check_id") in observed_check_failures)
+                passed and claimed == "failed"
+                and observed_check_statuses.get(fact.get("check_id")) == "failed")
+            # The agent's last observed status for this check, if any — the UI
+            # uses it to word the timing honestly (observed-pass vs never seen).
+            annotated["agent_observed_status"] = observed_check_statuses.get(
+                fact.get("check_id"))
+            if check is not None:
+                # Canonical fields (AGR follow-up F1): the displayed status and
+                # expected/observed values are sourced from the check record,
+                # never from the proposal — an invented observation cannot
+                # survive inside a validated fact.
+                annotated["status"] = check.status
+                annotated["expected"] = check.expected
+                annotated["observed"] = check.observed
         elif ftype == "absence":
             artifact = fact.get("declared_artifact")
             if artifact not in declared_artifacts:
@@ -198,23 +227,43 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             evs = fact.get("events", [])
             sigs = [sig_by_event.get(e) for e in evs]
             recomputed = [list(s) if s else None for s in sigs]
+            # Shared semantics with the detector (AGR follow-up F1): identical
+            # action signatures alone are not "no new information" — the
+            # recorded outputs must also be captured and equivalent. Two
+            # identical polls returning different results are an observation.
             passed = (
                 len(evs) >= 2
                 and all(s is not None for s in sigs)
                 and len(set(sigs)) == 1
                 and not strat_after.get(tuple(evs[:2]), False)
+                and _outputs_equivalent(ctx.events, evs)
             )
         elif ftype == "state_transition":
             fev = fact.get("failure_event")
             ep = ep_by_failure.get(fev)
-            recomputed = ep.classification if ep else ("present" if fev in event_ids else None)
-            if fact.get("resolution_event"):  # positive recovery claim
-                passed = ep is not None and ep.classification == GOOD_RECOVERY
-            else:  # unresolved-failure claim
-                passed = ep is not None and ep.classification == UNRECOVERED
-            # Fall back to bare existence when no episode indexes this failure.
+            claims_resolution = bool(fact.get("resolution_event"))
             if ep is None:
-                passed = fev in event_ids
+                # No derived episode indexes this failure: bare event existence
+                # is NOT a validated transition (AGR follow-up F1). The claim
+                # needs the actual failure→resolution relationship, which only
+                # a recovery episode records.
+                recomputed = "no_recovery_episode"
+                passed = False
+            else:
+                recomputed = ep.classification
+                if claims_resolution:
+                    # A positive claim must name the episode's ACTUAL resolution
+                    # event — not merely some event that exists.
+                    passed = (ep.classification == GOOD_RECOVERY
+                              and fact.get("resolution_event") == ep.resolution_event_id)
+                else:  # unresolved-failure claim
+                    passed = ep.classification == UNRECOVERED
+                # Canonical fields (AGR follow-up F1): recovery evidence comes
+                # from the episode, not the proposal.
+                if claims_resolution:
+                    annotated["resolution_event"] = ep.resolution_event_id
+                annotated["strategy_changed"] = ep.strategy_changed
+                annotated["changed_action"] = ep.changed_action
         elif ftype == "event_support":
             # Semantic-moment grounding: every named event must exist AND a
             # nonempty quoted span must actually appear in that event's text
@@ -253,14 +302,49 @@ def _norm_text(s: str) -> str:
     return " ".join((s or "").lower().split())
 
 
-def _agent_observed_check_failures(events: list[DerivedEvent], terminal_type: str | None) -> set[str]:
-    """Check ids whose failure the agent's OWN trace shows before the run ended.
+def _outputs_equivalent(events: list[DerivedEvent], event_ids: list[str]) -> bool:
+    """Whether the recorded tool results of repeated calls are equivalent.
+
+    The same condition the deterministic repetition detector requires (AGR
+    follow-up F1: detector and validator must share repetition semantics): each
+    named call must have a captured result, and every result's text must match.
+    Differing outputs — a poll whose report changed — mean new information.
+    """
+    ids = list(event_ids)
+    if len(ids) < 2:
+        return False
+    # Pair each tool call with the result that resolves it (the same adjacency
+    # walk the detector uses on the raw event stream).
+    result_of: dict[str, DerivedEvent] = {}
+    pending: Optional[str] = None
+    for e in events:
+        if e.event_type == "tool_call":
+            pending = e.event_id
+        elif e.event_type == "tool_result" and pending is not None:
+            result_of[pending] = e
+            pending = None
+    first = result_of.get(ids[0])
+    if first is None:
+        return False  # outputs not captured — the claim is unsupported
+    base = " ".join(first.text().split())
+    for eid in ids[1:]:
+        r = result_of.get(eid)
+        if r is None or " ".join(r.text().split()) != base:
+            return False
+    return True
+
+
+def _agent_observed_check_statuses(events: list[DerivedEvent], terminal_type: str | None) -> dict[str, str]:
+    """Check-id -> the agent's LAST observed status, from the agent's own trace.
 
     Only tool results / observations inside the trajectory can be something the
-    agent saw. The verifier result is computed after the run; a failure that
-    appears only there was never observed by the agent (AGR-03 timing rule).
+    agent saw; the verifier result is computed after the run. A check-id token
+    alone is NOT an observation of its failure (F1 follow-up): an observed
+    status requires the id AND a status word together, and the most recent
+    observation wins — a check captured failing and later passing is not
+    "still failing at submission".
     """
-    observed: set[str] = set()
+    statuses: dict[str, str] = {}
     for e in events:
         if e.event_type == terminal_type:
             break
@@ -268,13 +352,19 @@ def _agent_observed_check_failures(events: list[DerivedEvent], terminal_type: st
             continue
         # Raw text: check ids are conventionally uppercase, so normalization
         # (lowercasing) would hide them.
-        for cid in _CHECK_ID_PATTERN.findall(e.text()):
-            observed.add(cid.upper())
-    return observed
+        for cid, word in _CHECK_STATUS_PATTERN.findall(e.text()):
+            statuses[cid.upper()] = word.upper()
+    return statuses
 
 
 # Bare check-id tokens like C3, T2, CHK12 — how tool output usually names them.
 _CHECK_ID_PATTERN = re.compile(r"\b([A-Z]{1,4}\d{1,3})\b")
+
+# An observed check status: the id and a status word close together on one
+# line (e.g. "C1 PASSED", "C3: FAILED"). The id alone is not evidence about
+# the check's outcome.
+_CHECK_STATUS_PATTERN = re.compile(
+    r"\b([A-Z]{1,4}\d{1,3})\b[^\n]{0,40}?\b(PASSED|FAILED|FAIL|PASS|ERROR|SKIPPED)\b")
 
 
 def validate_references(candidate: Candidate, ctx: ReviewerContext) -> dict:
@@ -467,9 +557,19 @@ def render(fact: dict, ceiling: str, polarity: str) -> str:
     ftype = fact.get("type")
     link = _LINK_CLAUSE.get(ceiling, _LINK_CLAUSE["hypothesized"])
     if ftype == "requirement_status":
+        # Canonical fields only: status/expected/observed were sourced from the
+        # check record during validation (F1), and a fact that survives carries
+        # the check's actual status — so a passing check can never render as a
+        # failure, and claimed detail never outruns the record.
+        status = fact.get("status")
         detail = ""
-        if fact.get("expected") is not None:
+        if fact.get("expected") is not None or fact.get("observed") is not None:
             detail = f" (expected {fact.get('expected')}, observed {fact.get('observed')})"
+        if status == "passed":
+            return f"Requirement check {fact.get('check_id')} passed the run's final verifier."
+        if status not in ("failed", None):
+            return (f"Requirement check {fact.get('check_id')} ended with status '{status}' in the "
+                    f"run's final verifier; the outcome is undetermined.")
         if fact.get("agent_observed_failure"):
             # The agent's own trace shows it seeing this failure before the run
             # ended, so "still failing at submission" is evidence-backed.
@@ -511,6 +611,18 @@ def render(fact: dict, ceiling: str, polarity: str) -> str:
 
 
 # --- Stage I: moment selection ------------------------------------------------
+
+
+# Declared selection gates, in evaluation order, with the passing value each
+# must carry. Anything outside this list (validation_attempts, better_action,
+# explanation_*) is status metadata, not a rejection gate.
+_REJECTION_GATES = {
+    "fact_validation": "passed",
+    "references": "resolved",
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+}
 
 
 def _value_key(m: ReviewMoment) -> tuple:
@@ -695,29 +807,40 @@ class DeterministicReviewer:
 
 
 def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
-    """Semantic support status for model explanations (AGR-03).
+    """Semantic support status for model explanations (AGR-03; F1 follow-up).
 
-    Separates factual assertions inside explanation fields from interpretation:
-    an explanation that references concrete run entities (check ids, event ids)
-    is "evidence_linked" only when every referenced entity exists; references
-    to entities that do not exist make it "dangling_references"; an explanation
-    that references nothing is "interpretation_only" — kept and labelled, but
-    never rendered as if the run's evidence proved it (the invented-database-
-    outage class of claim).
+    Three dimensions, never conflated:
+
+    * *reference validity* — an identifier the prose names must exist, else
+      ``dangling_references``;
+    * *observational support* — only a quoted span that actually appears in the
+      named event's recorded text is run evidence; that is the only thing that
+      earns ``evidence_linked``;
+    * everything else is ``interpretation_only`` — prose that merely mentions a
+      real check or event id is NOT evidence-linked, because identifier
+      existence is not semantic validation (the invented-database-outage class
+      of claim). It stays visible, labelled as interpretation.
     """
     texts = [enr.consequence or "", enr.instructional_value or ""]
     texts += [str(rc.get("rationale") or "") for rc in enr.root_cause_candidates]
     check_ids = {c.check_id for c in ctx.checks}
     event_ids = {e.event_id for e in ctx.events}
-    referenced = False
     for text in texts:
         for cid in _CHECK_ID_PATTERN.findall(text):
-            referenced = True
             if cid.upper() not in check_ids and cid not in event_ids:
                 return "dangling_references"
-    if not referenced:
-        return "interpretation_only"
-    return "evidence_linked"
+    # Quoted spans are the only observational support: verify each against the
+    # recorded event text, exactly like an event_support fact (empty quotes and
+    # non-matching spans fail — never silently match).
+    for q in (enr.quotes or []):
+        eid = q.get("event_id")
+        quote = _norm_text(q.get("quote") or "")
+        ev = next((e for e in ctx.events if e.event_id == eid), None)
+        if not quote or ev is None or quote not in _norm_text(ev.text()):
+            return "dangling_references"
+    if enr.quotes:
+        return "evidence_linked"
+    return "interpretation_only"
 
 
 def _explanation_attribution(enr: Enrichment, ceiling: str) -> str:
@@ -858,20 +981,29 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
     select_moments(moments)
     if telemetry is not None:
         # AGR-06: measurable rejection reasons — which gate dropped each
-        # unselected moment (facts, references, observability, …).
+        # unselected moment (facts, references, observability, …). F1 follow-up:
+        # the loop iterates a DECLARED ordered list of real gates (never every
+        # gate_results entry — the numeric ``validation_attempts`` field and
+        # status flags were being misread as failed gates), and records
+        # de-duplication separately from the quota.
         rejections: dict[str, int] = {}
         for m in moments:
             if m.selected:
                 continue
-            for gate, result in m.gate_results.items():
+            if m.superseded_by:
+                rejections["deduplicated"] = rejections.get("deduplicated", 0) + 1
+                continue
+            for gate in _REJECTION_GATES:
+                result = m.gate_results.get(gate)
                 ok = result == "passed" if gate == "fact_validation" \
-                    else (result.get("status") == "resolved" if gate == "references"
-                          else result in ("present", "supported", "within_ceiling"))
+                    else (isinstance(result, dict) and result.get("status") == "resolved"
+                          if gate == "references"
+                          else result == _REJECTION_GATES[gate])
                 if not ok:
                     rejections[gate] = rejections.get(gate, 0) + 1
                     break
             else:
-                rejections["not_selected"] = rejections.get("not_selected", 0) + 1
+                rejections["quota"] = rejections.get("quota", 0) + 1
         telemetry["rejections"] = rejections
         telemetry["proposed"] = len(moments)
         telemetry["selected"] = sum(1 for m in moments if m.selected)
