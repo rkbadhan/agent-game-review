@@ -131,6 +131,12 @@ def redact_value(obj: object) -> tuple[object, RedactionResult]:
     values can be arbitrary data maps whose keys are content (a synthetic
     ``sk-…`` key survived the old keys-untouched traversal). Keys that ARE
     secret-shaped are redacted and accounted exactly like values.
+
+    Review 2026-09-07: two DISTINCT secret-shaped keys both mapped to the same
+    ``[REDACTED:<reason>]`` marker, so one map entry silently overwrote the
+    other — an evidence-preservation bug introduced by key rewriting. Redacted
+    keys now get stable unique discriminators (``[REDACTED:<reason>#2]``,
+    …) so every entry of a content-bearing map survives redaction.
     Returns ``(new_obj, combined_map)``.
     """
     merged: dict[str, int] = {}
@@ -153,7 +159,18 @@ def redact_value(obj: object) -> tuple[object, RedactionResult]:
                         merged[entry["reason"]] = merged.get(entry["reason"], 0) + entry["count"]
                     markers += r.injection_markers
                     k = r.text
-                out[k] = walk(v)
+                key = k
+                if isinstance(key, str) and key in out:
+                    # Collision: distinct source keys redacted to the same
+                    # marker (or genuinely duplicated keys). Discriminate
+                    # rather than overwrite — no map entry is silently lost.
+                    n = 2
+                    candidate = f"{key}#{n}"
+                    while candidate in out:
+                        n += 1
+                        candidate = f"{key}#{n}"
+                    key = candidate
+                out[key] = walk(v)
             return out
         if isinstance(o, (list, tuple)):
             out = [walk(v) for v in o]

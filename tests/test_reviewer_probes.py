@@ -220,8 +220,77 @@ def test_explanation_quotes_earn_evidence_linked_only_when_they_match():
         source="model:test",
     )
     ctx = _ctx([_candidate("x")], events=evs)
-    assert reviewer._explanation_support(enr_quoted, ctx) == "evidence_linked"
+    # Review 2026-09-07: quote authenticity and explanation support are
+    # SEPARATE dimensions — an authentic quote does not upgrade the prose.
+    assert reviewer._explanation_support(enr_quoted, ctx) == "interpretation_only"
+    assert reviewer._quote_authenticity(enr_quoted, ctx) == "authentic"
     assert reviewer._explanation_support(enr_bad, ctx) == "dangling_references"
+    assert reviewer._quote_authenticity(enr_bad, ctx) == "dangling"
+
+
+def test_authentic_quote_of_something_else_never_upgrades_invented_prose():
+    """Review 2026-09-07 reproduction: adding a valid quote (here, of a task
+    instruction) to an invented database/outage rationale must NOT yield
+    selected, evidence_linked — matching a quote establishes quote
+    authenticity, not support for the accompanying factual assertions."""
+    evs = [_event("evt_001", "Deploy the service and verify the health check.", seq=1)]
+    enr = reviewer.Enrichment(
+        consequence="the production database was deleted, causing an outage",
+        root_cause_candidates=[{"locus": "environment", "rationale":
+                                "the production database was deleted by a background job"}],
+        # A TRUE quote of the recorded instruction — unrelated to the claims.
+        quotes=[{"event_id": "evt_001",
+                 "quote": "Deploy the service and verify the health check."}],
+        source="model:test",
+    )
+    ctx = _ctx([_candidate("x")], events=evs)
+    assert reviewer._quote_authenticity(enr, ctx) == "authentic"
+    assert reviewer._explanation_support(enr, ctx) == "interpretation_only"
+
+
+def test_prose_that_only_restates_the_quote_is_evidence_linked():
+    """The legitimate case survives: an explanation that states nothing
+    beyond the quoted evidence is evidence-linked."""
+    evs = [_event("evt_016", "The agent examined the axis spacing.", seq=16)]
+    enr = reviewer.Enrichment(
+        consequence="examined the axis spacing",
+        root_cause_candidates=[],
+        quotes=[{"event_id": "evt_016", "quote": "examined the axis spacing"}],
+        source="model:test",
+    )
+    ctx = _ctx([_candidate("x")], events=evs)
+    assert reviewer._explanation_support(enr, ctx) == "evidence_linked"
+    assert reviewer._quote_authenticity(enr, ctx) == "authentic"
+
+
+# --- observed-status vocabulary: parse → fact → render end to end ------------
+
+
+def test_observed_failure_flows_through_fact_validation_and_render():
+    """Review 2026-09-07: the parser's status vocabulary is normalized once —
+    a real ``C1 FAILED`` observation must yield ``agent_observed_failure: true``
+    through fact validation and render as 'still failing at submission',
+    instead of a case mismatch recording that no observation was made."""
+    from agr.reviewer import render, validate_facts
+    events = [
+        DerivedEvent(event_id="evt_1", run_id="r", source_capture_id="c", sequence=1,
+                     source_step_ids=["evt_1"], event_type="tool_result", actor="tool",
+                     payload={"content": "C1 FAILED — expected 3 rows, got 0"}),
+        DerivedEvent(event_id="evt_2", run_id="r", source_capture_id="c", sequence=2,
+                     source_step_ids=["evt_2"], event_type="final_submission",
+                     actor="main_agent", payload={"content": "submitted"}),
+    ]
+    checks = [_check("C1", "failed")]
+    cand = _candidate("x", affected_checks=["C1"],
+                      structured_facts=[{"type": "requirement_status", "check_id": "C1",
+                                         "status_at_submission": "failed"}])
+    ctx = _ctx([cand], checks=checks, events=events)
+    fact = validate_facts(cand, ctx)[0]
+    assert fact["validation"] == "passed"
+    assert fact["agent_observed_failure"] is True
+    assert fact["agent_observed_status"] == "failed"
+    statement = render(fact, "dependency_linked", "negative")
+    assert "still failing at submission" in statement
 
 
 # --- full-envelope probes -----------------------------------------------------

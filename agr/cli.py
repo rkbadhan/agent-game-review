@@ -797,16 +797,20 @@ def cmd_eval(args) -> int:
 
 
 def _git_sha() -> Optional[str]:
-    """The checked-out commit of this checkout, when git is available.
+    """The AGR source commit, when this CLI runs from a git checkout.
 
-    Recorded so an eval manifest is auditable against the exact source that
-    produced it; None when the checkout is not a git repo (e.g. an installed
-    wheel run outside a checkout) — absent, never invented.
+    Review 2026-09-07: the commit is resolved against THIS PACKAGE's location,
+    not the caller's working directory — an installed CLI invoked inside a
+    different Git project must not report that project's commit as AGR's code
+    version. None when the package does not live in a git repo (e.g. an
+    installed wheel) — absent, never invented.
     """
     try:
         import subprocess
-        out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
-                             text=True, timeout=5)
+        from pathlib import Path
+        pkg_root = Path(__file__).resolve().parent
+        out = subprocess.run(["git", "-C", str(pkg_root), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
         sha = out.stdout.strip()
         return sha or None
     except Exception:

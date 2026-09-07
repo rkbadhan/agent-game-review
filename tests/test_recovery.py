@@ -64,21 +64,25 @@ def _events():
         ev("evt_2", "tool_result", tool="shell", content="E: assertion failed", exit_code=1),
         ev("evt_3", "tool_call", tool="shell", content="pwd"),
         ev("evt_4", "tool_result", tool="shell", content="/work", exit_code=0),
-        ev("evt_5", "tool_call", tool="shell", content="pytest tests/ -k fast"),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
         ev("evt_6", "tool_result", tool="shell", content="1 passed", exit_code=0),
     ]
 
 
 def test_unrelated_success_does_not_close_the_failure_episode():
     """Acceptance (AGR-05): failed pytest followed by successful pwd is not
-    good recovery — the episode stays open until the pytest retry succeeds."""
+    good recovery — the episode stays open until the pytest retry succeeds.
+
+    Review 2026-09-07 (R5), conservative objective identity: an exact rerun of
+    the failed command links to the failed objective; a narrowed rerun
+    (``-k fast``) does not, so the resolution here is the exact retry."""
     from agr.recovery import classify_recoveries
     eps = classify_recoveries(_events(), "r", "c")
     assert len(eps) == 1
     ep = eps[0]
-    # The pwd success resolved nothing; the pytest retry did.
+    # The pwd success resolved nothing; the exact pytest retry did.
     assert ep.resolution_event_id == "evt_6"
-    assert ep.classification == GOOD_RECOVERY  # changed-argument retry of pytest
+    assert ep.classification == UNCHANGED_RETRY  # exact rerun, unchanged
 
 
 def test_failed_operation_never_resolved_stays_unrecovered():
