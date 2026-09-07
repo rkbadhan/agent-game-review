@@ -16,6 +16,8 @@ Pure stdlib — no third-party imports, no model calls.
 
 from __future__ import annotations
 
+import json
+
 from . import version
 from .redaction import redact, redact_all, redact_value
 from .reviewer import ReviewerContext, _linked_slices, attribution_ceiling_for
@@ -36,6 +38,10 @@ def _phase_summaries(events: list) -> list[dict]:
 
 
 _EXCERPT_CHARS = 220  # per-event excerpt budget when the packet is over budget
+_MIN_EXCERPT_CHARS = 80  # excerpt floor when enforcing the packet budget
+# Room reserved from the packet budget for the system prompt and one bounded
+# expansion round — the raw-trace measurement alone is not the whole request.
+_BUDGET_RESERVE_CHARS = 8_000
 # AGR-06: traces that fit the reviewer's budget are sent WITHOUT unnecessary
 # truncation — the digest carries full event text first and drops to excerpts
 # only when the serialized packet would exceed the character budget
@@ -143,7 +149,15 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     # task statement — not trace content and not a per-event excerpt.
     if ctx.task_instruction:
         raw_sections["task::instruction"] = ctx.task_instruction
-    redacted, red_result = redact_all(raw_sections)
+    # F1 follow-up (diagnostic delivery): the verifier's post-run log output is
+    # packet evidence too — assertion diagnostics the import promised. Each
+    # excerpt is labelled post-run so the reviewer cannot mistake it for
+    # something the agent observed.
+    log_sections: dict[str, str] = {}
+    for i, log in enumerate(ctx.verifier_logs or []):
+        if isinstance(log, dict) and log.get("content"):
+            log_sections[f"log::{i}"] = str(log.get("content"))
+    redacted, red_result = redact_all({**raw_sections, **log_sections})
 
     # AGR-06: measure the trace against the reviewer's input budget. Traces
     # that fit are sent with FULL event text (no unnecessary truncation);
@@ -229,6 +243,20 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
         "task_instruction": redacted.get("task::instruction"),
         "task_contract": contract,
         "atomic_checks": atomic_checks,
+        # F1 follow-up (diagnostic delivery): the verifier's own post-run log
+        # output — the assertion diagnostics behind the per-check rows. Every
+        # entry is explicitly post-run; ids in this namespace (log::N) are also
+        # resolvable through the evidence-expansion round.
+        "verifier_diagnostics": [
+            {
+                "log_id": f"log::{i}",
+                "source": (ctx.verifier_logs[i] or {}).get("source"),
+                "timing": "post_run",
+                "content": redacted.get(f"log::{i}", ""),
+            }
+            for i in sorted(int(k.split("::")[1]) for k in log_sections)
+            if isinstance(ctx.verifier_logs[i], dict)
+        ],
         "deterministic_candidates": candidates,
         "run_shape": _run_shape(ctx.events),
         "phase_summaries": _phase_summaries(ctx.events),
@@ -244,8 +272,31 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     # AGR-06 final safety pass: schema-aware traversal redacts EVERY remaining
     # string in the packet — check names/values, structured facts, anything a
     # future edit adds — so no trace-derived token can reach the model unredacted.
-    packet, _traversal_map = redact_value(packet)
-    return packet, red_result.to_dict()
+    packet, traversal_map = redact_value(packet)
+    # F1 follow-up (budget enforcement): the budget is ENFORCED on the actual
+    # final payload — measured AFTER metadata, candidates, and the traversal
+    # pass, not estimated from raw trace text alone. The enforced ceiling
+    # reserves room for the system prompt and one bounded expansion round.
+    # Over budget, the timeline digest is rebuilt with scaled per-event
+    # excerpts (bounded below) until the serialized packet fits or the excerpt
+    # floor is reached. The measured size and enforcement outcome are reported
+    # in the redaction/telemetry map — never inside the packet itself, where
+    # the annotation would change the size it reports.
+    effective_budget = max(1000, budget_chars - _BUDGET_RESERVE_CHARS)
+    if trace_chars > budget_chars:
+        excerpt = _EXCERPT_CHARS
+        while len(json.dumps(packet)) > effective_budget and excerpt > _MIN_EXCERPT_CHARS:
+            excerpt = max(_MIN_EXCERPT_CHARS, excerpt // 2)
+            packet["timeline_digest"] = _timeline_digest(ctx.events, redacted,
+                                                          excerpt_chars=excerpt)
+    packet_size = len(json.dumps(packet))
+    red_map = dict(red_result.to_dict())
+    red_map["traversal"] = traversal_map.to_dict()
+    red_map["packet_size_chars"] = packet_size
+    red_map["budget_chars"] = budget_chars
+    red_map["effective_budget_chars"] = effective_budget
+    red_map["budget_met"] = packet_size <= effective_budget
+    return packet, red_map
 
 
 # AGR-06: bounds on the single expansion round.
@@ -275,10 +326,31 @@ def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
     rejected: list[dict] = []
     total = 0
     seen: set[str] = set()
+    # F1 follow-up: the expansion namespace also resolves post-run verifier
+    # diagnostics (log::N), so the reviewer can pull full assertion output it
+    # saw in the packet's verifier_diagnostics section.
+    logs_by_id = {f"log::{i}": log for i, log in enumerate(ctx.verifier_logs or [])
+                  if isinstance(log, dict) and log.get("content")}
     for eid in requested:
         if eid in seen:
             continue
         seen.add(eid)
+        if eid in logs_by_id:
+            log = logs_by_id[eid]
+            text = redact(str(log.get("content"))).text
+            if total + len(text) > _EXPANSION_MAX_CHARS:
+                rejected.append({"event_id": eid, "reason": "expansion size cap reached"})
+                continue
+            total += len(text)
+            granted.append({
+                "event_id": eid,
+                "event_type": "verifier_log",
+                "phase_id": None,
+                "timing": "post_run",
+                "source": log.get("source"),
+                "content": text,  # redacted above
+            })
+            continue
         e = events_by_id.get(eid)
         if e is None:
             rejected.append({"event_id": eid, "reason": "unknown event id — not in the captured evidence"})

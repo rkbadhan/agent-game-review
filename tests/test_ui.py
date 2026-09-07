@@ -780,3 +780,96 @@ def test_not_reviewable_capture_says_why(not_reviewable_server):
         assert "Not reviewable" in note
         assert "tool_calls" in note and "verifier_code" in note
         browser.close()
+
+
+def test_fresh_unconfirmed_import_opens_every_chapter(server):
+    """A freshly imported run is watermarked until its contract is
+    human-confirmed, and that is the normal entry path for a real import — so
+    every review chapter must open on it without a page error.
+
+    Regression gate: the Outcome chapter once referenced an undeclared variable
+    while rendering the provisional watermark, throwing ``ReferenceError`` on
+    exactly this path. The synthetic demo auto-confirms its contracts, which is
+    why the demo smoke check never saw it. The gate fails on any collected
+    ``pageerror``, not just the chapter known to have crashed.
+    """
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+
+        page.goto(server)
+        page.wait_for_selector(".run")
+        page.click('.run[data-run-id="greeting_report__seed7"]')
+
+        # No confirmation was recorded for this fixture, so the shell must say
+        # the review is provisional — and render at all.
+        page.wait_for_selector(".watermark")
+        assert "not human-confirmed" in page.query_selector(".watermark").inner_text()
+
+        # Walk every available chapter; the Outcome chapter carries the
+        # provisional row in "What limits the review". Labels are collected
+        # before navigating: each click re-renders the rail, which would detach
+        # element handles gathered up front.
+        page.click('.ochip:has-text("Outcome")')
+        page.wait_for_selector('.limit-item .chip:has-text("provisional")')
+        labels = [c.inner_text() for c in page.query_selector_all(".ochip .ochip-label")
+                  if "unavailable" not in (c.evaluate("n => n.parentElement.className"))]
+        for label in labels:
+            page.click(f'.ochip:has-text("{label}")')
+            page.wait_for_function(
+                "() => { const c = document.querySelector('.ochip.current .ochip-label');"
+                " return c && c.textContent === %r; }" % label)
+
+        assert errors == [], f"page errors on a fresh unconfirmed import: {errors}"
+        browser.close()
+
+
+def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tmp_path):
+    """F1 follow-up: a run whose checks recorded no verdict is headed
+    UNDETERMINED, and a run with no checks is headed as never verified —
+    neither can be headed 'All checks passed.'"""
+    import copy
+
+    with open(os.path.join(FIXTURES, "chess_best_move.atif.json"), encoding="utf-8") as fh:
+        base = json.load(fh)
+
+    undet = copy.deepcopy(base)
+    undet["run"]["logical_run_id"] = "undetermined__seed9"
+    for c in undet["verifier"]["checks"]:
+        c["status"] = "error"
+
+    unverified = copy.deepcopy(base)
+    unverified["run"]["logical_run_id"] = "unverified__seed10"
+    unverified["verifier"]["checks"] = []
+
+    root = str(tmp_path / "extra")
+    store = Store(root)
+    analyze(undet, store)
+    analyze(unverified, store)
+    with _serving(root) as extra:
+        with sync_playwright() as pw:
+            browser = _launch(pw)
+            page = _page(browser)
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+
+            page.goto(extra)
+            page.wait_for_selector(".run")
+            page.click('.run[data-run-id="undetermined__seed9"]')
+            page.click('.ochip:has-text("Outcome")')
+            page.wait_for_selector(".outcome h2")
+            headline = page.query_selector(".outcome h2").inner_text()
+            assert "undetermined" in headline.lower()
+            assert "passed" not in headline.lower()
+
+            page.click('.run[data-run-id="unverified__seed10"]')
+            page.wait_for_function("() => { const h = document.querySelector('.outcome h2');"
+                                   " return h && /no verifier checks/i.test(h.textContent); }")
+            headline = page.query_selector(".outcome h2").inner_text()
+            assert "no verifier checks" in headline.lower()
+            assert "passed" not in headline.lower()
+
+            assert errors == []
+            browser.close()

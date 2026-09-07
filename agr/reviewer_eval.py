@@ -197,8 +197,13 @@ class RunEval:
             "evidence_span_precision": _ratio(self.ev_inter, self.ev_pred),
             "evidence_span_recall": _ratio(self.ev_inter, self.ev_gold),
             "attribution_overclaim_rate": _ratio(self.n_attr_overclaim, self.n_matched),
-            "mechanism_agreement_rate": _ratio(self.n_mech_agree, self.n_matched),
-            "claim_support_rate": _ratio(self.n_claim_supported, self.n_matched),
+            # F1 follow-up: metric names state what is actually scored —
+            # shared affected-check IDs (a structural proxy), and matched
+            # pairs whose attribution ceiling does not exceed gold. Neither
+            # is a semantic assessment of mechanism correctness or factual
+            # support; claims-level or human assessment is still needed.
+            "affected_check_overlap_rate": _ratio(self.n_mech_agree, self.n_matched),
+            "attribution_ceiling_respected_rate": _ratio(self.n_claim_supported, self.n_matched),
             "matches": self.matches,
         }
 
@@ -299,7 +304,7 @@ def evaluate_run(predicted: list[PredictedMoment], gold: GoldTrajectory,
             "prediction": pred.moment_id, "gold": g.moment_id, "status": "matched",
             "mechanism_specificity": "check_agreement" if checks_agree else "anchor_only",
             "claim_support": "within_ceiling" if not overclaim else "overclaimed",
-            "better_action_assessed": bool(pred.better_action),
+            "better_action_present": bool(pred.better_action),
         })
 
     ev.n_missed_critical = sum(1 for g in golds if g.critical and g.moment_id not in matched_gold_ids)
@@ -354,8 +359,8 @@ class SetEval:
             "evidence_span_recall": _ratio(s("ev_inter"), s("ev_gold")),
             "attribution_overclaim_rate": _ratio(s("n_attr_overclaim"), s("n_matched")),
             # AGR-07: semantic quality scored separately per matched pair.
-            "mechanism_agreement_rate": _ratio(s("n_mech_agree"), s("n_matched")),
-            "claim_support_rate": _ratio(s("n_claim_supported"), s("n_matched")),
+            "affected_check_overlap_rate": _ratio(s("n_mech_agree"), s("n_matched")),
+            "attribution_ceiling_respected_rate": _ratio(s("n_claim_supported"), s("n_matched")),
         }
 
     def report(self) -> dict:

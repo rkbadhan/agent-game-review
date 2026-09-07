@@ -99,7 +99,11 @@ For each decisive moment, return a structured judgement. You MAY: assign control
 behaviour tags, identify the affected phase/consequence/micro-abilities, rank
 root-cause candidates (no numeric probabilities), propose the smallest better local
 action, assess instructional value, and recommend whether it should be an Eval
-Lesson. You MUST NOT: invent event identifiers not present in the packet, introduce
+Lesson. You MAY cite quoted spans as observational support for your explanation:
+a "quotes" entry whose quote matches the named event's text marks the explanation
+evidence-linked; prose WITHOUT a matching quote is always labelled interpretation,
+no matter which real check or event ids it mentions. You MUST NOT: invent event
+identifiers not present in the packet, introduce
 factual values you cannot ground in the evidence, upgrade attribution beyond the
 evidence, call tools, or use taxonomy labels outside the provided vocabulary.
 
@@ -157,6 +161,7 @@ Respond with ONLY a JSON object of this shape (no prose):
       "consequence": "<consequence>",
       "micro_abilities": ["<micro-ability>"],
       "root_cause_candidates": [ {"locus":"...","rank":1,"rationale":"...","detail":null} ],
+      "quotes": [ {"event_id": "<event id>", "quote": "<verbatim span that supports the explanation>"} ],
       "better_action": "<one concrete smaller action>",
       "instructional_value": "<why this is worth teaching>",
       "eval_lesson_recommended": false
@@ -193,11 +198,37 @@ def _parse_enrichment(m: dict, source: str) -> Enrichment:
         better_action=m.get("better_action"),
         instructional_value=m.get("instructional_value"),
         eval_lesson_recommended=bool(m.get("eval_lesson_recommended")),
+        quotes=[q for q in (m.get("quotes") or []) if isinstance(q, dict)],
         source=source,
     )
 
 
+def _validate_envelope(payload: object) -> None:
+    """Only a valid review envelope counts as a review (F1 follow-up).
+
+    A parseable JSON object without a ``moments`` list — ``{"error": ...}``,
+    a refusal wrapped in JSON, a bare string — is a malformed reviewer
+    response, never a zero-moment review. Each moment must at least be an
+    object whose core fields are lists.
+    """
+    if not isinstance(payload, dict):
+        raise ModelOutputError(
+            f"review response must be a JSON object, got {type(payload).__name__}")
+    moments = payload.get("moments")
+    if not isinstance(moments, list):
+        raise ModelOutputError(
+            "review response has no 'moments' list — a refusal or error object "
+            "is not a valid review")
+    for i, m in enumerate(moments):
+        if not isinstance(m, dict):
+            raise ModelOutputError(f"review response: moment {i} is not an object")
+        for field in ("anchor_event_ids", "structured_facts"):
+            if not isinstance(m.get(field, []), list):
+                raise ModelOutputError(f"review response: moment {i} field {field!r} must be a list")
+
+
 def _proposals_from_payload(payload: dict, ctx: ReviewerContext, source: str) -> list[ProposedMoment]:
+    _validate_envelope(payload)
     out: list[ProposedMoment] = []
     for m in payload.get("moments", []):
         if not isinstance(m, dict):
@@ -268,8 +299,10 @@ class _LazyModelReviewer:
     def _call(self, system: str, user: dict, kind: str) -> dict:
         """One provider round: redact the outbound payload, measure, parse."""
         # AGR-06: the ENTIRE outbound payload is redacted by traversal — the
-        # packet, revision payloads, and expansion evidence alike.
-        user, _map = redact_value(user)
+        # packet, revision payloads, and expansion evidence alike. F1 follow-up:
+        # the traversal redaction map is preserved in the per-round telemetry
+        # record instead of being discarded.
+        user, red_map = redact_value(user)
         user_json = json.dumps(user)
         t0 = time.monotonic()
         try:
@@ -277,7 +310,8 @@ class _LazyModelReviewer:
         finally:
             self._record(kind=kind, input_chars=len(user_json),
                          input_tokens_est=len(user_json) // 4,
-                         latency_ms=int((time.monotonic() - t0) * 1000))
+                         latency_ms=int((time.monotonic() - t0) * 1000),
+                         redaction=red_map.to_dict())
         out_chars = len(json.dumps(payload))
         self._record(kind=f"{kind}_response", output_chars=out_chars,
                      output_tokens_est=out_chars // 4,
@@ -394,14 +428,17 @@ class OpenAIReviewer(_LazyModelReviewer):
 def _loads_lenient(text: str) -> dict:
     """Parse a JSON object, tolerating stray prose around it (AGR-06).
 
-    An empty response is a valid empty review. Prose wrapping a JSON object is
-    tolerated. UNPARSABLE text raises :class:`ModelOutputError` — a malformed
-    model response is an explicit enrichment error, never silently an empty
-    "no decisive moment" result.
+    Prose wrapping a JSON object is tolerated. An EMPTY response is NOT a valid
+    empty review (F1 follow-up): only an explicit ``{"moments": []}`` means
+    "no findings" — silence is a malformed response. UNPARSABLE text raises
+    :class:`ModelOutputError` — a malformed model response is an explicit
+    enrichment error, never silently an empty "no decisive moment" result.
     """
     text = (text or "").strip()
     if not text:
-        return {"moments": []}
+        raise ModelOutputError(
+            'model response was empty; a valid empty review must be explicit {"moments": []}'
+        )
     try:
         return json.loads(text)
     except json.JSONDecodeError:

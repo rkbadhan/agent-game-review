@@ -54,17 +54,29 @@ def outcome(checks: list[VerifierCheck]) -> dict:
     A run with no checks carries no verifier evidence. That is an explicit
     ingestion state (spec §7.2), reported as UNVERIFIED — never a vacuous
     PASSED, which would rank an unexamined run as a clean pass in triage.
+
+    The same honesty applies per-check (F1 follow-up): a check that ended
+    ``unknown``/``skipped``/``error`` recorded no verdict, so a run whose
+    checks include no failure but not universal passes is UNDETERMINED —
+    never PASSED with ``passed < total``.
     """
     total = len(checks)
     passed = sum(1 for c in checks if c.status == "passed")
     failed = [c.check_id for c in checks if c.status == "failed"]
+    undetermined = [c.check_id for c in checks
+                    if c.status in ("unknown", "skipped", "error")]
     if total == 0:
         status = "UNVERIFIED"
+    elif failed:
+        status = "FAILED"
+    elif passed == total:
+        status = "PASSED"
     else:
-        status = "PASSED" if not failed else "FAILED"
+        status = "UNDETERMINED"
     return {
         "status": status,
         "passed": passed,
         "total": total,
         "failed_checks": failed,
+        "undetermined_checks": undetermined,
     }

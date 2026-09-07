@@ -27,7 +27,10 @@ function relTime(iso) { if (!iso) return null; const t = Date.parse(iso); if (is
   const s = Math.max(0, (Date.now()-t)/1000); if (s<90) return "just now"; if (s<5400) return Math.round(s/60)+"m ago";
   if (s<129600) return Math.round(s/3600)+"h ago"; return Math.round(s/86400)+"d ago"; }
 function fmtCost(c) { return c == null ? null : "$" + Number(c).toFixed(2); }
-function statusClass(s) { s = (s||"").toUpperCase(); return s==="PASSED"?"passed":s==="WARNING"?"warning":"failed"; }
+function statusClass(s) { s = (s||"").toUpperCase();
+  // F1 follow-up: UNDETERMINED/UNVERIFIED are honest "no verdict" states —
+  // neutral, not the red a failure implies.
+  return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED")?"undetermined":"failed"; }
 
 async function loadInbox() {
   const params = new URLSearchParams();

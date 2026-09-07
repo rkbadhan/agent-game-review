@@ -31,6 +31,10 @@ model-openai = ["openai>=1.40", "python-dotenv>=1.0"]
 # the equivalent for the non-uv path.
 [dependency-groups]
 dev = ["pytest", "httpx>=0.24", "fastapi>=0.100", "uvicorn>=0.23"]
+# Browser gate (optional): Playwright drives the served SPA in a real Chromium
+# (tests/test_ui.py). Kept out of `dev` so the default suite stays light; CI
+# installs this group explicitly in the `browser` job.
+browser = ["playwright>=1.40"]
 
 # Explicit discovery: the flat layout has sibling `tests/` and `fixtures/`
 # directories, so auto-discovery would refuse to guess. Ship the SPA asset as

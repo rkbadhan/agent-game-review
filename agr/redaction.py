@@ -118,13 +118,20 @@ def redact_all(sections: dict[str, str]) -> tuple[dict[str, str], RedactionResul
 
 
 def redact_value(obj: object) -> tuple[object, RedactionResult]:
-    """Schema-aware traversal: redact EVERY string in a nested structure (AGR-06).
+    """Traversal redaction: redact EVERY string in a nested structure (AGR-06).
 
     Packets carry strings in many shapes — check names and expected/observed
     values, structured facts, revision and error payloads — and a keyed pass
     alone cannot guarantee none is missed. This walks dicts, lists, and tuples
-    and redacts every string value it finds (keys are structural identifiers,
-    not content, and are left intact). Returns ``(new_obj, combined_map)``.
+    and redacts every string VALUE it finds.
+
+    F1 follow-up: dictionary KEYS are redacted too. Fixed schema field names
+    ("moments", "check_id", …) are never secret-shaped, so passing them
+    through the same pattern pass changes nothing — but nested expected/observed
+    values can be arbitrary data maps whose keys are content (a synthetic
+    ``sk-…`` key survived the old keys-untouched traversal). Keys that ARE
+    secret-shaped are redacted and accounted exactly like values.
+    Returns ``(new_obj, combined_map)``.
     """
     merged: dict[str, int] = {}
     markers = 0
@@ -138,7 +145,16 @@ def redact_value(obj: object) -> tuple[object, RedactionResult]:
             markers += r.injection_markers
             return r.text
         if isinstance(o, dict):
-            return {k: walk(v) for k, v in o.items()}
+            out = {}
+            for k, v in o.items():
+                if isinstance(k, str):
+                    r = redact(k)
+                    for entry in r.removed:
+                        merged[entry["reason"]] = merged.get(entry["reason"], 0) + entry["count"]
+                    markers += r.injection_markers
+                    k = r.text
+                out[k] = walk(v)
+            return out
         if isinstance(o, (list, tuple)):
             out = [walk(v) for v in o]
             return type(o)(out) if isinstance(o, tuple) else out

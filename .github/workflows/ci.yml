@@ -91,3 +91,27 @@ jobs:
       - name: Stop the server
         if: always()
         run: kill "$(cat /tmp/agr.pid)" 2>/dev/null || true
+
+  browser:
+    # AGR-02 regression gate: a freshly imported, unconfirmed (watermarked) run
+    # must open every review chapter without a page error. The demo smoke check
+    # above auto-confirms its contracts, so only a real Chromium driving a
+    # provisional review catches renderer throws on the normal entry path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install dependencies (with the browser group)
+        run: uv sync --frozen --group browser
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run the browser suite
+        run: uv run pytest tests/test_ui.py

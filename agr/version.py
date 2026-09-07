@@ -12,6 +12,10 @@ provenance is explicit and reprocessing is auditable.
 # ingested directly with no adapter in the path (``agr ingest``, fixtures).
 RAW_ATIF_IMPORT_VERSION = "atif-import-0.1"
 
+# The package version, stamped into eval manifests so a result record is
+# auditable against the release that produced it (never null).
+AGR_VERSION = "0.1.0"
+
 DERIVATION_VERSION = "event-map-0.1"
 CHECK_DERIVATION_VERSION = "check-extract-0.1"
 SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
@@ -31,7 +35,10 @@ READ_MODEL_VERSION = "read-model-0.2"
 # them means a gold record or an eval report is auditable against the schema /
 # metric definitions that produced it, just like every deterministic derivation.
 GOLD_SCHEMA_VERSION = "gold-0.1"
-REVIEWER_EVAL_VERSION = "reviewer-eval-0.1"
+# 0.2: semantic metric names corrected (affected_check_overlap_rate,
+# attribution_ceiling_respected_rate) — derivations under different names are
+# not comparable.
+REVIEWER_EVAL_VERSION = "reviewer-eval-0.2"
 
 # The deterministic reviewer envelope (spec §8.8 fact validation, §8.9 attribution
 # gate, §8.10 moment selection). This is Milestone 4's safety envelope built
@@ -39,7 +46,7 @@ REVIEWER_EVAL_VERSION = "reviewer-eval-0.1"
 # assigns attribution language no stronger than the evidence slice licenses, and
 # selects/de-duplicates the final cards — all deterministically, with no model
 # call. Every ReviewMoment embeds this version. Stage F plugs in behind it.
-REVIEWER_VERSION = "reviewer-det-0.1"
+REVIEWER_VERSION = "reviewer-det-0.2"
 
 # Stage F — the model reviewer (spec §8.7). The reviewer runs behind the
 # deterministic envelope: its structured facts are recomputed (Stage G), its
@@ -51,7 +58,8 @@ MODEL_REVIEWER_VERSION = "reviewer-model-0.2"
 # Redaction and untrusted-content isolation applied before any model-facing text
 # (spec §7.4, §16.1). The redaction map records what was removed and why, stamped
 # with this version so the model-visible representation is reproducible.
-REDACTION_VERSION = "redaction-0.1"
+# 0.2: dictionary keys are redacted too (data-map keys can be content).
+REDACTION_VERSION = "redaction-0.2"
 
 # Task & Verifier Audit (spec §11). The audit is deterministic: it maps
 # already-derived signals — task-contract items and warnings, verifier-check

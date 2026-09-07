@@ -194,6 +194,9 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
             # AGR-04: the complete task instruction travels to the reviewer as its
             # own field, not as a 220-character timeline excerpt.
             task_instruction=(doc.get("task") or {}).get("instruction"),
+            # F1 follow-up: the verifier's post-run log output reaches the
+            # reviewer as explicit diagnostic evidence, not just per-check rows.
+            verifier_logs=(doc.get("verifier") or {}).get("log_excerpts", []),
         ), reviewer=reviewer, telemetry=telemetry)
     except Exception as exc:  # noqa: BLE001 — every failure state must be explicit
         # AGR-06: a model failure (malformed output, provider error) is an
@@ -218,12 +221,25 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
             declared_artifacts=[a.get("path") for a in (doc.get("task") or {}).get("artifacts", [])
                                 if a.get("path")],
             task_instruction=(doc.get("task") or {}).get("instruction"),
+            # F1 follow-up: the verifier's post-run log output reaches the
+            # reviewer as explicit diagnostic evidence, not just per-check rows.
+            verifier_logs=(doc.get("verifier") or {}).get("log_excerpts", []),
         ))
     # The stable slot key under which this reviewer's snapshot is persisted so a
     # later review by a different reviewer coexists rather than overwrites it
     # (the reviewer-diff view). The default reviewer's key is
     # ``"deterministic"``; a Stage F model reviewer's is ``"model:<source>"``.
     reviewer_key = getattr(reviewer, "reviewer_key", "deterministic")
+
+    # F1 follow-up: per-attempt records persist separately from the CURRENT
+    # error state. ``review_attempts.json`` is the historical log;
+    # ``review_errors.json`` holds only each reviewer's ACTIVE error, so a
+    # successful retry resolves its state instead of history haunting it.
+    prior_errors = store.read_derived(rs.run_id, rs.source_capture_id, "review_errors.json") \
+        if store.has_derived(rs.run_id, rs.source_capture_id, "review_errors.json") else []
+    prior_attempts = store.read_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") \
+        if store.has_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") else []
+    attempt_id = f"att_{len(prior_attempts) + 1:04d}"
 
     partial = Analysis(
         run_source=rs, capabilities=profile, events=events, phases=phases, checks=checks,
@@ -262,17 +278,45 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     review_payload = [m.to_dict() for m in review_moments]
     if review_error is None:
         store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
+        # F1 follow-up: a successful review RESOLVES this reviewer's active
+        # error — the historical attempt log keeps what happened, but the
+        # current error state no longer reports a failure that a retry fixed.
+        active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
+        prior_attempts.append({
+            "attempt_id": attempt_id,
+            "reviewer_key": reviewer_key,
+            "outcome": "ok",
+            "selected": sum(1 for m in review_moments if m.selected),
+        })
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
     else:
         # AGR-06: the model's slot stays EMPTY on failure — the deterministic
         # baseline (its own slot) is never overwritten, and the error state is
         # explicit and separate. The fallback moments still mirror to the
-        # legacy file so older readers see a served review.
-        errors = store.read_derived(rs.run_id, rs.source_capture_id, "review_errors.json") \
-            if store.has_derived(rs.run_id, rs.source_capture_id, "review_errors.json") else []
-        errors.append({**review_error, "reviewer_key": reviewer_key})
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", errors)
+        # legacy file so older readers see a served review. F1 follow-up: the
+        # error record REPLACES this reviewer's previous active error (current
+        # status per reviewer), and carries the attempt id that failed.
+        active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
+        active.append({**review_error, "reviewer_key": reviewer_key, "attempt_id": attempt_id})
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
+        prior_attempts.append({
+            "attempt_id": attempt_id,
+            "reviewer_key": reviewer_key,
+            "outcome": "failed",
+            "error_type": review_error.get("error_type"),
+        })
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
     if telemetry.get("proposed") is not None or reviewer is not None:
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", telemetry)
+        record = dict(telemetry)
+        # F1 follow-up: persist the per-attempt provider-round records — the
+        # redaction/redaction-map, per-call latency, and token ESTIMATES
+        # (character-derived; actual provider usage is not available from the
+        # parsed response and is never fabricated).
+        rounds = getattr(reviewer, "telemetry", None)
+        if rounds:
+            record["provider_rounds"] = [dict(r) for r in rounds]
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", record)
     store.write_derived(
         rs.run_id, rs.source_capture_id, "review_moments.json", review_payload
     )
