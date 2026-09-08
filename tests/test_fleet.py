@@ -281,7 +281,10 @@ def test_to_dict_shape(tmp_path):
         # AGR-05/06 (review 82cc113): how many/whether this group's episodes
         # ever had usage instrumented at all — total_tokens alone cannot tell
         # a genuine zero apart from unmeasured usage.
-        "usage_unavailable_count", "usage_availability",
+        "usage_unavailable_count",
+        # Follow-up (review of commit 5782f1b): how many episodes were only
+        # PARTIALLY instrumented (distinct from fully unavailable).
+        "usage_partial_count", "usage_availability",
         # AGR-07 (review 82cc113): whether this group's episodes selected
         # error_signature via the opaque fallback tier.
         "fallback_basis_count", "all_fallback_basis",
@@ -297,7 +300,11 @@ def _doc_with_run_id_and_cost(run_id, cost=None):
     optionally stamping ``cost`` onto its resolving step (s9, "python
     solve.py" succeeding) — the fixture otherwise carries no cost data at
     all, which is exactly what makes its own episode usage_completeness ==
-    "unavailable"."""
+    "unavailable". NOTE: the recovery window has TWO turns (s6/s7 "pip
+    install" and s8/s9 "python solve.py") — costing only s9 leaves s7's
+    turn uncovered, so this alone produces "partial", not "complete". Use
+    :func:`_doc_with_full_window_cost` for a genuinely fully-measured
+    episode."""
     with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
     doc["run"]["logical_run_id"] = run_id
@@ -305,6 +312,19 @@ def _doc_with_run_id_and_cost(run_id, cost=None):
         for step in doc["steps"]:
             if step["step_id"] == "s9":
                 step["cost"] = cost
+    return doc
+
+
+def _doc_with_full_window_cost(run_id, cost):
+    """Like :func:`_doc_with_run_id_and_cost`, but costs BOTH of the
+    recovery window's turns (s7 and s9) — genuinely "complete" coverage,
+    not just "some cost present somewhere in the window"."""
+    with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["run"]["logical_run_id"] = run_id
+    for step in doc["steps"]:
+        if step["step_id"] in ("s7", "s9"):
+            step["cost"] = cost
     return doc
 
 
@@ -319,23 +339,28 @@ def test_group_usage_unavailable_reads_as_such_not_a_bare_zero(tmp_path):
 def test_group_usage_partial_when_only_some_episodes_are_measured(tmp_path):
     store = Store(str(tmp_path / "store"))
     analyze(_doc_with_run_id_and_cost("run_a"), store)  # no cost: unavailable
-    analyze(_doc_with_run_id_and_cost(
-        "run_b", cost={"input_tokens": 40, "output_tokens": 10}), store)  # measured
+    analyze(_doc_with_full_window_cost(
+        "run_b", {"input_tokens": 40, "output_tokens": 10}), store)  # fully measured
     groups = fleet.fleet_episodes(store)
     assert len(groups) == 1  # same tool + error_signature: one group
     g = groups[0]
     assert g.count == 2
     assert g.usage_unavailable_count == 1
     assert g.usage_availability == "partial"
-    assert g.total_tokens == 50
+    assert g.total_tokens == 100  # run_b's cost stamped on both of its window's turns
 
 
 def test_group_usage_measured_when_every_episode_has_some_usage(tmp_path):
+    """Genuinely "measured" requires FULL window coverage — costing only one
+    of the window's two turns (as the other tests in this section do, on
+    purpose, to get "partial") would not qualify; use
+    _doc_with_full_window_cost so both turns are covered."""
     store = Store(str(tmp_path / "store"))
-    analyze(_doc_with_run_id_and_cost("run_a", cost={"input_tokens": 40, "output_tokens": 10}), store)
-    analyze(_doc_with_run_id_and_cost("run_b", cost={"input_tokens": 5, "output_tokens": 0}), store)
+    analyze(_doc_with_full_window_cost("run_a", {"input_tokens": 40, "output_tokens": 10}), store)
+    analyze(_doc_with_full_window_cost("run_b", {"input_tokens": 5, "output_tokens": 0}), store)
     g = fleet.fleet_episodes(store)[0]
     assert g.usage_unavailable_count == 0
+    assert g.usage_partial_count == 0
     assert g.usage_availability == "measured"
 
 
@@ -344,3 +369,65 @@ def test_fleet_usage_summary_reports_unavailable_episode_count(tmp_path):
     summary = fleet.fleet_usage_summary(store)
     assert summary.usage_unavailable_episode_count == 1
     assert "never had usage instrumented" in summary.to_dict()["usage_note"]
+
+
+# --- Follow-up (review of commit 5782f1b): partial usage lost its own -------
+# qualifier in fleet aggregation — a group/fleet made entirely of
+# individually-"partial" episodes (some but not all of an episode's OWN
+# window instrumented) previously read as plain "measured", since only
+# usage_unavailable_count (the fully-unmeasured tier) was ever counted.
+
+
+def _doc_with_partial_window(run_id):
+    """tool_failure_recovery.atif.json's recovery window has two turns
+    (s6/s7 "pip install", s8/s9 "python solve.py") — stamping cost on only
+    the FIRST turn's result (s7) leaves the second uncovered, which is
+    exactly usage_completeness == "partial" (some but not all of the
+    window measured), never "unavailable" (nothing measured) or "complete"."""
+    with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["run"]["logical_run_id"] = run_id
+    for step in doc["steps"]:
+        if step["step_id"] == "s7":
+            step["cost"] = {"input_tokens": 12, "output_tokens": 3}
+    return doc
+
+
+def test_group_usage_availability_is_partial_when_every_episode_is_individually_partial(tmp_path):
+    """A group whose episodes are all individually "partial" must not read
+    as "measured" just because none of them is fully "unavailable" — the
+    old usage_availability only ever looked at usage_unavailable_count."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_doc_with_partial_window("run_a"), store)
+    g = fleet.fleet_episodes(store)[0]
+    assert g.usage_unavailable_count == 0
+    assert g.usage_partial_count == 1 == g.count
+    assert g.usage_availability == "partial"
+    assert g.to_dict()["usage_availability"] == "partial"
+    assert "only part of their window instrumented" in g.to_dict()["usage_note"]
+
+
+def test_group_usage_availability_partial_from_mixed_unavailable_and_partial_episodes(tmp_path):
+    """A mix of an "unavailable" episode and a "partial" one is still
+    "partial" overall (some measurement exists, but not fully), not
+    "unavailable" (that requires EVERY episode to be unavailable)."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_doc_with_run_id_and_cost("run_a"), store)  # unavailable
+    analyze(_doc_with_partial_window("run_b"), store)   # partial
+    g = fleet.fleet_episodes(store)[0]
+    assert g.count == 2
+    assert g.usage_unavailable_count == 1
+    assert g.usage_partial_count == 1
+    assert g.usage_availability == "partial"
+
+
+def test_fleet_usage_summary_reports_partial_episode_count(tmp_path):
+    store = _store(tmp_path)
+    analyze(_doc_with_partial_window("run_a"), store)
+    summary = fleet.fleet_usage_summary(store)
+    assert summary.usage_partial_episode_count == 1
+    assert summary.usage_unavailable_episode_count == 0
+    assert summary.usage_availability == "partial"
+    d = summary.to_dict()
+    assert d["usage_availability"] == "partial"
+    assert "only part of their window instrumented" in d["usage_note"]

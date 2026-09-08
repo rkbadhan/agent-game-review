@@ -52,6 +52,16 @@ function renderFleetUsageSummaryCard(summary) {
       summary.usage_unavailable_episode_count + " of " + summary.episode_count
       + " episode(s) never had usage instrumented — total_tokens undercounts the fleet's real cost."));
   }
+  // Follow-up (review of commit 5782f1b): a partially-instrumented episode
+  // (some but not all of its window measured) previously had no fleet-wide
+  // equivalent to this line — its qualifier was silently dropped even
+  // though the per-episode data already distinguished it.
+  if (summary.usage_partial_episode_count) {
+    card.append(el("p", "subline warn",
+      summary.usage_partial_episode_count + " of " + summary.episode_count
+      + " episode(s) had only part of their window instrumented — total_tokens may undercount "
+      + "even where it is nonzero."));
+  }
   const note = el("p", "subline", summary.usage_note);
   card.append(note);
   return card;

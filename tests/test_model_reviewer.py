@@ -591,3 +591,33 @@ def test_revise_returns_none_without_calling_the_provider_when_budget_is_not_met
     assert result is None
     assert rev.sent == []  # the provider stub was never called
     assert rev.telemetry[-1]["kind"] == "revise_skipped"
+
+
+def test_expanded_request_never_exceeds_budget_even_when_the_initial_packet_did(monkeypatch):
+    """Follow-up review finding: the initial-packet budget gate does not
+    protect the SECOND (expanded) request. A packet can fit the budget on
+    its own while the expansion round's evidence — up to its own
+    _EXPANSION_MAX_CHARS on top — pushes the combined request well past it.
+    That combined request must never reach the provider."""
+    from agr import model_reviewer as mr
+
+    events = [
+        DerivedEvent(event_id=f"evt_{i}", run_id="r", source_capture_id="c",
+                     sequence=i + 1, source_step_ids=[f"s{i}"], event_type="tool_call",
+                     actor="agent", payload={"content": "x" * 700, "tool": "Bash"})
+        for i in range(60)
+    ]
+    ctx = _ctx([], events=events)
+    packet, red = mr.build_packet(ctx)
+    assert red["budget_met"] is True  # the initial packet fits on its own
+
+    rev = _FakeProvider([
+        {"expansion_requests": [{"event_ids": [f"evt_{i}" for i in range(20)], "reason": "need detail"}]},
+    ])
+
+    with pytest.raises(mr.PacketBudgetExceededError):
+        rev.propose(ctx)
+    # The first (fitting) call went out; the oversized expanded call did not.
+    assert len(rev.sent) == 1
+    assert rev.telemetry[-1]["kind"] == "propose_expanded_skipped"
+    assert rev.telemetry[-1]["reason"] == "packet_budget_exceeded"

@@ -158,6 +158,53 @@ def test_run_task_timeout_preserves_workdir_and_partial_output(tmp_path):
     assert session_path.read_text(encoding="utf-8") == "partial output before deadline"
 
 
+def test_run_task_timeout_still_ingests_a_stored_reviewable_run(tmp_path):
+    """A timeout must not leave ONLY an on-disk workdir a human has to find
+    and convert by hand — when the partial transcript has at least one real
+    step, it is ingested as its own stored, reviewable run (no verifier
+    sidecar, since the verifier never ran — the honest UNVERIFIED state)."""
+    store = Store(str(tmp_path / "store"))
+    task = runner.Task(task_id="t1", prompt="do it", verifier="./verify.sh")
+    # Same shape as _stream_json_lines but cut off before the terminal
+    # "result" record — exactly what a real claude -p stream looks like when
+    # killed mid-run.
+    partial = "\n".join(json.dumps(l) for l in [
+        {"type": "system", "subtype": "init", "session_id": "sess-timeout", "model": "m"},
+        {"type": "user", "session_id": "sess-timeout",
+         "message": {"role": "user", "content": "Do the task."}},
+        {"type": "assistant", "session_id": "sess-timeout",
+         "message": {"role": "assistant", "model": "m",
+         "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "sleep 9999"}}]}},
+    ])
+
+    def timing_out_runner(prompt, workdir, timeout_s):
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=1800, output=partial)
+
+    result = runner.run_task(task, store, "cfg-a", claude_runner=timing_out_runner)
+    assert result.error is not None  # it genuinely timed out
+    assert result.run_id is not None
+    assert result.ingested is True
+    # The workdir is STILL preserved too — the stored run and the raw
+    # workdir are complementary, not a replacement for each other.
+    assert Path(result.workdir).exists()
+
+    # The runner knows this was a genuine deadline, not just an interrupted
+    # capture — the ingested trace must say so explicitly (the same
+    # run_timed_out vocabulary ingest_harbor.py uses for a real deadline
+    # exception), not just an adapter warning about completion "not observed".
+    capture_id = store.latest_capture_id(result.run_id)
+    events = store.read_derived(result.run_id, capture_id, "events.json")
+    assert any(e["event_type"] == "run_timed_out" for e in events)
+
+    from agr import read
+    rows = read.list_runs(store)
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == result.run_id
+    # No verifier ran — an empty checks list is UNVERIFIED, never a
+    # fabricated pass or fail for a task killed mid-run.
+    assert rows[0]["outcome"]["status"] == "UNVERIFIED"
+
+
 def test_run_task_setup_failure_preserves_workdir(tmp_path):
     """A failed setup command leaves diagnostic output in the workdir (e.g.
     stderr captured by the shell); it must not be deleted out from under it."""

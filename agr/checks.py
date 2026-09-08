@@ -141,12 +141,15 @@ def _in_session_only(current: list[tuple[VerifierCheck, str]]) -> bool:
     )
 
 
-def _uncovered_required_items(contract: "TaskContract") -> list[str]:
+def _declared_required_items(contract: "TaskContract") -> list:
     return [
-        i.id for i in contract.items
+        i for i in contract.items
         if i.importance == "required" and i.source_type in _DECLARED_SOURCE_TYPES
-        and not i.mapped_checks
     ]
+
+
+def _uncovered_required_items(contract: "TaskContract") -> list[str]:
+    return [i.id for i in _declared_required_items(contract) if not i.mapped_checks]
 
 
 def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = None) -> dict:
@@ -180,6 +183,20 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
     exercised. This never turns a pass into a FAILED: missing coverage is
     unknown, not a failure. Omitting ``contract`` (the default) preserves the
     original, pre-review behaviour exactly.
+
+    Follow-up (review of commit 5782f1b): a contract with NO declared
+    (``stated_requirement``/``environment_precondition``) required items at
+    all — the normal shape for a Claude trace, whose task carries only a
+    free-text instruction and never a structured requirements list —
+    vacuously produced an EMPTY ``coverage_gaps``, identical to "every
+    declared item is covered". Those are not the same thing: with zero
+    declared items there is nothing to check the smoke test's coverage
+    against, so coverage is unestablished, not established. That case now
+    demotes too (``coverage_unknown`` distinguishes it from an actual gap
+    list in the returned dict, in case a caller needs to render them
+    differently) — a passing smoke test never certifies "the rest of the
+    declared instruction was exercised" merely because the instruction
+    declared nothing to check it against.
     """
     current = [(c, c.effective_status) for c in checks]
     current = [(c, s) for c, s in current if s is not None]
@@ -188,6 +205,7 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
     failed = [c.check_id for c, s in current if s == "failed"]
     undetermined = [c.check_id for c, s in current if s in ("unknown", "skipped", "error")]
     coverage_gaps: list[str] = []
+    coverage_unknown = False
     if total == 0:
         status = "UNVERIFIED"
     elif failed:
@@ -195,9 +213,13 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
     elif passed == total:
         status = "PASSED"
         if contract is not None and _in_session_only(current):
-            coverage_gaps = _uncovered_required_items(contract)
-            if coverage_gaps:
+            if not _declared_required_items(contract):
+                coverage_unknown = True
                 status = "UNDETERMINED"
+            else:
+                coverage_gaps = _uncovered_required_items(contract)
+                if coverage_gaps:
+                    status = "UNDETERMINED"
     else:
         status = "UNDETERMINED"
     return {
@@ -210,4 +232,5 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
         "superseded_checks": [c.check_id for c in checks if c.superseded_by is not None],
         "stale_checks": [c.check_id for c in checks if c.stale_reason is not None],
         "coverage_gaps": coverage_gaps,
+        "coverage_unknown": coverage_unknown,
     }

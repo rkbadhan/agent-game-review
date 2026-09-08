@@ -65,7 +65,15 @@ class TaskSet:
 class TaskRunResult:
     """The outcome of running ONE task end to end. Never raises out of
     :func:`run_task` — a crashed task becomes a result with ``error`` set,
-    so one bad task never aborts the rest of a scheduled sweep."""
+    so one bad task never aborts the rest of a scheduled sweep.
+
+    ``error`` and ``run_id``/``ingested`` are not mutually exclusive: a
+    timeout still sets ``error`` (the task genuinely did not complete), but
+    when the partial transcript it left behind has at least one real step,
+    that partial capture is ingested too — ``run_id`` names the resulting
+    STORED, reviewable run, not just an on-disk workdir a human has to go
+    find and convert by hand.
+    """
 
     task_id: str
     run_id: Optional[str] = None
@@ -174,6 +182,54 @@ def run_task(
         return TaskRunResult(
             task_id=task.task_id, run_id=run_id, ingested=(rc == 0),
             verifier_status=sidecar["checks"][0]["status"], workdir=str(workdir),
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A timeout must not just leave the workdir as evidence a human has
+        # to go find and convert by hand — the partial transcript, when it
+        # has at least one real step, is ingested as its own stored,
+        # reviewable run. No verifier sidecar is attached: the verifier
+        # never ran, so an empty checks list is the honest UNVERIFIED state
+        # (agr.checks.outcome) rather than a fabricated pass or fail for a
+        # task that was killed mid-run.
+        run_id, ingested = None, False
+        try:
+            from .adapter import get_adapter
+            from .cli import _ingest_doc
+
+            adapter = get_adapter("claude")
+            result = adapter.convert(
+                str(session_path), task_id=task.task_id, instruction=task.prompt,
+                configuration_id=configuration_id,
+            )
+            # The adapter has no way to know this ended in a deadline, not
+            # just an interrupted capture — it only sees a transcript with no
+            # terminal "result" record and reports completion as merely NOT
+            # OBSERVED (deliberately: it must never guess). The runner,
+            # unlike the adapter, actually knows: it enforced timeout_s and
+            # caught the TimeoutExpired itself. Append the same explicit
+            # run_timed_out terminal step the Harbor adapter synthesizes for
+            # a genuine deadline exception (ingest_harbor.py), so this
+            # capture gets the same honest terminal wording instead of a
+            # weaker "not observed" gap for a fact that is not in doubt.
+            steps = result.doc.setdefault("steps", [])
+            steps.append({
+                "step_id": f"s-timeout-{len(steps) + 1}",
+                "kind": "run_timed_out",
+                "actor": "harness",
+                "provenance": "synthetic",
+                "content": f"[agr.runner: task {task.task_id!r} exceeded its {task.timeout_s}s timeout]",
+            })
+            rc = _ingest_doc(result.doc, store)
+            run_id = (result.doc.get("run") or {}).get("logical_run_id")
+            ingested = rc == 0
+        except Exception:  # noqa: BLE001 — the partial transcript may be too
+            # thin to convert at all (e.g. killed before the init record
+            # landed); that is not a NEW failure, just no partial run to
+            # store — the preserved workdir remains the fallback evidence.
+            pass
+        return TaskRunResult(
+            task_id=task.task_id, run_id=run_id, ingested=ingested,
+            error=f"{type(exc).__name__}: {exc}", workdir=str(workdir),
         )
     except Exception as exc:  # noqa: BLE001 — a scheduled sweep must survive one task's crash
         return TaskRunResult(

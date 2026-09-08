@@ -141,7 +141,11 @@ def cmd_run_sweep(args) -> int:
     for r in results:
         if r.error:
             failed += 1
-            print(f"  {r.task_id}: ERROR — {r.error}", file=sys.stderr)
+            # A timeout still sets error, but its partial transcript may
+            # have been ingested as its own stored, reviewable run — say so
+            # rather than leaving that run_id undiscoverable from this output.
+            extra = f" (partial capture ingested as run_id={r.run_id})" if r.run_id else ""
+            print(f"  {r.task_id}: ERROR — {r.error}{extra}", file=sys.stderr)
         else:
             print(f"  {r.task_id}: ingested={r.ingested} verifier={r.verifier_status} run_id={r.run_id}")
     print(f"{len(results) - failed}/{len(results)} task(s) ingested successfully")

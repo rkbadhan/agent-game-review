@@ -282,13 +282,30 @@ def test_uncovered_optional_item_does_not_block_in_session_pass():
     assert result["status"] == "PASSED"
 
 
-def test_uncovered_verifier_enforced_item_does_not_block_in_session_pass():
+def test_verifier_enforced_item_never_itself_counts_as_a_coverage_gap():
     """A verifier_enforced item is synthesized FROM a check — it is covered by
-    construction and must never itself count as a coverage gap."""
+    construction and must never itself appear in ``coverage_gaps``."""
     check = _check("k1", "passed", scope="pytest tests/", sequence=0)
     contract = _contract([("V-k1", "verifier_enforced", "required", [])])
     result = outcome([check], contract)
-    assert result["status"] == "PASSED"
+    assert "V-k1" not in result["coverage_gaps"]
+
+
+def test_only_verifier_enforced_items_means_coverage_is_unknown_not_confirmed():
+    """Follow-up (review of commit 5782f1b): when EVERY contract item is
+    synthesized (``verifier_enforced``) — no author-declared requirement
+    exists at all — the smoke test's PASS must demote to UNDETERMINED, not
+    read as full coverage. This is the realistic shape of a Claude trace's
+    contract: no structured task.requirements, so build_contract's only
+    item is the one synthesized from the smoke test's own check — and a
+    single passing smoke test does not establish that a free-text
+    instruction's broader intent was exercised."""
+    check = _check("k1", "passed", scope="pytest tests/", sequence=0)
+    contract = _contract([("V-k1", "verifier_enforced", "required", [])])
+    result = outcome([check], contract)
+    assert result["status"] == "UNDETERMINED"
+    assert result["coverage_unknown"] is True
+    assert result["coverage_gaps"] == []
 
 
 def test_omitting_contract_preserves_original_behaviour():
