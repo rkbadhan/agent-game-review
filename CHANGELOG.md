@@ -75,6 +75,56 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 - **AGR-17** — the published quick-start corpus counts (trial/run/task-family
   totals) were stale; corrected to match the current `eval-runs/` corpus.
 
+### Fixed (follow-up review of commit 5782f1b)
+
+A second review reproduced three further correctness gaps and flagged
+several acceptance details the first pass left unfinished.
+
+- **AGR-02** — a contract with NO author-declared
+  (`stated_requirement`/`environment_precondition`) required items — the
+  normal shape for a Claude trace, whose task carries only a free-text
+  instruction and never a structured requirements list — vacuously produced
+  an empty `coverage_gaps`, identical to "every declared item is covered".
+  Those are not the same: with zero declared items there is nothing to
+  check a smoke test's coverage against, so coverage is unestablished, not
+  established. `outcome()` now demotes an in-session-only PASS to
+  UNDETERMINED in that case too, with a `coverage_unknown` flag
+  distinguishing it from an actual per-item gap list. **Blast radius
+  checked**: this only fires when every current check is in-session-
+  synthesized (`agr synthesize-verifier`) — the published 22-run
+  `eval-runs/` corpus is entirely Harbor-ingested with `native_structured`
+  checks, so none of it is affected; the gallery and README headline counts
+  are unchanged.
+- **AGR-11** — the initial-packet budget gate did not protect the SECOND
+  (expanded evidence) provider call, which can add up to its own
+  `_EXPANSION_MAX_CHARS` on top of a packet already close to budget. The
+  expanded request is now measured and gated the same way; an over-budget
+  expansion round raises before reaching the provider.
+- **AGR-12** — the configuration filter still treated a target's MISSING
+  `configuration_id` as a wildcard matching any candidate, including one
+  with a specific, different, known configuration. Simplified to one
+  exact-equality comparison: **missing `configuration_id` is its own value,
+  not absence of a constraint** — a target with none matches a candidate
+  that ALSO declares none (both sides genuinely unknown), never a candidate
+  with a known, different configuration. This is a deliberate choice, not
+  a stricter "missing means no match at all" reading: it keeps the common
+  real case working (two Harbor imports, which never stamp
+  `configuration_id`, remain comparable) while still rejecting the
+  cross-configuration pairing AGR-12 exists to catch.
+- **AGR-09** — a timeout now ingests its partial transcript as its own
+  stored, reviewable run (not just a preserved workdir a human has to find
+  and convert by hand), with no fabricated verifier outcome (empty checks →
+  honest UNVERIFIED) and an explicit `run_timed_out` terminal step — the
+  same vocabulary the Harbor adapter uses for a genuine deadline exception
+  — instead of a weaker "completion not observed" gap for a fact the
+  runner is not actually in doubt about.
+- Fleet aggregation (`EpisodeGroup`/`FleetUsageSummary`) only ever counted
+  episodes with `usage_completeness == "unavailable"`; an individually
+  `"partial"` episode contributed to neither the group nor fleet-wide
+  qualifier, so a group or fleet made entirely of partial episodes read as
+  plain "measured". Added `usage_partial_count`/`usage_partial_episode_count`
+  and folded them into `usage_availability` at both levels.
+
 ### Known gaps carried forward
 
 - **AGR-15** — no real `.gold.json` labels exist yet; annotation is a

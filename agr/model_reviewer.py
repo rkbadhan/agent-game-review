@@ -361,10 +361,28 @@ class _LazyModelReviewer:
             self._record(kind="expansion",
                          requested_event_ids=[g["event_id"] for g in expansion["evidence"]],
                          rejected_requests=expansion["rejected"])
-            payload = self._call(SYSTEM_PROMPT,
-                                 {"packet": packet, "expansion": expansion,
-                                  "instruction": "Expansion round complete — return your moments now."},
-                                 kind="propose_expanded")
+            expanded_user = {"packet": packet, "expansion": expansion,
+                             "instruction": "Expansion round complete — return your moments now."}
+            # AGR-11: the initial packet fitting the budget does not mean the
+            # EXPANDED request does — the expansion round can add up to its
+            # own _EXPANSION_MAX_CHARS (16,384 chars) on top of a packet
+            # already close to the effective budget, so the combined request
+            # needs its own gate. Measured on the already-redacted packet and
+            # expansion evidence (both redacted before this point), so this
+            # matches what _call()'s own redaction pass would send.
+            effective_budget = redaction.get("effective_budget_chars")
+            expanded_size = len(json.dumps(expanded_user))
+            if effective_budget is not None and expanded_size > effective_budget:
+                self._record(kind="propose_expanded_skipped", reason="packet_budget_exceeded",
+                             packet_size_chars=expanded_size,
+                             effective_budget_chars=effective_budget,
+                             budget_overrun_chars=expanded_size - effective_budget)
+                raise PacketBudgetExceededError(
+                    f"expanded reviewer request ({expanded_size} chars) exceeds the "
+                    f"effective budget ({effective_budget} chars) by "
+                    f"{expanded_size - effective_budget} chars; the provider was not called "
+                    "for the expansion round")
+            payload = self._call(SYSTEM_PROMPT, expanded_user, kind="propose_expanded")
         return _proposals_from_payload(payload, ctx, self._source)
 
     def revise(self, candidate: Candidate, errors: list[dict],

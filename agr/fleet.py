@@ -84,6 +84,15 @@ class EpisodeGroup:
     # otherwise render as a measured "0 token(s)", indistinguishable from a
     # group that genuinely cost nothing.
     usage_unavailable_count: int = 0
+    # Follow-up (review of commit 5782f1b): how many of this group's
+    # episodes have their OWN usage_completeness == "partial" (some but not
+    # all of that episode's window was instrumented). Distinct from
+    # usage_unavailable_count — an episode can be individually "partial"
+    # without the group containing any fully "unavailable" episode, and the
+    # prior usage_availability property (unavailable-count-only) silently
+    # read such a group as "measured", losing exactly the qualifier this
+    # field exists to carry.
+    usage_partial_count: int = 0
     # AGR-07 (review 82cc113): how many of this group's episodes selected
     # their error_signature via the opaque "fallback_last_nonempty" tier —
     # no traceback, no recognised diagnostic marker anywhere in the failure
@@ -103,14 +112,19 @@ class EpisodeGroup:
     @property
     def usage_availability(self) -> str:
         """"unavailable" (no episode in the group ever measured usage),
-        "partial" (some did, some didn't), or "measured" (every episode has
-        at least some recorded usage — total_tokens can be trusted as a real
-        count, including a genuine zero)."""
-        if self.usage_unavailable_count == 0:
-            return "measured"
-        if self.usage_unavailable_count == self.count:
+        "partial" (either a mix of measured/unavailable episodes, OR any
+        episode whose OWN window was only partially instrumented — follow-up,
+        review of commit 5782f1b: the prior version only looked at
+        usage_unavailable_count, so a group made entirely of individually-
+        "partial" episodes read as "measured" and total_tokens's own
+        incompleteness qualifier was lost), or "measured" (every episode has
+        FULLY recorded usage — total_tokens can be trusted as a real count,
+        including a genuine zero)."""
+        if self.count and self.usage_unavailable_count == self.count:
             return "unavailable"
-        return "partial"
+        if self.usage_unavailable_count > 0 or self.usage_partial_count > 0:
+            return "partial"
+        return "measured"
 
     @property
     def distinct_runs(self) -> int:
@@ -177,6 +191,7 @@ class EpisodeGroup:
             "total_tokens": self.total_tokens,
             "overlapping_usage_events": self.overlapping_usage_events,
             "usage_unavailable_count": self.usage_unavailable_count,
+            "usage_partial_count": self.usage_partial_count,
             "usage_availability": self.usage_availability,
             "usage_note": (
                 "total_tokens is the union of underlying usage records across this "
@@ -185,6 +200,9 @@ class EpisodeGroup:
                 + (f" {self.usage_unavailable_count} of {self.count} episode(s) never had "
                    "usage instrumented at all — total_tokens undercounts this group's real "
                    "cost." if self.usage_unavailable_count else "")
+                + (f" {self.usage_partial_count} of {self.count} episode(s) had only part of "
+                   "their window instrumented — total_tokens may undercount even where it "
+                   "is nonzero." if self.usage_partial_count else "")
             ),
             "total_wall_ms": self.total_wall_ms,
             "fallback_basis_count": self.fallback_basis_count,
@@ -246,6 +264,7 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
             **dict(zip(("total_tokens", "overlapping_usage_events"), _usage_union(eps))),
             total_wall_ms=sum(e.get("wall_ms") or 0 for e in eps),
             usage_unavailable_count=sum(1 for e in eps if e.get("usage_completeness") == "unavailable"),
+            usage_partial_count=sum(1 for e in eps if e.get("usage_completeness") == "partial"),
             fallback_basis_count=sum(
                 1 for e in eps if e.get("error_signature_basis") == "fallback_last_nonempty"),
             example_anchors=anchors,
@@ -296,6 +315,14 @@ class FleetUsageSummary:
     # unavailable episodes otherwise reads as "0 token(s)" with no way to
     # tell that apart from a fleet that genuinely cost nothing.
     usage_unavailable_episode_count: int = 0
+    # Follow-up (review of commit 5782f1b): how many of EVERY episode has its
+    # OWN usage_completeness == "partial" — only part of that episode's
+    # window was instrumented. The fleet-wide headline previously carried no
+    # equivalent to the per-group usage_availability's "partial" qualifier
+    # at all; a store made entirely of partially-instrumented episodes
+    # reported a plain total_tokens number with nothing distinguishing it
+    # from a fully-measured one.
+    usage_partial_episode_count: int = 0
     usage_note: str = (
         "total_tokens is the union of underlying usage records across every recovery "
         "episode in the store; it is associated with episode windows, not avoidable "
@@ -304,18 +331,35 @@ class FleetUsageSummary:
         "are counted once here, not once per episode."
     )
 
+    @property
+    def usage_availability(self) -> str:
+        """Fleet-wide counterpart to EpisodeGroup.usage_availability: the
+        same "measured" / "partial" / "unavailable" vocabulary, so the
+        headline can be labelled consistently with the table beneath it."""
+        if self.episode_count and self.usage_unavailable_episode_count == self.episode_count:
+            return "unavailable"
+        if self.usage_unavailable_episode_count > 0 or self.usage_partial_episode_count > 0:
+            return "partial"
+        return "measured"
+
     def to_dict(self) -> dict:
         note = self.usage_note
         if self.usage_unavailable_episode_count:
             note += (f" {self.usage_unavailable_episode_count} of {self.episode_count} "
                      "episode(s) never had usage instrumented at all — total_tokens "
                      "undercounts the fleet's real cost.")
+        if self.usage_partial_episode_count:
+            note += (f" {self.usage_partial_episode_count} of {self.episode_count} "
+                     "episode(s) had only part of their window instrumented — "
+                     "total_tokens may undercount even where it is nonzero.")
         return {
             "total_tokens": self.total_tokens,
             "episode_count": self.episode_count,
             "affected_runs": self.affected_runs,
             "overlapping_usage_events": self.overlapping_usage_events,
             "usage_unavailable_episode_count": self.usage_unavailable_episode_count,
+            "usage_partial_episode_count": self.usage_partial_episode_count,
+            "usage_availability": self.usage_availability,
             "usage_note": note,
         }
 
@@ -346,4 +390,6 @@ def fleet_usage_summary(store: Store) -> FleetUsageSummary:
         overlapping_usage_events=overlapping,
         usage_unavailable_episode_count=sum(
             1 for e in all_eps if e.get("usage_completeness") == "unavailable"),
+        usage_partial_episode_count=sum(
+            1 for e in all_eps if e.get("usage_completeness") == "partial"),
     )

@@ -133,13 +133,28 @@ def test_configuration_match_takes_priority_over_sweep_match(tmp_path):
     assert sib == "pass-same-cfg-diff-sweep"
 
 
-def test_falls_back_to_any_passing_sibling_when_no_configuration_declared(tmp_path):
-    """A target run with no declared configuration_id falls back to the
-    whole task-matched pool exactly as before (configuration filtering never
-    demands a field the source never declared)."""
+def test_no_sibling_when_target_has_no_configuration_but_candidate_does(tmp_path):
+    """A follow-up review of the prior fix found this exact gap: a target
+    with NO declared configuration_id still auto-selected a passing run
+    that DOES declare one — "missing" was treated as a wildcard instead of
+    its own value. A candidate's specific, known configuration is not shown
+    to match a target whose configuration is unknown, so it must not be
+    presented as a comparable sibling."""
     store = Store(str(tmp_path / "store"))
     analyze(_failing_run_doc(), store)
     analyze(_passing_run_doc(configuration_id="cfg-b"), store)
+    sib = divergence.find_passing_sibling(store, "fail-run")
+    assert sib is None
+
+
+def test_sibling_found_when_neither_target_nor_candidate_declare_configuration(tmp_path):
+    """The common real-data case (e.g. Harbor imports, which never stamp
+    configuration_id) must keep working: two runs that BOTH declare no
+    configuration_id are treated as an exact match (missing == missing),
+    not as mutually incomparable."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(), store)
+    analyze(_passing_run_doc(), store)
     sib = divergence.find_passing_sibling(store, "fail-run")
     assert sib == "pass-run"
 

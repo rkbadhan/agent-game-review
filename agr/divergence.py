@@ -26,19 +26,22 @@ from .store import Store
 
 
 def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
-    """A PASSING run on the SAME task as ``run_id``, requiring a shared
-    configuration_id FIRST (AGR-12) — a divergence report assumes both runs
-    attempted the same thing; a run under a different configuration (a
+    """A PASSING run on the SAME task as ``run_id``, requiring an EXACT
+    configuration_id match FIRST (AGR-12) — a divergence report assumes both
+    runs attempted the same thing; a run under a different configuration (a
     different prompt, tool set, or harness version) is not that, however
-    tempting a coincidentally-passing run on the same task_id looks. When the
-    target declares a configuration_id, a passing run under a DIFFERENT one
-    is never returned — not even as a fallback when no same-config sibling
-    exists, since presenting one anyway would be exactly the incompatible
-    pairing this filter exists to reject. Only when the target declared NO
-    configuration_id (the source never stamped one) does the whole
-    task-matched pool stay eligible. Within whatever pool configuration
-    filtering leaves, prefer one that also shares its sweep_id (an
-    intentionally paired run).
+    tempting a coincidentally-passing run on the same task_id looks.
+
+    "Missing configuration_id" is its own value here, not a wildcard: a
+    target that declared none only matches a candidate that ALSO declared
+    none (both sides genuinely unknown, e.g. two Harbor imports from a
+    source that never stamps configuration_id — a common real case that
+    must keep working). A target with no configuration_id must NEVER be
+    paired with a candidate that DOES declare one — that candidate's
+    configuration is a known, specific thing the target's is not shown to
+    match, so presenting it as comparable would be exactly the guess this
+    filter exists to rule out. Within whatever pool the exact match leaves,
+    prefer one that also shares its sweep_id (an intentionally paired run).
 
     Returns ``None`` when ``run_id`` is not in the store, has no task_id, or
     no passing sibling exists — never a guess at "the closest other run".
@@ -56,12 +59,9 @@ def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
     ]
     if not candidates:
         return None
-    if target.get("configuration_id"):
-        pool = [r for r in candidates if r.get("configuration_id") == target.get("configuration_id")]
-        if not pool:
-            return None
-    else:
-        pool = candidates
+    pool = [r for r in candidates if r.get("configuration_id") == target.get("configuration_id")]
+    if not pool:
+        return None
     same_sweep = [r for r in pool if target.get("sweep_id") and r.get("sweep_id") == target.get("sweep_id")]
     pool = same_sweep or pool
     return pool[0]["run_id"]
