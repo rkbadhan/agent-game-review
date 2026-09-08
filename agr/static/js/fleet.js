@@ -34,6 +34,21 @@ async function loadFleetEpisodes() {
   finally { fl.pending = false; }
 }
 
+// AGR-06: the whole-fleet usage headline — the union across EVERY episode,
+// never a sum of the per-group "Tokens" column above (which would
+// double-count an event two different groups' episodes both cover).
+function renderFleetUsageSummaryCard(summary) {
+  const card = el("div", "card card-pad");
+  card.append(el("p", "eyebrow", "Fleet usage"));
+  const line = el("p", "chapter-lede",
+    summary.total_tokens + " token(s) across " + summary.episode_count + " episode(s) in "
+    + summary.affected_runs + " affected run(s).");
+  card.append(line);
+  const note = el("p", "subline", summary.usage_note);
+  card.append(note);
+  return card;
+}
+
 function renderFleetGroupByCard(fl) {
   const card = el("div", "card card-pad");
   card.append(el("p", "eyebrow", "Group by"));
@@ -72,6 +87,11 @@ async function renderFleet(main) {
       + "tool failure for the fleet view to have anything to group."));
     return;
   }
+  if (!fl.usageSummary) {
+    try { fl.usageSummary = await api("/fleet/usage-summary"); }
+    catch (e) { fl.usageSummary = null; }
+  }
+  if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
   wrap.append(renderFleetTable(fl.episodes));
 }
 
@@ -89,10 +109,18 @@ function renderFleetTable(groups) {
     tr.append(td(g.key.filter(Boolean).join(" / ") || "(none)"));
     tr.append(td(String(g.count), "vs-rate"));
     tr.append(td(String(g.runs)));
-    tr.append(td(g.repeat_rate.toFixed(2)));
+    // AGR-06: repeat_rate is affected_runs_with_>1_episode / affected_runs,
+    // rendered as a percentage; an empty denominator is `null` (unavailable),
+    // never a misleading 0.00.
+    const rateCell = td(g.repeat_rate != null ? Math.round(g.repeat_rate * 100) + "%" : "unavailable");
+    rateCell.title = "Share of this group's affected runs where the failure recurred "
+      + "more than once within that same run.";
+    tr.append(rateCell);
     tr.append(td(Math.round(g.unrecovered_share * 100) + "%"));
     tr.append(td(g.avg_turns_to_resolve != null ? g.avg_turns_to_resolve.toFixed(1) : "—"));
-    tr.append(td(String(g.total_tokens)));
+    const tokensCell = td(String(g.total_tokens));
+    if (g.overlapping_usage_events) tokensCell.title = g.usage_note;
+    tr.append(tokensCell);
     tr.append(td(fmtWallMs(g.total_wall_ms)));
     const exCell = el("td");
     for (const a of (g.example_anchors || [])) {

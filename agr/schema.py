@@ -281,12 +281,52 @@ class VerifierCheck:
     observed: Optional[list] = None
     source_pointers: list[str] = field(default_factory=list)
     derivation_version: str = ""
-    # AGR-04: when the evidence was collected — post-run verifier output is
-    # labelled so it is never presented as information the agent had.
+    # AGR-04 (pre-AGR-01 numbering): when the evidence was collected —
+    # post-run verifier output is labelled so it is never presented as
+    # information the agent had.
     timing: Optional[str] = None
+    # AGR-02: reconciliation over multiple observations of the SAME scope
+    # (agr.checks.reconcile_checks). ``scope`` is the normalized identity of
+    # what was tested (e.g. the exact command text); ``None`` for checks a
+    # reconciliation pass does not track (native/structured external-verifier
+    # checks, which are already one atomic authoritative check each).
+    scope: Optional[str] = None
+    # Execution order among during_run checks, for "later observation" to be
+    # well-defined; ``None`` when the source recorded no order (native checks).
+    sequence: Optional[int] = None
+    # Set on an EARLIER check when a LATER check of the identical scope
+    # reconciles it — never the reverse, and never across different scopes (a
+    # narrower check's scope string differs from a broader one's, so neither
+    # can ever supersede the other). The historical record is never deleted or
+    # mutated; this only says which check currently speaks for its scope.
+    superseded_by: Optional[str] = None
+    # Set on a ``passed`` check when a relevant mutation occurred after it
+    # with no later same-scope re-verification — the pass can no longer be
+    # trusted as evidence of the run's FINAL state, even though it was a real,
+    # correctly-observed result at the time.
+    stale_reason: Optional[str] = None
+
+    @property
+    def effective_status(self) -> Optional[str]:
+        """This check's contribution to the CURRENT (reconciled) outcome view.
+
+        ``None`` means excluded — a later observation of the identical scope
+        speaks for it instead. A stale pass no longer counts as a pass (see
+        ``stale_reason``) but is not silently dropped either: it demotes to
+        ``"unknown"`` so an unresolved final state stays visible rather than
+        reading as a clean pass. ``status`` itself is never changed — it is
+        the immutable historical fact; this is the derived, current-view read.
+        """
+        if self.superseded_by is not None:
+            return None
+        if self.stale_reason is not None and self.status == "passed":
+            return "unknown"
+        return self.status
 
     def to_dict(self) -> dict:
-        return _clean(asdict(self))
+        d = _clean(asdict(self))
+        d["effective_status"] = self.effective_status
+        return d
 
 
 @dataclass
@@ -371,7 +411,37 @@ class RecoveryEpisode:
     tool: Optional[str] = None                   # the failed call's tool (action_signature[0])
     error_signature: Optional[str] = None         # agr.error_signature.error_signature(failure text)
     turns_to_resolve: Optional[int] = None        # tool_call count from failure through resolution; None if unresolved
-    tokens: int = 0                               # summed token cost across the episode's evidence events
+    # AGR-05: usage summed strictly AFTER the failure result through the
+    # selected resolution (or the observed terminal event, for an unrecovered
+    # episode) — by event POSITION over every event in that span, including
+    # model_output, never the evidence_event_ids list above (built for
+    # display/traceability; it omits model_output entirely). A later,
+    # unrelated change scanned only while still looking for a strict match
+    # after an earlier plausible one was already found can never inflate this
+    # — the window ends at the resolution actually used.
+    episode_window_tokens: int = 0
+    # The FAILING attempt's own cost (its result, plus its paired call's, when
+    # either carries one) — kept separate from the window above, which starts
+    # strictly after it: the initiating attempt is not part of the cost of
+    # recovering FROM the failure.
+    initiating_attempt_tokens: int = 0
+    # "complete" when the window closes on an actually observed event (a
+    # resolution, or the run's own terminal event); "partial" when the
+    # capture ran out mid-episode with neither ever observed; "unavailable"
+    # when not one event inside the window ever carried a cost record at all
+    # (the source never instrumented usage there) — a measured zero (some
+    # events had cost data and it summed to zero) must never be confused
+    # with usage that was simply never captured.
+    usage_completeness: str = "complete"
+    # AGR-06: event_id -> token count for every cost-carrying event in this
+    # episode's window. Lets a fleet-level aggregate (agr.fleet) compute
+    # usage as a UNION of underlying records across episodes/groups instead
+    # of summing episode_window_tokens directly — two episodes whose windows
+    # share events (e.g. an unresolved episode's window running into the
+    # next failure's) would otherwise double-count the shared events'
+    # tokens. Keys are unique only within this episode's OWN run_id+capture;
+    # a cross-run merge must key on (run_id, event_id).
+    usage_records: dict[str, int] = field(default_factory=dict)
     wall_ms: Optional[int] = None                 # wall-clock ms failure->resolution, when both carry a timestamp
     nth_occurrence_in_run: int = 1                # 1-indexed count of this error_signature within THIS run
     resolved_by: Optional[str] = None             # the resolving call's tool name; None if unresolved

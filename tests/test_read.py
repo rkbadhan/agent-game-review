@@ -54,6 +54,50 @@ def test_list_runs_summarises_each_run(tmp_path):
     assert chess["watermark"] is None
 
 
+# --- AGR-04: confirmed vs. plausible recovery counts, never conflated -------
+
+
+def test_list_runs_reports_confirmed_recovery_counts(tmp_path):
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    (summary,) = read.list_runs(store)
+    assert summary["recovered"] is True
+    assert summary["recovery_plausible"] is False
+    assert summary["recovery_counts"] == {"confirmed": 1, "plausible": 0, "unresolved": 0}
+
+
+def test_list_runs_never_counts_a_plausible_resolution_as_recovered(tmp_path):
+    """A run whose ONLY recovery episode is plausibly_resolved (a narrowed
+    rerun on an overlapping target — real evidence, but not a confirmed exact
+    rerun) must not set recovered=True — that would silently present
+    unconfirmed evidence as confirmed recovery."""
+    doc = {
+        "atif_version": "1.0", "source_type": "synthetic", "capture_completeness": "complete",
+        "run": {"logical_run_id": "plausible_only_run", "task_id": "t1"},
+        "steps": [
+            {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "do it"},
+            {"step_id": "s2", "kind": "tool_call", "actor": "main_agent",
+             "tool": "shell", "content": "pytest tests/"},
+            {"step_id": "s3", "kind": "tool_result", "actor": "tool",
+             "tool": "shell", "content": "E: failed", "exit_code": 1},
+            # A narrowed rerun (adds -k fast) shares the "tests/" target but is
+            # NOT an exact rerun — item 4's plausible tier, never good_recovery.
+            {"step_id": "s4", "kind": "tool_call", "actor": "main_agent",
+             "tool": "shell", "content": "pytest tests/ -k fast"},
+            {"step_id": "s5", "kind": "tool_result", "actor": "tool",
+             "tool": "shell", "content": "1 passed", "exit_code": 0},
+        ],
+    }
+    store = Store(str(tmp_path / "store"))
+    analysis = analyze(doc, store)
+    assert analysis.recoveries[0].classification == "plausibly_resolved"
+    assert not any(c.detector == "successful_recovery_via_strategy_change"
+                  for r in analysis.detector_results for c in r.candidates)
+    (summary,) = read.list_runs(store)
+    assert summary["recovered"] is False
+    assert summary["recovery_plausible"] is True
+    assert summary["recovery_counts"] == {"confirmed": 0, "plausible": 1, "unresolved": 0}
+
+
 def test_list_runs_flags_provisional_contract(tmp_path):
     store = _store_with(tmp_path, "contract_mismatch.atif.json")
     (summary,) = read.list_runs(store)

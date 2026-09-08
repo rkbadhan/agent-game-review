@@ -46,10 +46,26 @@ def _match_runner(command: str) -> Optional[str]:
     return None
 
 
+# AGR-02 (PR #56 review): pytest/jest/mocha summaries are always in the LAST
+# few lines of output. Searching the WHOLE blob let the program-under-test's
+# own stdout (e.g. an application log line reading "3 failed items retried
+# successfully") be mistaken for the test framework's own count — a fully
+# passing run could synthesize a false FAILED check from unrelated text. The
+# go/cargo parsers below are already anchored to their own summary line
+# shapes and don't need this.
+_SUMMARY_TAIL_LINES = 5
+
+
+def _tail(output: str, n: int = _SUMMARY_TAIL_LINES) -> str:
+    lines = [ln for ln in output.splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
 def _parse_pytest(output: str) -> Optional[tuple[int, int]]:
-    m_pass = re.search(r"(\d+)\s+passed", output)
-    m_fail = re.search(r"(\d+)\s+failed", output)
-    m_err = re.search(r"(\d+)\s+error", output)
+    tail = _tail(output)
+    m_pass = re.search(r"(\d+)\s+passed", tail)
+    m_fail = re.search(r"(\d+)\s+failed", tail)
+    m_err = re.search(r"(\d+)\s+error", tail)
     if not (m_pass or m_fail or m_err):
         return None
     passed = int(m_pass.group(1)) if m_pass else 0
@@ -58,35 +74,67 @@ def _parse_pytest(output: str) -> Optional[tuple[int, int]]:
 
 
 def _parse_npm_jest(output: str) -> Optional[tuple[int, int]]:
-    m = re.search(r"Tests:\s+(?:(\d+)\s+failed,\s*)?(?:\d+\s+skipped,\s*)?(\d+)\s+passed", output)
+    tail = _tail(output)
+    m = re.search(r"Tests:\s+(?:(\d+)\s+failed,\s*)?(?:\d+\s+skipped,\s*)?(\d+)\s+passed", tail)
     if m:
         failed = int(m.group(1)) if m.group(1) else 0
         return int(m.group(2)), failed
-    m_pass = re.search(r"(\d+)\s+passing", output)
-    m_fail = re.search(r"(\d+)\s+failing", output)
+    m_pass = re.search(r"(\d+)\s+passing", tail)
+    m_fail = re.search(r"(\d+)\s+failing", tail)
     if m_pass or m_fail:
         return (int(m_pass.group(1)) if m_pass else 0, int(m_fail.group(1)) if m_fail else 0)
     return None
 
 
 def _parse_cargo(output: str) -> Optional[tuple[int, int]]:
-    m = re.search(r"test result:\s*(?:ok|FAILED)\.\s*(\d+)\s+passed;\s*(\d+)\s+failed", output)
-    if not m:
+    """Sum EVERY ``test result: ...`` line, not just the first (AGR-02).
+
+    ``cargo test --workspace`` prints one such line per crate; matching only
+    the first (the original ``re.search``) silently dropped every other
+    crate's result — a failing second crate could sit right below a passing
+    first crate's summary and never be counted.
+    """
+    matches = re.findall(
+        r"test result:\s*(?:ok|FAILED)\.\s*(\d+)\s+passed;\s*(\d+)\s+failed", output)
+    if not matches:
         return None
-    return int(m.group(1)), int(m.group(2))
+    return sum(int(p) for p, _ in matches), sum(int(f) for _, f in matches)
+
+
+# AGR-02: a build/compile failure means the invocation never reached a test
+# result at all (no "test result: ..." line for `_parse_cargo` to find) — this
+# must produce an explicit error, not silently vanish because there was
+# nothing to parse a pass/fail count out of.
+_CARGO_COMPILE_ERROR = re.compile(r"^error(\[E\d+\])?:|^error: could not compile", re.MULTILINE)
+
+
+def _cargo_invocation_errored(output: str) -> bool:
+    return bool(_CARGO_COMPILE_ERROR.search(output))
 
 
 def _parse_go_test(output: str) -> Optional[tuple[int, int]]:
+    """Count every per-test AND every per-package summary line (AGR-02).
+
+    ``go test`` without ``-v`` omits per-test PASS lines but still always
+    prints FAIL lines, so a per-test failure is never missed there. The bug
+    was in the package-summary fallback: ``go test ./...`` against multiple
+    packages prints one ``ok <pkg>`` or ``FAIL <pkg>`` line PER PACKAGE, and
+    checking only "does an 'ok' line exist" (via ``re.search``, first-match
+    semantics, checked before ever looking for FAIL) reported an all-pass
+    result even when a sibling package's ``FAIL`` line was sitting right
+    below it. Counting ALL package lines (``findall``) makes one passing
+    package's line unable to hide a failing sibling's. A package whose build
+    itself failed prints ``FAIL <pkg> [build failed]``, which the FAIL
+    pattern already matches, so that case needs no separate handling here.
+    """
     passed = len(re.findall(r"^--- PASS:", output, re.MULTILINE))
     failed = len(re.findall(r"^--- FAIL:", output, re.MULTILINE))
     if passed or failed:
         return passed, failed
-    # No per-test lines (go test without -v): fall back to the one overall
-    # summary line `go test` always prints.
-    if re.search(r"^ok\s+\S+", output, re.MULTILINE):
-        return 1, 0
-    if re.search(r"^FAIL\b", output, re.MULTILINE):
-        return 0, 1
+    ok_pkgs = len(re.findall(r"^ok\s+\S+", output, re.MULTILINE))
+    fail_pkgs = len(re.findall(r"^FAIL\s+\S+", output, re.MULTILINE))
+    if ok_pkgs or fail_pkgs:
+        return ok_pkgs, fail_pkgs
     return None
 
 
@@ -142,8 +190,27 @@ def synthesize_verifier(doc: dict) -> Optional[dict]:
         if result is None:
             continue
         output = result.payload.get("content") or ""
+        # AGR-02: the normalized command is this check's SCOPE — the identity
+        # a later run of the identical command reconciles against
+        # (agr.checks.reconcile_checks). Exact text only, never a substring
+        # or prefix match, so a narrower invocation never shares scope with,
+        # and so can never supersede or be superseded by, a broader one.
+        scope = " ".join(command.split())
         parsed = _PARSERS[runner](output)
         if parsed is None:
+            if runner == "cargo_test" and _cargo_invocation_errored(output):
+                check_id = f"insession_{runner}_{len(checks) + 1}"
+                checks.append({
+                    "check_id": check_id,
+                    "name": f"{runner}: invocation failed to compile (in-session)",
+                    "status": "error",
+                    "source": "output_interpretation",
+                    "timing": "during_run",
+                    "source_pointers": [ev.event_id, result.event_id],
+                    "scope": scope,
+                    "sequence": idx,
+                })
+                raw_chunks.append(f"[{ev.event_id} -> {result.event_id}] {command}\n{output}")
             continue
         passed, failed = parsed
         status = "passed" if failed == 0 and passed > 0 else "failed" if failed > 0 else "unknown"
@@ -155,6 +222,8 @@ def synthesize_verifier(doc: dict) -> Optional[dict]:
             "source": "output_interpretation",
             "timing": "during_run",
             "source_pointers": [ev.event_id, result.event_id],
+            "scope": scope,
+            "sequence": idx,
         })
         raw_chunks.append(f"[{ev.event_id} -> {result.event_id}] {command}\n{output}")
 

@@ -47,6 +47,13 @@ def is_tool_failure(event: DerivedEvent) -> bool:
         # block, not a competence failure the agent should be evaluated on
         # recovering from.
         return False
+    if event.event_type == "tool_result" and event.payload.get("submission_control_response"):
+        # AGR-03: the harness's own "I did not run your submission echo"
+        # acknowledgement (mini-swe-agent intercepts COMPLETE_TASK_AND_
+        # SUBMIT_FINAL_OUTPUT as a control signal and never executes it) is
+        # the submission protocol working as designed — not a tool failure,
+        # and never grounds a recovery episode or an ignored-failure finding.
+        return False
     return event.event_type == "tool_result" and tool_status(event) == STATUS_ERROR
 
 
@@ -136,6 +143,26 @@ def _call_id(event: DerivedEvent) -> Optional[str]:
     return str(cid) if cid else None
 
 
+def paired_call_index(events: list[DerivedEvent], idx: int) -> Optional[int]:
+    """Like :func:`paired_call`, returning the INDEX into ``events`` instead
+    of the event itself — needed by a caller that must walk further from that
+    position (e.g. AGR-05/06's initiating-attempt-cost lookup, which needs to
+    walk backward from the call to the start of its own turn)."""
+    ev = events[idx]
+    if ev.event_type != "tool_result":
+        return None
+    cid = _call_id(ev)
+    if cid:
+        for j in range(idx - 1, -1, -1):
+            if events[j].event_type == "tool_call" and _call_id(events[j]) == cid:
+                return j
+        return None  # id present but no matching call: never guess
+    for j in range(idx - 1, -1, -1):
+        if events[j].event_type == "tool_call":
+            return j
+    return None
+
+
 def paired_call(events: list[DerivedEvent], idx: int) -> Optional[DerivedEvent]:
     """The tool_call event that produced the result at ``events[idx]``.
 
@@ -146,19 +173,8 @@ def paired_call(events: list[DerivedEvent], idx: int) -> Optional[DerivedEvent]:
     ids (and a result with an id that matches no captured call stays
     unpaired rather than being silently re-attached to a neighbour).
     """
-    ev = events[idx]
-    if ev.event_type != "tool_result":
-        return None
-    cid = _call_id(ev)
-    if cid:
-        for j in range(idx - 1, -1, -1):
-            if events[j].event_type == "tool_call" and _call_id(events[j]) == cid:
-                return events[j]
-        return None  # id present but no matching call: never guess
-    for j in range(idx - 1, -1, -1):
-        if events[j].event_type == "tool_call":
-            return events[j]
-    return None
+    j = paired_call_index(events, idx)
+    return events[j] if j is not None else None
 
 
 def preceding_call_signature(events: list[DerivedEvent], idx: int) -> Optional[tuple]:
@@ -277,6 +293,26 @@ def is_state_changing_action(event: DerivedEvent) -> bool:
 # anything ("rm -f a" should not "relate" to any command via the token "a").
 _MIN_RELATED_TOKEN_LEN = 3
 
+# AGR-04 (PR #56 review): a closed, mechanical set of path markers/extensions
+# that can never be the FUNCTIONAL fix for a failing command — editing
+# documentation or a plain-text note cannot change what a test or a shell
+# command does. Deliberately narrow and format-based (never a semantic read
+# of the file's actual content): a source-code edit under any OTHER path
+# still credits unconditionally below, which is what preserves the
+# "the fix commonly lives in a source file the failing command's own target
+# text never names" reasoning this function was built on — only the
+# unambiguous non-functional cases (a docs/README/text-note edit) are
+# excluded.
+_NON_FUNCTIONAL_EDIT_MARKERS = ("docs/", "documentation/", "/docs/", "readme")
+_NON_FUNCTIONAL_EDIT_EXTENSIONS = (".md", ".rst", ".txt")
+
+
+def _is_functional_edit_target(path: str) -> bool:
+    lower = path.lower()
+    if any(marker in lower for marker in _NON_FUNCTIONAL_EDIT_MARKERS):
+        return False
+    return not lower.endswith(_NON_FUNCTIONAL_EDIT_EXTENSIONS)
+
 
 def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optional[tuple]) -> bool:
     """Refined ``is_state_changing_action`` (review 2026-09-07, finding #3).
@@ -286,20 +322,27 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
     failed ``curl X`` followed by an unrelated ``mkdir logs`` followed by an
     IDENTICAL, unchanged ``curl X`` retry was misclassified ``good_recovery``.
 
-    The structured mutation tools (Edit/Write/MultiEdit/NotebookEdit) still
-    always count — editing ANY file between a failure and its retry is
-    item 5's own primary example of "the agent changed something", and a
-    literal path/token match is unreliable there anyway (the fix is usually
-    in a SOURCE file, not the TEST path the failed command names). A shell
-    state-changing command counts only when it shares a target with
-    ``target_sig``'s command tail — checked as substring containment, not
-    exact equality, so ``rm -rf tests/__pycache__`` still relates to a failed
-    ``pytest tests/`` (the target/tail token ``tests/`` names a directory
-    the rm's own target path lives under). A target under
-    ``_MIN_RELATED_TOKEN_LEN`` characters is excluded from the check.
+    The structured mutation tools (Edit/Write/MultiEdit/NotebookEdit) count
+    for any FUNCTIONAL target — editing ANY source file between a failure
+    and its retry is item 5's own primary example of "the agent changed
+    something", and a literal path/token match is unreliable there anyway
+    (the fix is usually in a SOURCE file, not the TEST path the failed
+    command names — hence no target-overlap requirement for these tools, only
+    the format-based functional/non-functional check below). AGR-04 (PR #56
+    review): a documentation/text-note edit (``_is_functional_edit_target``)
+    is excluded even so — a docs/README/.md edit cannot be the functional fix
+    for a failing command, so it must not credit "the agent changed
+    something" merely because SOME file changed. A shell state-changing
+    command counts only when it shares a target with ``target_sig``'s command
+    tail — checked as substring containment, not exact equality, so
+    ``rm -rf tests/__pycache__`` still relates to a failed ``pytest tests/``
+    (the target/tail token ``tests/`` names a directory the rm's own target
+    path lives under). A target under ``_MIN_RELATED_TOKEN_LEN`` characters is
+    excluded from the check.
     """
     if is_mutation(event):
-        return True
+        path = str(event.payload.get("path") or event.payload.get("content") or "")
+        return _is_functional_edit_target(path)
     if event.event_type != "tool_call":
         return False
     content = str(event.payload.get("content") or "")

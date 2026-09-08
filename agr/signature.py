@@ -18,10 +18,16 @@ from dataclasses import dataclass, field
 RESULT_SUCCESS = "Successful"
 RESULT_FAILED = "Failed"
 RESULT_NOT_OBSERVED = "Not observed"
+# AGR-04: a plausible (narrowed/adjacent-command) resolution is real evidence
+# but weaker than a confirmed exact-rerun success — it must read as its own
+# category, never as "Successful", so a consumer reading only the structured
+# `result` field (not the prose) cannot mistake it for confirmed recovery.
+RESULT_PLAUSIBLE = "Plausible"
 
 INTERP_POSITIVE = "Positive evidence"
 INTERP_NEGATIVE = "Negative evidence in this run"
 INTERP_NOT_MEASURED = "Not measured"
+INTERP_PLAUSIBLE = "Plausible evidence — not confirmed"
 
 
 @dataclass
@@ -92,11 +98,13 @@ def _recovery_row(analysis) -> SignatureRow:
         observed = "Same action retried unchanged and succeeded — resolved without a strategy change"
         result, interp = RESULT_SUCCESS, INTERP_POSITIVE
     elif plausible:
-        # Item 4: a narrowed/adjacent command on an overlapping target
-        # succeeded — real, but weaker, evidence than an exact rerun. Worded
-        # so this never reads as confirmed resolution.
+        # Item 4 / AGR-04: a narrowed/adjacent command on an overlapping
+        # target succeeded — real, but weaker, evidence than an exact rerun.
+        # RESULT_PLAUSIBLE (not RESULT_SUCCESS) so this never reads as
+        # confirmed resolution even to a consumer that only looks at the
+        # structured `result` field, not this prose.
         observed = "A narrowed or adjacent command on an overlapping target succeeded — plausible, not confirmed, resolution"
-        result, interp = RESULT_SUCCESS, INTERP_POSITIVE
+        result, interp = RESULT_PLAUSIBLE, INTERP_PLAUSIBLE
     else:
         observed = "Failure not resolved"
         result, interp = RESULT_FAILED, INTERP_NEGATIVE
@@ -130,7 +138,9 @@ def _verification_row(analysis) -> SignatureRow:
         or (e.event_type in ("tool_call", "tool_result") and "check" in e.text().lower())
         for e in window
     )
-    any_failed = any(c.status == "failed" for c in analysis.checks)
+    # AGR-02: the CURRENT view — an obsolete, reconciled failure must not
+    # still read as "this run failed" once a later same-scope check passed.
+    any_failed = any(c.effective_status == "failed" for c in analysis.checks)
     if verified:
         return SignatureRow(
             ability="Verify before submission",

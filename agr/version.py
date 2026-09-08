@@ -17,9 +17,22 @@ RAW_ATIF_IMPORT_VERSION = "atif-import-0.1"
 AGR_VERSION = "0.1.0"
 
 DERIVATION_VERSION = "event-map-0.1"
-CHECK_DERIVATION_VERSION = "check-extract-0.1"
+# 0.2 (AGR-02): checks carry scope/sequence/superseded_by/stale_reason and an
+# effective_status distinct from the raw historical status — reconciled by
+# agr.checks.reconcile_checks before agr.checks.outcome rolls them up.
+# 0.3 (PR #56 review): reconcile_checks' mutation-staleness test no longer
+# marks a passed check stale after a documentation/text-note edit (it shares
+# agr._util.is_state_changing_action_related_to with AGR-04's recovery
+# credit fix) — a docs/README/.md edit cannot invalidate a check as evidence
+# of final state.
+CHECK_DERIVATION_VERSION = "check-extract-0.3"
 SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
-DETECTOR_VERSION = "detectors-0.1"
+# 0.2 (AGR-08): UnresolvedRequirementAtSubmission and
+# TerminalFailureWithFailingChecks each emit ONE aggregate candidate per
+# eligible run/capture carrying every failing check, not one candidate per
+# check — a run with N failing checks previously produced N near-identical
+# terminal-statement candidates that crowded out other findings.
+DETECTOR_VERSION = "detectors-0.2"
 CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
 CONTRACT_OBSERVATION_VERSION = "contract-status-1.0"
 PHASE_SEGMENTATION_VERSION = "phase-segment-0.1"
@@ -34,7 +47,12 @@ READ_MODEL_VERSION = "read-model-0.2"
 # sequences both ahead of the model reviewer (M4, principle #11); versioning
 # them means a gold record or an eval report is auditable against the schema /
 # metric definitions that produced it, just like every deterministic derivation.
-GOLD_SCHEMA_VERSION = "gold-0.1"
+# 0.2 (AGR-01): trajectories carry annotation provenance — label_source
+# (human vs. model_draft, so a draft can never silently stand in for
+# independent human gold) and label_batch/frozen (a batch is usable for
+# tuning only once frozen). Existing 0.1 records still load: the new fields
+# default to human/unbatched/unfrozen.
+GOLD_SCHEMA_VERSION = "gold-0.2"
 # 0.2: semantic metric names corrected (affected_check_overlap_rate,
 # attribution_ceiling_respected_rate) — derivations under different names are
 # not comparable.
@@ -72,10 +90,48 @@ AUDIT_VERSION = "audit-0.1"
 # deterministic, stdlib-only grouping key for otherwise-noisy error text —
 # line numbers, addresses, paths, timestamps, UUIDs, and quoted literals are
 # stripped so the fleet view can group "the same error" across many runs.
-ERROR_SIGNATURE_VERSION = "error-sig-0.1"
+# 0.2 (AGR-07): diagnostic selection now prefers structured exception info,
+# then a marker-recognised diagnostic line anywhere in the text (not just the
+# first line — junk preamble like an /etc/os-release dump or a progress
+# banner no longer wins over a real diagnostic later in the output), then a
+# documented last-nonempty-line fallback. A truncated traceback (nothing
+# after its header) no longer collapses to the generic header text itself.
+ERROR_SIGNATURE_VERSION = "error-sig-0.2"
 
 # The recovery state machine (spec §8.6, items 4/5/29). RecoveryEpisode
 # previously carried no derivation_version at all — unlike every other
 # derived record — so a classification/enrichment change wasn't auditable
 # against the logic that produced it.
-RECOVERY_VERSION = "recovery-0.1"
+# 0.2 (AGR-04): a state-changing action only credits strategy_changed when
+# its own result did not fail — a failed Edit/rm changed nothing the agent
+# could have built the eventual success on, and previously still earned
+# "the agent changed something" credit.
+# 0.3 (AGR-05): usage is now episode_window_tokens/initiating_attempt_tokens/
+# usage_completeness — summed by event POSITION over the defined window
+# (strictly after the failure through the selected resolution or observed
+# terminal event, including model_output), replacing the old `tokens` field
+# that summed the display-only `evidence_event_ids` list instead (which
+# excluded model_output entirely and conflated the initiating attempt's own
+# cost into the total).
+# 0.4 (AGR-06): episodes now also carry usage_records (event_id -> tokens
+# for every cost-carrying event in the window), so agr.fleet can compute
+# group/fleet usage as a UNION of underlying records instead of summing
+# episode_window_tokens directly — two episodes whose windows share events
+# would otherwise double-count them.
+# 0.5 (PR #56 review): a documentation/text-note edit (docs/, README, .md/
+# .rst/.txt) no longer credits strategy_changed — it cannot be the
+# functional fix for a failing command, unlike a same-or-different-named
+# SOURCE file edit, which still credits unconditionally (see
+# agr._util.is_state_changing_action_related_to). initiating_attempt_tokens
+# now also finds a turn's cost on its LEADING model_output step when the
+# failing call's own turn opened with reasoning/message text (item 27's
+# per-turn cost attribution) — previously read as 0 whenever that was the
+# case (confirmed on the real corpus: 11/22 episodes, now 0/22).
+RECOVERY_VERSION = "recovery-0.5"
+
+# The corpus manifest (AGR-01): reproducible provenance over a Harbor eval
+# corpus root — source locations/checksums, logical run ids, capture ids, and
+# the counting-stage definitions (discovered trials, ingested captures,
+# logical runs, active captures) every later stage's counts must reconcile
+# against. See agr/corpus_manifest.py.
+CORPUS_MANIFEST_VERSION = "corpus-manifest-0.1"

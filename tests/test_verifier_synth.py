@@ -76,6 +76,66 @@ def test_go_test_quiet_output_falls_back_to_summary_line():
     assert verifier["checks"][0]["status"] == "passed"
 
 
+# --- AGR-02: mixed/multi-package Go and Cargo output -------------------------
+
+
+def test_go_test_multi_package_one_failing_is_not_masked_by_a_passing_sibling():
+    """go test ./... against several packages prints one summary line PER
+    PACKAGE. Before AGR-02, checking only "does an ok line exist anywhere"
+    (re.search, first-match) reported an all-pass result even with a FAIL
+    line for a different package sitting right below it."""
+    output = "ok  \tpkg/a\t0.004s\nFAIL\tpkg/b\t0.010s\nok  \tpkg/c\t0.002s\n"
+    steps = _call_result("c1", "go test ./...", output)
+    verifier = synthesize_verifier(_doc(steps))
+    assert verifier["checks"][0]["status"] == "failed"
+
+
+def test_go_test_build_failed_package_counts_as_failing():
+    output = "ok  \tpkg/a\t0.004s\nFAIL\tpkg/b [build failed]\n"
+    steps = _call_result("c1", "go test ./...", output)
+    verifier = synthesize_verifier(_doc(steps))
+    assert verifier["checks"][0]["status"] == "failed"
+
+
+def test_go_test_all_packages_passing_is_still_passed():
+    output = "ok  \tpkg/a\t0.004s\nok  \tpkg/b\t0.002s\n"
+    steps = _call_result("c1", "go test ./...", output)
+    verifier = synthesize_verifier(_doc(steps))
+    assert verifier["checks"][0]["status"] == "passed"
+
+
+def test_cargo_workspace_second_crate_failure_is_not_dropped():
+    """cargo test --workspace prints one "test result: ..." line PER CRATE.
+    Before AGR-02, re.search matched only the first — a failing second crate
+    right below a passing first crate's summary was silently ignored."""
+    output = ("test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured\n\n"
+              "test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured\n")
+    steps = _call_result("c1", "cargo test --workspace", output)
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "failed"
+
+
+def test_cargo_compile_error_produces_an_explicit_error_check_not_silence():
+    """A pure compile failure never prints a "test result: ..." line at all
+    — before AGR-02 this produced NO check, silently losing the observation
+    that the agent DID run cargo test and it DID fail."""
+    output = "error[E0433]: failed to resolve: use of undeclared crate\nerror: could not compile `demo` (bin \"demo\") due to previous error"
+    steps = _call_result("c1", "cargo test", output)
+    verifier = synthesize_verifier(_doc(steps))
+    assert verifier is not None
+    check = verifier["checks"][0]
+    assert check["status"] == "error"
+
+
+def test_synthesized_checks_carry_scope_and_sequence():
+    steps = _call_result("c1", "pytest tests/test_a.py", "1 passed")
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["scope"] == "pytest tests/test_a.py"
+    assert check["sequence"] == 0
+
+
 def test_rspec():
     steps = _call_result("c1", "bundle exec rspec", "10 examples, 2 failures")
     verifier = synthesize_verifier(_doc(steps))

@@ -34,6 +34,9 @@ FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
     "failed": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "ERROR"),
     "needs_attention": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "WARNING", "ERROR"),
     "recovered": lambda r: bool(r.get("recovered")),
+    # AGR-04: a plausible (not confirmed) resolution is its own visible
+    # filter — it must never be silently folded into "recovered".
+    "plausible_recovery": lambda r: bool(r.get("recovery_plausible")),
     "verifier_concern": lambda r: bool(r.get("verifier_concern")),
     "unreviewed": lambda r: r["workflow"].get("review_progress") == "unreviewed",
 }

@@ -216,6 +216,80 @@ def test_state_changing_action_between_failure_and_exact_retry_is_good_recovery(
     assert eps[0].resolution_event_id == "evt_6"
 
 
+def test_documentation_edit_does_not_credit_strategy_change():
+    """AGR-04 (PR #56 review, confirmed): an edit to documentation between a
+    failure and its IDENTICAL, unchanged retry cannot be the functional fix —
+    editing docs/README/.md text cannot change what a shell command or test
+    does. Unlike a source-file edit (see the sibling test above, which
+    correctly still credits a differently-named .py file), this must NOT
+    set strategy_changed, so an identical retry stays an unchanged retry."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="Edit", content="docs/notes.md"),
+        ev("evt_4", "tool_result", tool="Edit", content="edited", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].strategy_changed is False
+    assert eps[0].classification == UNCHANGED_RETRY
+
+
+def test_readme_edit_does_not_credit_strategy_change():
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="Edit", content="README.md"),
+        ev("evt_4", "tool_result", tool="Edit", content="edited", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].strategy_changed is False
+    assert eps[0].classification == UNCHANGED_RETRY
+
+
+def test_failed_edit_does_not_credit_strategy_change():
+    """AGR-04: an Edit whose OWN result failed (old_string not found) changed
+    nothing the agent could have built the eventual success on — crediting
+    it as "the agent changed something" overclaims. The exact pytest rerun
+    still resolves ITS episode, but as an unchanged retry, not good_recovery.
+    (The failed Edit is itself a separate, independent, unrecovered episode —
+    it was never followed by any attempt to fix the SAME Edit — which is the
+    correct, unrelated second episode this scan mechanically produces.)"""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="Edit", content="/app/calc.py"),
+        ev("evt_4", "tool_result", tool="Edit", content="old_string not found", exit_code=1),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    by_failure = {ep.failure_event_id: ep for ep in eps}
+    assert by_failure["evt_2"].strategy_changed is False
+    assert by_failure["evt_2"].classification == UNCHANGED_RETRY
+    assert by_failure["evt_4"].classification == UNRECOVERED  # the failed Edit's own episode
+
+
+def test_failed_shell_mutation_does_not_credit_strategy_change():
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="shell", content="rm -rf tests/__pycache__"),
+        ev("evt_4", "tool_result", tool="shell", content="permission denied", exit_code=1),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    by_failure = {ep.failure_event_id: ep for ep in eps}
+    assert by_failure["evt_2"].strategy_changed is False
+    assert by_failure["evt_2"].classification == UNCHANGED_RETRY
+
+
 def test_state_changing_shell_command_also_sets_strategy_changed():
     """The same signal for a shell mutation (rm), not just Edit/Write."""
     events = [

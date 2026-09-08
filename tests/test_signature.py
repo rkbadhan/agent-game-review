@@ -1,7 +1,15 @@
 """Task Ability Signature (spec §4.3) and distributed/external slices (§8.4)."""
 
+from dataclasses import dataclass, field
+
 from agr.pipeline import analyze
-from agr.signature import INTERP_NOT_MEASURED, RESULT_NOT_OBSERVED
+from agr.signature import (
+    INTERP_NOT_MEASURED,
+    INTERP_PLAUSIBLE,
+    RESULT_NOT_OBSERVED,
+    RESULT_PLAUSIBLE,
+    _recovery_row,
+)
 from agr.store import Store
 
 
@@ -69,7 +77,7 @@ def test_signature_never_conflates_not_measured_with_result(tmp_path, load_fixtu
                 # qualifying opportunity existed but the behaviour never did
                 # (e.g. no verification action) — that is an observation about
                 # the behaviour, not a verdict laundered from the outcome.
-                assert row.result in {"Successful", "Failed", RESULT_NOT_OBSERVED}
+                assert row.result in {"Successful", "Failed", RESULT_NOT_OBSERVED, RESULT_PLAUSIBLE}
 
 
 # --- AGR-05: honest recovery representation; verification scored on its own ---
@@ -83,6 +91,53 @@ def test_recovery_row_positive_on_successful_unchanged_retry(tmp_path, load_fixt
     assert row.result == "Successful"
     assert row.interpretation == "Positive evidence"
     assert "unchanged" in row.observed_behaviour.lower()
+
+
+# --- AGR-04: plausible recovery is its own category, never "Successful" -----
+
+
+@dataclass
+class _FakeOpportunity:
+    trigger: str
+
+
+@dataclass
+class _FakeEpisode:
+    classification: str
+    failure_event_id: str = "evt_fake"
+
+
+@dataclass
+class _FakeAnalysis:
+    opportunities: list = field(default_factory=list)
+    recoveries: list = field(default_factory=list)
+
+
+def test_plausible_recovery_row_is_its_own_category_not_successful():
+    from agr.recovery import PLAUSIBLE_RECOVERY
+
+    fake = _FakeAnalysis(
+        opportunities=[_FakeOpportunity(trigger="tool_failure")],
+        recoveries=[_FakeEpisode(classification=PLAUSIBLE_RECOVERY)],
+    )
+    row = _recovery_row(fake)
+    assert row.measured is True
+    assert row.result == RESULT_PLAUSIBLE
+    assert row.result != "Successful"
+    assert row.interpretation == INTERP_PLAUSIBLE
+    assert "plausible" in row.observed_behaviour.lower()
+
+
+def test_confirmed_recovery_still_outranks_plausible_when_both_present():
+    from agr.recovery import GOOD_RECOVERY, PLAUSIBLE_RECOVERY
+
+    fake = _FakeAnalysis(
+        opportunities=[_FakeOpportunity(trigger="tool_failure")],
+        recoveries=[_FakeEpisode(classification=PLAUSIBLE_RECOVERY),
+                   _FakeEpisode(classification=GOOD_RECOVERY)],
+    )
+    row = _recovery_row(fake)
+    assert row.result == "Successful"
 
 
 def test_verification_row_gets_no_credit_on_a_pass_without_verification(tmp_path, load_fixture):

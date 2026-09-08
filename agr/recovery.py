@@ -62,6 +62,8 @@ from ._util import (
     is_state_changing_action_related_to,
     is_tool_failure,
     is_tool_success,
+    paired_call_index,
+    paired_result,
     preceding_call_signature,
 )
 from .schema import DerivedEvent, RecoveryEpisode
@@ -150,6 +152,28 @@ _TOKEN_KEYS = (
 def _tokens_from_cost(cost: dict) -> int:
     """Total token count from a step's ``cost`` dict, whichever adapter shape
     it carries (Claude's ``{"usage": {...}}`` or Harbor's flat metrics dict).
+
+    AGR-05 contract this function assumes and every caller relies on:
+
+    * ``cost`` is an already-normalized PER-STEP/PER-TURN measurement — never
+      a running cumulative total. Summing this across many events (as
+      episode/window accounting does) is only correct because each step's
+      own usage is independent; an adapter whose source reports a
+      cumulative counter must difference consecutive values into a per-step
+      delta BEFORE stamping it onto ``DerivedEvent.cost``, never here (this
+      function has no notion of "the previous step" to difference against).
+      Neither adapter today (Claude, Harbor) reports a cumulative counter —
+      both already hand this function one turn's own usage — so no adapter
+      currently needs that differencing step; a future one that does must
+      add it at ingestion, not by changing this summation.
+    * The keys summed are additive components of ONE measurement, never
+      overlapping subsets of each other: Anthropic's contract keeps
+      ``cache_creation_input_tokens``/``cache_read_input_tokens`` separate
+      from ``input_tokens`` (added here, not double-counted); Harbor's
+      OpenAI-style ``prompt_tokens`` already includes any cached portion, so
+      that subset (``cached_tokens`` / ``prompt_tokens_details.
+      cached_tokens``) is deliberately NOT in ``_TOKEN_KEYS`` — adding it
+      here would double-count tokens ``prompt_tokens`` already counts.
     """
     if not cost:
         return 0
@@ -209,6 +233,18 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
         tool_calls_since_failure = 0
         turns_at_strict_resolution: int | None = None
         turns_at_plausible_resolution: int | None = None
+        # AGR-05: indices, not just events — episode_window_tokens sums by
+        # POSITION over `events` (every event type, including model_output,
+        # which `evidence` below excludes — that list is for display/
+        # traceability, never an accounting ledger). resolution_idx/
+        # plausible_idx/stop_idx let the window end at the SAME point the
+        # classification actually resolved at, so a later, irrelevant change
+        # (scanned only because the loop kept looking for a strict match
+        # after already finding a plausible one) can never inflate the
+        # window a resolution earlier in the trace is credited with.
+        resolution_idx: int | None = None
+        plausible_idx: int | None = None
+        stop_idx: int | None = None
 
         j = idx + 1
         while j < n:
@@ -221,7 +257,8 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 call_sig = action_signature(e2)
                 if _operation_key(call_sig) == failed_key:
                     last_same_op_call = call_sig
-                elif not strategy_changed and is_state_changing_action_related_to(e2, failed_sig):
+                elif (not strategy_changed and is_state_changing_action_related_to(e2, failed_sig)
+                      and not is_tool_failure(paired_result(events, j) or e2)):
                     # Item 5, refined by review finding #3: a state-changing
                     # action on a DIFFERENT but RELATED objective before the
                     # failed operation's resolving attempt is what "the agent
@@ -229,6 +266,20 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                     # signal a literal strategy_change event carries. An
                     # unrelated mutation (a stray mkdir before an unrelated
                     # retry) must not credit an unchanged retry as recovery.
+                    #
+                    # AGR-04: a mutation whose OWN result failed (an Edit
+                    # whose old_string was not found, a shell command that
+                    # itself errored) changed nothing the agent could have
+                    # built the eventual success on — crediting it as "the
+                    # agent changed something" overclaims. paired_result
+                    # returns None when the call's result was never captured
+                    # (a partial/interrupted capture) or has no known id-linked
+                    # match; the call event itself never satisfies
+                    # is_tool_failure (it isn't a tool_result), so an
+                    # unresolvable pairing still credits the change rather
+                    # than penalising a source that simply couldn't record
+                    # this specific result — the same "don't guess against
+                    # honesty" default paired_result itself uses.
                     strategy_changed = True
                 evidence.append(e2.event_id)
             elif is_tool_failure(e2):
@@ -248,6 +299,7 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 if _operation_key(result_sig) == failed_key:
                     resolution = e2
                     resolution_sig = result_sig
+                    resolution_idx = j
                     turns_at_strict_resolution = tool_calls_since_failure
                     evidence.append(e2.event_id)
                     break
@@ -257,15 +309,25 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 if plausible_resolution is None and _plausible_operation_match(result_sig, failed_sig):
                     plausible_resolution = e2
                     plausible_sig = result_sig
+                    plausible_idx = j
                     turns_at_plausible_resolution = tool_calls_since_failure
                 evidence.append(e2.event_id)
             elif e2.event_type in _STOP:
+                stop_idx = j
                 break
             j += 1
 
         attribution_ceiling = "dependency_linked"
         turns_to_resolve: int | None = None
         resolved_by: str | None = None
+        # AGR-05: the window's own end index, distinct from wherever the scan
+        # happened to stop — see the resolution_idx/plausible_idx/stop_idx
+        # comment above. usage_completeness stays "complete" whenever the
+        # window closes on an actual observed event (a resolution or a
+        # terminal event); only running out of capture with neither ever
+        # observed is "partial".
+        window_end_idx: int
+        usage_completeness = "complete"
         if resolution is not None:
             # F1 follow-up: change evidence attaches to the RESOLVING attempt —
             # an unrelated intervening call (a successful pwd, a curl) does not
@@ -274,6 +336,7 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             classification = GOOD_RECOVERY if (strategy_changed or changed_action) else UNCHANGED_RETRY
             turns_to_resolve = turns_at_strict_resolution
             resolved_by = resolution_sig[0] if resolution_sig else None
+            window_end_idx = resolution_idx
         elif plausible_resolution is not None:
             # Item 4: no exact rerun ever succeeded, but a narrowed/adjacent
             # command on an overlapping target did. Recorded as a distinct,
@@ -285,6 +348,11 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             attribution_ceiling = "hypothesized"
             turns_to_resolve = turns_at_plausible_resolution
             resolved_by = plausible_sig[0] if plausible_sig else None
+            # The window ends where THIS resolution actually was, never
+            # wherever the scan eventually stopped while still looking for a
+            # (never-found) strict match — a later, unrelated change cannot
+            # explain an earlier resolution's window.
+            window_end_idx = plausible_idx
         else:
             # No resolving attempt: with conservative objective identity (R5),
             # changed_action records whether the agent re-attempted the exact
@@ -293,6 +361,15 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             # this one.
             changed_action = last_same_op_call is not None and last_same_op_call != failed_sig
             classification = UNRECOVERED
+            if stop_idx is not None:
+                window_end_idx = stop_idx  # the run's own observed terminal event
+            else:
+                # Scan ran out of captured events without ever seeing a
+                # terminal event — an incomplete capture, mid-episode. Stop at
+                # capture end and say so, rather than silently treating a
+                # truncated window as the whole story.
+                window_end_idx = n - 1
+                usage_completeness = "partial"
 
         # Item 29: a deterministic summary of this episode for the fleet view
         # — every field below is derived from records this function already
@@ -308,7 +385,49 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
         if not isinstance(failure_text, str) or not failure_text:
             failure_text = ev.text()
         sig = _compute_error_signature(failure_text)
-        tokens = sum(_tokens_from_cost(e.cost) for e in events if e.event_id in evidence)
+        # AGR-05: episode_window_tokens sums EVERY event strictly after the
+        # failure result through window_end_idx (inclusive), by POSITION —
+        # never the `evidence` list, which is built for display/traceability
+        # (it deliberately omits model_output entirely, and skips irrelevant
+        # intervening tool_calls' significance) and would silently under-count
+        # a turn whose usage/cost landed on a model_output step, which every
+        # adapter's turn-fanout can produce. The initiating (failed) attempt's
+        # own cost is kept separate — it is not part of what recovering FROM
+        # the failure cost, and this window starts strictly after it.
+        window_start_idx = idx + 1
+        window_events = (events[window_start_idx:window_end_idx + 1]
+                         if window_end_idx >= window_start_idx else [])
+        episode_window_tokens = sum(_tokens_from_cost(e.cost) for e in window_events)
+        # AGR-06: per-event token records for a fleet-level UNION across
+        # episodes (agr.fleet) — only cost-carrying events, so an empty dict
+        # cleanly means "nothing measured" rather than padding it with zeros.
+        usage_records = {e.event_id: _tokens_from_cost(e.cost) for e in window_events if e.cost}
+        if window_events and not any(e.cost for e in window_events):
+            # AGR-05: not one event in the window ever carried a cost record —
+            # the source never instrumented usage here at all. A measured
+            # zero (some events had cost data, it just summed to zero) is
+            # valid and stays "complete"/"partial"; this is the OTHER case —
+            # no measurement exists, so 0 must not read as a known zero.
+            usage_completeness = "unavailable"
+        # AGR-05/06 (PR #56 review, confirmed): a turn's cost is attached to
+        # only the FIRST of its fanned-out steps (item 27) — for a turn that
+        # opens with reasoning/message text, that is a model_output step
+        # BEFORE the tool_call, not the call itself. Reading only the failing
+        # call's own cost silently lost the turn's real cost in exactly that
+        # (common) shape. Walk back through the call's own contiguous,
+        # same-actor model_output/tool_call run — the rest of its turn's
+        # fan-out — to find it, mirroring how the harbor/claude adapters
+        # attribute a turn's cost in the first place.
+        failing_call_idx = paired_call_index(events, idx)
+        initiating_attempt_tokens = _tokens_from_cost(ev.cost)
+        if failing_call_idx is not None:
+            turn_start = failing_call_idx
+            call_actor = events[failing_call_idx].actor
+            while (turn_start > 0 and events[turn_start - 1].event_type in ("model_output", "tool_call")
+                  and events[turn_start - 1].actor == call_actor):
+                turn_start -= 1
+            initiating_attempt_tokens += sum(
+                _tokens_from_cost(events[i].cost) for i in range(turn_start, failing_call_idx + 1))
         wall_ms = _wall_ms(ev, resolution) if resolution is not None else None
 
         episodes.append(
@@ -326,7 +445,10 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 tool=tool,
                 error_signature=sig,
                 turns_to_resolve=turns_to_resolve,
-                tokens=tokens,
+                episode_window_tokens=episode_window_tokens,
+                initiating_attempt_tokens=initiating_attempt_tokens,
+                usage_completeness=usage_completeness,
+                usage_records=usage_records,
                 wall_ms=wall_ms,
                 resolved_by=resolved_by,
                 derivation_version=version.RECOVERY_VERSION,

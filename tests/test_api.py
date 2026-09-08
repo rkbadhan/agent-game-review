@@ -77,6 +77,18 @@ def test_fleet_episodes_endpoint(tmp_path):
     assert resp.status_code == 400
 
 
+def test_fleet_usage_summary_endpoint(tmp_path):
+    """AGR-06: GET /fleet/usage-summary is the fleet-wide union, independent
+    of any --group-by choice."""
+    client, _ = _client(tmp_path, "tool_failure_recovery.atif.json", "ignored_failure.atif.json")
+    resp = client.get("/fleet/usage-summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["episode_count"] == 2
+    assert body["affected_runs"] == 2
+    assert "usage_note" in body
+
+
 def test_fleet_argument_shapes_endpoint(tmp_path):
     """Item 31: GET /fleet/argument-shapes over a store with a failing Edit
     call whose tool_input was retained."""

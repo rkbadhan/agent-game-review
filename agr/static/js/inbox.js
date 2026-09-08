@@ -1,7 +1,7 @@
 "use strict";
 
 // --- runs inbox --------------------------------------------------------------
-const FILTER_CHIPS = [["failed","Failed"],["needs_attention","Needs attention"],["recovered","Recovered"],["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"]];
+const FILTER_CHIPS = [["failed","Failed"],["needs_attention","Needs attention"],["recovered","Recovered"],["plausible_recovery","Plausible recovery"],["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"]];
 const SORT_OPTIONS = [["triage","Triage priority"],["outcome","Outcome"],["review_progress","Review progress"],["cost","Cost"],["duration","Duration"],["recently_updated","Recently updated"]];
 const TRIAGE_TIP = "Workflow convenience, not a severity or model-quality score.";
 // §4.3.5 fast/deep entry — where each run opens. "First key moment" is the fast
