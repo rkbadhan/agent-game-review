@@ -3,9 +3,11 @@
 // --- render root -------------------------------------------------------------
 function render() {
   const main = $("#main"); main.textContent = "";
-  // The version comparison is a surface, not a run view: it renders with no run
-  // selected, so it is dispatched before the "pick a run" guard.
+  // The version comparison and the fleet view are surfaces, not run views:
+  // each renders with no run selected, so both are dispatched before the
+  // "pick a run" guard.
   if (state.view === "versions") { renderVersionsSurface(main); syncUrl(); return; }
+  if (state.view === "fleet") { renderFleetSurface(main); syncUrl(); return; }
   if (!state.review) { main.append(el("div", "empty", "Select a run to begin.")); return; }
   const rv = state.review, run = rv.run || {};
   $("#crumb-task").textContent = run.task_id || state.runId;
@@ -89,6 +91,18 @@ function render() {
     cmpBtn.title = "Compare needs a second review of this run (e.g. a model-reviewer pass).";
   }
   util.append(cmpBtn);
+  // Item 21: the sibling divergence view only makes sense for a FAILED run —
+  // it aligns against a PASSING sibling on the same task. A passed run gets
+  // a disabled affordance with an honest tooltip, the same pattern as Compare.
+  const sibBtn = el("button", "seg" + (state.view === "sibling" ? " active" : ""), "Sibling");
+  if ((o.status || "").toUpperCase() === "FAILED") {
+    sibBtn.title = "Align this run against a passing sibling on the same task (§item 21)";
+    sibBtn.addEventListener("click", () => { state.view = "sibling"; render(); });
+  } else {
+    sibBtn.disabled = true;
+    sibBtn.title = "Sibling divergence compares a FAILED run against a passing one.";
+  }
+  util.append(sibBtn);
   const traceBtn = el("button", "button subtle", "Full trace");
   traceBtn.append(el("span", "shortcut", "T"));
   traceBtn.addEventListener("click", () => openTrace(null));
@@ -98,6 +112,7 @@ function render() {
 
   if (state.view === "source") renderSource(main);
   else if (state.view === "compare") renderCompare(main);
+  else if (state.view === "sibling") renderSiblingDivergence(main);
   else renderChapter(main);
 
   renderEvidencePanel();

@@ -90,6 +90,64 @@ def cmd_ingest_from(args) -> int:
     return _ingest_doc(result.doc, store)
 
 
+def cmd_synthesize_verifier(args) -> int:
+    """Extract in-session pytest/npm test/cargo test/go test invocations and
+    their results into a --verifier sidecar (item 25, 2026-09-08).
+
+    Converts the source with the named adapter (no ingest — this is a pure
+    preprocessing step) and writes exactly the sidecar shape --verifier
+    already accepts, so an otherwise UNVERIFIED session ingests PROVISIONAL
+    with real atomic checks: `agr ingest-from --adapter ... --verifier
+    <output>`. Recognises only a closed, versioned set of test-runner
+    invocations and output shapes — an unrecognised one produces no check,
+    never a guessed pass/fail.
+    """
+    from .adapter import get_adapter
+    from .verifier_synth import synthesize_verifier
+
+    adapter = get_adapter(args.adapter)
+    result = adapter.convert(args.path, task_id=args.task_id)
+    for w in result.warnings:
+        print(f"  adapter warning: {w}")
+    verifier = synthesize_verifier(result.doc)
+    if verifier is None:
+        print("no recognised test invocation with a parseable result found; "
+              "no sidecar written", file=sys.stderr)
+        return 1
+    with open(args.output, "w", encoding="utf-8") as fh:
+        json.dump(verifier, fh, indent=2)
+    print(f"wrote {len(verifier['checks'])} check(s) to {args.output!r}")
+    for check in verifier["checks"]:
+        print(f"  {check['check_id']}: {check['status']} — {check['name']}")
+    return 0
+
+
+def cmd_run_sweep(args) -> int:
+    """Run a task set through claude -p and ingest every result (item 26,
+    2026-09-08). Meant to be invoked by a scheduler (cron, a systemd timer)
+    so the store accumulates comparable runs under one configuration_id
+    across repeated sweeps — this command itself does not schedule anything.
+    """
+    from . import runner
+
+    try:
+        task_set = runner.TaskSet.load(args.task_set)
+    except (ValueError, OSError, KeyError) as exc:
+        print(f"failed to load task set {args.task_set!r}: {exc}", file=sys.stderr)
+        return 1
+    store = Store(args.store)
+    results = runner.run_sweep(task_set, store, keep_workdir=args.keep_workdir)
+    failed = 0
+    for r in results:
+        if r.error:
+            failed += 1
+            print(f"  {r.task_id}: ERROR — {r.error}", file=sys.stderr)
+        else:
+            print(f"  {r.task_id}: ingested={r.ingested} verifier={r.verifier_status} run_id={r.run_id}")
+    print(f"{len(results) - failed}/{len(results)} task(s) ingested successfully")
+    return 1 if failed else 0
+
+
 def cmd_ingest_harbor(args) -> int:
     """Ingest Harbor (Terminal-Bench 2.0) output — the primary eval-framework path.
 
@@ -384,6 +442,54 @@ def cmd_runs(args) -> int:
         passed, total = o.get("passed"), o.get("total")
         counts = f"{passed}/{total}" if passed is not None else "?/?"
         print(f"{s['run_id']}  [{status} {counts}]  {s.get('task_id') or ''}{wm}")
+    return 0
+
+
+def cmd_episodes(args) -> int:
+    """Fleet view over recovery episodes across every run (item 30, 2026-09-08).
+
+    Groups every run's persisted recovery episodes by tool and/or error
+    signature, so a repeated failure across many runs is visible as ONE row
+    instead of scattered across per-run reviews.
+    """
+    from . import fleet
+    store = Store(args.store)
+    group_by = [d.strip() for d in args.group_by.split(",") if d.strip()] if args.group_by else None
+    try:
+        groups = fleet.fleet_episodes(store, group_by=group_by)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not groups:
+        print(f"no recovery episodes in store {args.store!r}", file=sys.stderr)
+        return 1
+    for g in groups:
+        key = " / ".join(str(k) for k in g.key)
+        turns = f"{g.avg_turns_to_resolve:.1f}" if g.avg_turns_to_resolve is not None else "?"
+        print(f"{key}  count={g.count} runs={g.distinct_runs} repeat_rate={g.repeat_rate:.2f} "
+              f"unrecovered={g.unrecovered_share:.0%} avg_turns={turns} "
+              f"tokens={g.total_tokens} wall_ms={g.total_wall_ms}")
+    return 0
+
+
+def cmd_argument_shapes(args) -> int:
+    """Argument-shape distribution per failing-call signature (item 31, 2026-09-08).
+
+    For every (tool, error_signature) group, the KEY SET and value TYPE the
+    model sent on failing calls — never the retained values themselves.
+    """
+    from . import argument_shapes
+    store = Store(args.store)
+    groups = argument_shapes.argument_shapes(store, min_group_size=args.min_group_size)
+    if not groups:
+        print(f"no failing calls with retained tool_input in store {args.store!r}", file=sys.stderr)
+        return 1
+    for g in groups:
+        print(f"{g.key[0]} / {g.key[1]}  ({g.total_failing_calls} failing calls, "
+              f"{len(g.shapes)} distinct shape(s))")
+        for s in g.shapes:
+            keys = ", ".join(f"{k}:{t}" for k, t in s["keys"])
+            print(f"    {s['share']:.0%} ({s['count']}x)  {{{keys}}}")
     return 0
 
 
@@ -1052,6 +1158,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_adapter_args(pf)
     pf.set_defaults(func=cmd_ingest_from)
 
+    psv = sub.add_parser(
+        "synthesize-verifier",
+        help="extract in-session pytest/npm/cargo/go test results into a --verifier sidecar (item 25)")
+    psv.add_argument("--adapter", required=True, choices=adapter_names(),
+                     help="adapter to convert the source with (no ingest — pure preprocessing)")
+    psv.add_argument("path", help="path to the harness log")
+    psv.add_argument("--task-id", help="benchmark task id (passed through to the adapter)")
+    psv.add_argument("--output", required=True, help="path to write the verifier sidecar .json")
+    psv.set_defaults(func=cmd_synthesize_verifier)
+
+    prs = sub.add_parser(
+        "run-sweep",
+        help="run a task set through claude -p and ingest every result (item 26)")
+    prs.add_argument("task_set", help="path to a task-set JSON file (configuration_id + tasks)")
+    prs.add_argument("--keep-workdir", action="store_true",
+                     help="do not delete each task's working directory afterward (debugging)")
+    prs.set_defaults(func=cmd_run_sweep)
+
     pp = sub.add_parser("ingest-pi", help="ingest a pi session (.jsonl) via the pi adapter")
     pp.add_argument("path", help="path to a pi session .jsonl file")
     _add_adapter_args(pp)
@@ -1070,6 +1194,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("runs", help="list every run in the store")
     pr.set_defaults(func=cmd_runs)
+
+    pe = sub.add_parser("episodes",
+                        help="fleet view: group recovery episodes across every run (item 30)")
+    pe.add_argument("--group-by", default="tool,error_signature",
+                    help="comma-separated grouping dimensions: tool, error (alias for "
+                         "error_signature), error_signature (default: tool,error_signature)")
+    pe.set_defaults(func=cmd_episodes)
+
+    pas = sub.add_parser("argument-shapes",
+                         help="argument-shape distribution per failing-call signature (item 31)")
+    pas.add_argument("--min-group-size", type=int, default=1,
+                     help="only show groups with at least this many failing calls (default: 1)")
+    pas.set_defaults(func=cmd_argument_shapes)
 
     pd = sub.add_parser("disposition", help="record a human review disposition on a run (§4.3.4)")
     pd.add_argument("run_id", help="logical run id")

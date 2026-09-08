@@ -4,7 +4,7 @@
 const state = { runId: null, view: "review", chapter: "moments", forensic: null, review: null,
   momentIdx: 0, showAllContract: false, pendingStep: null, viewed: new Set(),
   sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "RK", dispOpen: false,
-  compare: null, traceOpen: false, traceStep: null,
+  compare: null, sibling: null, traceOpen: false, traceStep: null,
   // §4.3.5 fast/deep entry preference — where each run opens, remembered per
   // browser like the panel widths. Default is the recommended fast path.
   entryPref: (localStorage.getItem("agr-entry-pref") === "outcome" ? "outcome" : "first_moment"),
@@ -13,7 +13,10 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
   versions: { configurations: null, baseline: null, candidate: null,
     axis: "evaluation_harness", keys: ["task_id", "task_version", "verifier_version",
       "environment_image_digest", "task_parameters", "seed"],
-    result: null, pending: false, savedId: null } };
+    result: null, pending: false, savedId: null },
+  // Item 30/32: the fleet view over recovery episodes across every run — a
+  // surface of its own, like Compare versions, not tied to a selected run.
+  fleet: { groupBy: "tool,error_signature", episodes: null, pending: false } };
 
 // --- §4.1 shareable review location -----------------------------------------
 //   The exact review position lives in the query string, so a reviewer can share
@@ -27,6 +30,12 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
 //   way it does today. Reading it back happens once, at boot, in `boot()`.
 function syncUrl() {
   const p = new URLSearchParams();
+  if (state.view === "fleet") {
+    p.set("view", "fleet");
+    if (state.fleet.groupBy !== "tool,error_signature") p.set("group_by", state.fleet.groupBy);
+    history.replaceState(null, "", location.pathname + "?" + p.toString());
+    return;
+  }
   if (state.view === "versions") {
     // The version comparison is not about one run, so its link carries the
     // definition instead: a saved id, or the sides and axis being constructed.
@@ -73,5 +82,5 @@ function readUrl() {
   if (p.get("candidate")) v.candidate = p.get("candidate");
   return { run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
-    left, right, comparison: p.get("comparison") };
+    left, right, comparison: p.get("comparison"), groupBy: p.get("group_by") };
 }

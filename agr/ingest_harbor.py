@@ -70,7 +70,17 @@ from .schema import CHECK_STATUSES
 #      the SAME execution. The trial uuid/name are preserved on the run for
 #      lineage. Bump requires re-ingest: run ids change for every trial whose
 #      session id shares a 12-char prefix with a sibling's.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.7"
+# 0.8: mini-swe-agent observations encode each result's exit status as a JSON
+#      object (``{"returncode": <int>, "output": ...}``) inside the ATIF
+#      ``content`` field, because mini-swe-agent's own harness — not Harbor —
+#      writes it that way. Nothing in Harbor's ``extra.exit_code`` slot ever
+#      carried it, so every mini-swe-agent trial ingested with every tool
+#      result at ``status: unknown`` and no failures for recovery/detectors to
+#      see. This is a real, source-supplied exit code that was merely
+#      JSON-encoded inside a text field — lifting it is decoding what the
+#      source already recorded, not inference: it is stamped provenance
+#      "observed" like the rest of the fanned-out step.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.8"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -105,6 +115,37 @@ def _text_of(content: Any) -> str:
     return str(content)
 
 
+def _parse_returncode(content: Any) -> int | None:
+    """Decode a mini-swe-agent exit status out of a tool result's ``content``.
+
+    mini-swe-agent's own harness serializes each command result as
+    ``{"returncode": <int>, "output": <str>}`` — sometimes as a JSON string
+    (the common case: Harbor's ATIF ``content`` field is text), occasionally
+    already parsed into a dict. Recognised only when ``returncode`` is
+    genuinely an int (bool is a subclass of int and is excluded — it is never
+    what this field means); anything else returns ``None`` so the caller falls
+    through to "no exit code recorded", never a guessed one.
+    """
+    obj: Any = None
+    if isinstance(content, dict):
+        obj = content
+    elif isinstance(content, str):
+        stripped = content.strip()
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                obj = parsed
+    if obj is None:
+        return None
+    rc = obj.get("returncode")
+    if isinstance(rc, bool) or not isinstance(rc, int):
+        return None
+    return rc
+
+
 def _hoist_argument(function_name: str, arguments: Any) -> dict[str, Any]:
     """Pick the analysis-relevant text out of a tool call's arguments.
 
@@ -112,13 +153,20 @@ def _hoist_argument(function_name: str, arguments: Any) -> dict[str, Any]:
     argument (a command, a path) is hoisted into ``content``; everything else is
     preserved as a compact JSON blob. Mirrors the pi adapter's choice so the two
     harnesses produce comparable steps.
+
+    Item 20 (2026-09-08): terminus-2's own tool call carries the actual shell
+    text under ``keystrokes`` (a terminal-emulation harness, not a structured
+    ``command`` argument) — without it in this priority list, the real
+    command was buried inside the JSON-blob fallback and every deterministic
+    matcher keyed on ``content`` (recovery's objective identity, evidence
+    slicing) saw ``{"keystrokes":...`` instead of the command.
     """
     call: dict[str, Any] = {"tool": function_name or "tool"}
     if isinstance(arguments, dict):
-        for key in ("command", "cmd", "path", "file_path", "filename"):
+        for key in ("command", "cmd", "keystrokes", "path", "file_path", "filename"):
             val = arguments.get(key)
             if isinstance(val, str) and val:
-                call["content"] = val
+                call["content"] = val.rstrip("\n") if key == "keystrokes" else val
                 if key in ("path", "file_path", "filename"):
                     call["path"] = val
                 break
@@ -129,6 +177,34 @@ def _hoist_argument(function_name: str, arguments: Any) -> dict[str, Any]:
     else:
         call["content"] = json.dumps(arguments, ensure_ascii=False)[:2000]
     return call
+
+
+# Item 20 (2026-09-08): a closed, UNAMBIGUOUS set of shell error messages a
+# failed command's own shell prints verbatim — never a semantic read of
+# arbitrary output. Used only for the OPTIONAL, clearly-labelled heuristic
+# below; it never sets exit_code/status, so it can never be mistaken for
+# genuinely captured process state.
+_SHELL_ERROR_MARKERS = (
+    "command not found",
+    "No such file or directory",
+    "Permission denied",
+    "syntax error near unexpected token",
+    "is not recognized as an internal or external command",
+)
+
+
+def _terminus2_heuristic_status(content: str) -> str | None:
+    """A lower-confidence, clearly-labelled status source for terminus-2.
+
+    Terminus-2 observations are raw terminal screen text with no exit code
+    anywhere (``process_state`` is declared ``unavailable`` for it — see
+    ``convert``). This mechanically recognises a closed set of shell error
+    strings the shell itself would have printed verbatim on a failed command;
+    returns ``None`` (no signal) for everything else, including any output
+    that merely mentions a word like "error" — that would be interpreting
+    content, not recognising a fixed marker.
+    """
+    return "error" if any(marker in content for marker in _SHELL_ERROR_MARKERS) else None
 
 
 def _trial_markers(p: Path) -> bool:
@@ -539,17 +615,34 @@ def convert(
         elif src == "agent":
             saw_agent_step = True
             last_agent_tool_calls = [c for c in (hstep.get("tool_calls") or []) if isinstance(c, dict)]
+            # Item 27 (2026-09-08): metrics is a TURN-level aggregate cost —
+            # attribute it to only the FIRST step this turn fans out into
+            # (thinking, message, or the first tool_call), never once per
+            # step, so a turn with several tool_calls doesn't multiply its
+            # own token cost.
+            metrics = hstep.get("metrics")
+            pending_cost = dict(metrics) if isinstance(metrics, dict) and metrics else None
+
+            def _cost_kwarg() -> dict[str, Any]:
+                nonlocal pending_cost
+                if pending_cost is None:
+                    return {}
+                kw = {"cost": pending_cost}
+                pending_cost = None
+                return kw
+
             reasoning = hstep.get("reasoning_content")
             if reasoning:
-                add("model_output", "main_agent", content=f"[thinking] {_text_of(reasoning)}")
+                add("model_output", "main_agent", content=f"[thinking] {_text_of(reasoning)}", **_cost_kwarg())
             message = _text_of(hstep.get("message"))
             if message:
-                add("model_output", "main_agent", content=message)
+                add("model_output", "main_agent", content=message, **_cost_kwarg())
             for call in hstep.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
                 fname = call.get("function_name") or call.get("name") or "tool"
                 payload = _hoist_argument(fname, call.get("arguments"))
+                payload.update(_cost_kwarg())
                 add("tool_call", "main_agent", **payload)
                 cid = call.get("tool_call_id") or call.get("id")
                 if cid:
@@ -561,17 +654,38 @@ def convert(
                 if not isinstance(res, dict):
                     continue
                 cid = res.get("source_call_id")
+                raw_content = res.get("content")
                 payload = {
                     "tool": call_names.get(cid, "tool"),
-                    "content": _text_of(res.get("content")),
+                    "content": _text_of(raw_content),
                 }
-                # ATIF observations don't carry a POSIX exit code; only record one
-                # when the source explicitly surfaced it (via extra), never guess.
+                # ATIF observations don't carry a POSIX exit code as a top-level
+                # field; only record one when the source explicitly surfaced it
+                # (via extra), never guess.
                 extra = res.get("extra") or {}
                 if isinstance(extra, dict) and "exit_code" in extra:
                     payload["exit_code"] = extra["exit_code"]
                 elif isinstance(extra, dict) and extra.get("is_error"):
                     payload["exit_code"] = 1
+                else:
+                    # mini-swe-agent's own harness encodes the exit status
+                    # inside content itself (adapter 0.8) — decode it when
+                    # ``extra`` carried nothing.
+                    returncode = _parse_returncode(raw_content)
+                    if returncode is not None:
+                        payload["exit_code"] = returncode
+                        payload["status"] = "ok" if returncode == 0 else "error"
+                    elif agent.get("name") == "terminus-2":
+                        # Item 20: terminus-2 observations are raw terminal
+                        # screen text with no exit code anywhere — never
+                        # promoted to exit_code/status (process_state is
+                        # declared unavailable for this agent below). This is
+                        # a SEPARATE, clearly-labelled, lower-confidence
+                        # signal a UI/detector may choose to use later.
+                        heuristic = _terminus2_heuristic_status(payload["content"])
+                        if heuristic is not None:
+                            payload["heuristic_status"] = heuristic
+                            payload["heuristic_status_source"] = "shell_error_marker"
                 add("tool_result", "tool", **payload)
         else:
             warnings.append(
@@ -687,6 +801,18 @@ def convert(
         "filesystem": "partial",
         "process_state": "partial",
     }
+    # Item 20 (2026-09-08): terminus-2's tool observations are raw terminal
+    # screen text with no exit code anywhere — "partial" (the default above)
+    # implies SOME process-state evidence was captured through tool I/O, which
+    # is false for this agent. Declaring it "unavailable" makes capability-
+    # gated failure detectors report "not evaluated" honestly instead of
+    # silently finding nothing on a source that never captured it.
+    if agent.get("name") == "terminus-2":
+        capabilities["process_state"] = "unavailable"
+        warnings.append(
+            "agent is terminus-2: tool observations are raw terminal screen text with no "
+            "exit code — process_state is 'unavailable', not 'partial'"
+        )
 
     # --- verifier: CTRF atomic tests first; else explicit sidecar; else the
     # aggregate reward from result.json (AGR-04 priority) ---------------------

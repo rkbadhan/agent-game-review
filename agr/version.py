@@ -67,3 +67,15 @@ REDACTION_VERSION = "redaction-0.2"
 # dimensions. Every AuditFinding embeds this version so an assessment is
 # auditable against the mapping that produced it, like every other derivation.
 AUDIT_VERSION = "audit-0.1"
+
+# Error signature normaliser (item 28, 2026-09-08 fleet-view gaps). A
+# deterministic, stdlib-only grouping key for otherwise-noisy error text —
+# line numbers, addresses, paths, timestamps, UUIDs, and quoted literals are
+# stripped so the fleet view can group "the same error" across many runs.
+ERROR_SIGNATURE_VERSION = "error-sig-0.1"
+
+# The recovery state machine (spec §8.6, items 4/5/29). RecoveryEpisode
+# previously carried no derivation_version at all — unlike every other
+# derived record — so a classification/enrichment change wasn't auditable
+# against the logic that produced it.
+RECOVERY_VERSION = "recovery-0.1"

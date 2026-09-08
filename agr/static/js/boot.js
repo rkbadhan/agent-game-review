@@ -13,6 +13,13 @@ async function boot() {
   track("sweep_opened", { sweep_id: (state.sweep || {}).sweep_id,
     count: (state.sweep || {}).total_runs });
   const first = state.queue && state.queue.run_ids && state.queue.run_ids[0];
+  // A shared fleet link opens the surface directly at its group-by dimension.
+  if (want.view === "fleet") {
+    state.view = "fleet";
+    if (want.groupBy) state.fleet.groupBy = want.groupBy;
+    render();
+    return;
+  }
   // A shared version-comparison link opens its surface directly: a saved id
   // reloads the frozen definition, an unsaved one rebuilds from its sides.
   if (want.view === "versions") {

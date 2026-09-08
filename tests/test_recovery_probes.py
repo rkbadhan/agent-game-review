@@ -6,6 +6,7 @@ attempt, not every intervening call.
 
 from agr.recovery import (
     GOOD_RECOVERY,
+    PLAUSIBLE_RECOVERY,
     UNCHANGED_RETRY,
     UNRECOVERED,
     classify_recoveries,
@@ -88,11 +89,14 @@ def test_intervening_unrelated_call_does_not_make_a_retry_changed():
 
 
 def test_narrowed_rerun_cannot_resolve_the_failed_objective():
-    """Review 2026-09-07 (R5) acceptance: a narrowed rerun that succeeds does
-    not establish recovery — running a subset that may exclude the failing
-    test proves nothing about the originally failed check. The episode stays
-    unrecovered (the success of the narrowed command is recorded as evidence
-    the run continued, nothing more)."""
+    """Review 2026-09-07 (R5) acceptance, refined by item 4 (2026-09-07): a
+    narrowed rerun that succeeds does not establish the STRICT tier — running
+    a subset that may exclude the failing test proves nothing conclusive
+    about the originally failed check, so this must never read as
+    good_recovery or unchanged_retry. It is no longer "no evidence at all"
+    either: same tool, same executable ("pytest"), and an overlapping target
+    token ("tests/") is real, weaker evidence — plausibly_resolved, with its
+    attribution ceiling dropped a notch."""
     events = [
         ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
         ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
@@ -101,14 +105,19 @@ def test_narrowed_rerun_cannot_resolve_the_failed_objective():
     ]
     eps = classify_recoveries(events, "r", "c")
     assert len(eps) == 1
-    assert eps[0].classification == UNRECOVERED
-    assert eps[0].resolution_event_id is None
+    assert eps[0].classification == PLAUSIBLE_RECOVERY
+    assert eps[0].classification not in (GOOD_RECOVERY, UNCHANGED_RETRY)
+    assert eps[0].resolution_event_id == "evt_4"
+    assert eps[0].attribution_ceiling == "hypothesized"
 
 
 def test_different_module_success_cannot_resolve_pytest_failure():
-    """Review 2026-09-07 (R5) acceptance: the module/subcommand identity is
-    preserved — a successful ``python -m compileall tests/`` does not resolve
-    a failed ``python -m pytest tests/``."""
+    """Review 2026-09-07 (R5) acceptance, refined by item 4 (2026-09-07): the
+    module/subcommand identity is preserved for the STRICT tier — a
+    successful ``python -m compileall tests/`` never becomes good_recovery or
+    unchanged_retry for a failed ``python -m pytest tests/``. But the same
+    executable ("python") and the shared target token ("tests/") is real,
+    weaker evidence than nothing at all — plausibly_resolved."""
     events = [
         ev("evt_1", "tool_call", tool="shell", content="python -m pytest tests/"),
         ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
@@ -117,8 +126,9 @@ def test_different_module_success_cannot_resolve_pytest_failure():
     ]
     eps = classify_recoveries(events, "r", "c")
     assert len(eps) == 1
-    assert eps[0].classification == UNRECOVERED
-    assert eps[0].resolution_event_id is None
+    assert eps[0].classification == PLAUSIBLE_RECOVERY
+    assert eps[0].classification not in (GOOD_RECOVERY, UNCHANGED_RETRY)
+    assert eps[0].resolution_event_id == "evt_4"
 
 
 def test_exact_rerun_still_resolves_as_unchanged_retry():
@@ -181,6 +191,86 @@ def test_parallel_call_success_cannot_resolve_the_other_calls_failure():
     # the pytest call adjacency would suggest: pytest stays unresolved.
     assert by_failure["evt_3"].classification == UNRECOVERED
     assert by_failure["evt_3"].resolution_event_id is None
+
+
+def test_state_changing_action_between_failure_and_exact_retry_is_good_recovery():
+    """Item 5 (2026-09-07): no adapter besides pi ever emits a literal
+    strategy_change event, so good_recovery via strategy change was
+    unreachable on Harbor/Claude data. An Edit on the file under test —
+    a state-changing action on a DIFFERENT objective — between the pytest
+    failure and its exact rerun is mechanically what "the agent changed
+    something" looks like, and now sets strategy_changed exactly like a
+    literal event would."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="Edit", content="/app/calc.py"),
+        ev("evt_4", "tool_result", tool="Edit", content="edited", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == GOOD_RECOVERY
+    assert eps[0].strategy_changed is True
+    assert eps[0].resolution_event_id == "evt_6"
+
+
+def test_state_changing_shell_command_also_sets_strategy_changed():
+    """The same signal for a shell mutation (rm), not just Edit/Write."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="shell", content="rm -rf tests/__pycache__"),
+        ev("evt_4", "tool_result", tool="shell", content="", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == GOOD_RECOVERY
+    assert eps[0].strategy_changed is True
+
+
+def test_read_only_intervening_call_does_not_set_strategy_changed():
+    """A read-only shell call (pwd) between the failure and the exact retry
+    is NOT a state-changing action — this must stay unchanged_retry, not
+    good_recovery (regression guard for item 5's conservative executable
+    list)."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="shell", content="pwd"),
+        ev("evt_4", "tool_result", tool="shell", content="/work", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == UNCHANGED_RETRY
+    assert eps[0].strategy_changed is False
+
+
+def test_unrelated_state_changing_command_does_not_credit_an_unchanged_retry():
+    """Review finding #3: a state-changing shell command that shares NO
+    target with the failed operation (an unrelated mkdir before an
+    unrelated, unchanged curl retry) must not set strategy_changed — the
+    unconditional version credited ANY state-changing command as a
+    "strategy change" regardless of relatedness, misclassifying a plain
+    flaky-retry-that-happened-to-succeed as good_recovery."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="curl https://api.example.com/health"),
+        ev("evt_2", "tool_result", tool="shell", content="connection refused", exit_code=7),
+        ev("evt_3", "tool_call", tool="shell", content="mkdir logs"),
+        ev("evt_4", "tool_result", tool="shell", content="", exit_code=0),
+        ev("evt_5", "tool_call", tool="shell", content="curl https://api.example.com/health"),
+        ev("evt_6", "tool_result", tool="shell", content="200 OK", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == UNCHANGED_RETRY
+    assert eps[0].classification != GOOD_RECOVERY
+    assert eps[0].strategy_changed is False
 
 
 def test_changed_attempt_without_success_records_changed_action():

@@ -92,3 +92,41 @@ def test_failed_operation_never_resolved_stays_unrecovered():
     assert len(eps) == 1
     assert eps[0].classification == UNRECOVERED
     assert eps[0].resolution_event_id is None
+
+
+# --- item 3 (2026-09-07): per-tool action identity feeds recovery linkage -----
+
+def test_second_edit_with_different_replacement_is_good_recovery():
+    """A failed Edit (old_string not found) followed by a successful Edit of
+    the SAME path but a DIFFERENT old/new replacement is a changed action —
+    good_recovery, not an unchanged retry — because action_signature now
+    carries the structured tool_input, not just the hoisted path."""
+    from agr.recovery import GOOD_RECOVERY, classify_recoveries
+    from agr.schema import DerivedEvent
+
+    def edit_call(eid, old, new):
+        return DerivedEvent(
+            event_id=eid, run_id="r", source_capture_id="c", sequence=int(eid.split("_")[1]),
+            source_step_ids=[eid], event_type="tool_call", actor="main_agent",
+            payload={"tool": "Edit", "content": "/app/calc.py",
+                     "tool_input": {"file_path": "/app/calc.py", "old_string": old, "new_string": new}},
+        )
+
+    def edit_result(eid, status):
+        return DerivedEvent(
+            event_id=eid, run_id="r", source_capture_id="c", sequence=int(eid.split("_")[1]),
+            source_step_ids=[eid], event_type="tool_result", actor="tool",
+            payload={"tool": "Edit", "content": "/app/calc.py", "status": status},
+        )
+
+    evs = [
+        edit_call("evt_1", "return a + b + 1", "return a + b"),
+        edit_result("evt_2", "error"),  # old_string not found
+        edit_call("evt_3", "return a - b", "return a + b"),
+        edit_result("evt_4", "ok"),
+    ]
+    eps = classify_recoveries(evs, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == GOOD_RECOVERY
+    assert eps[0].changed_action is True
+    assert eps[0].resolution_event_id == "evt_4"

@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 from . import version
-from ._util import action_signature
+from ._util import action_signature, is_tool_failure, paired_result
 from .recovery import GOOD_RECOVERY, UNRECOVERED
 from .schema import (
     ATTRIBUTION_LEVELS,
@@ -309,29 +309,27 @@ def _outputs_equivalent(events: list[DerivedEvent], event_ids: list[str]) -> boo
     follow-up F1: detector and validator must share repetition semantics): each
     named call must have a captured result, and every result's text must match.
     Differing outputs — a poll whose report changed — mean new information.
+
+    Review 2026-09-07 (R3): results are paired to their calls through the ONE
+    shared id-based index (``paired_result``), not a second adjacency walk —
+    so reordered parallel results pair correctly and unmatched ids stay
+    unpaired, identical to the detector and recovery paths.
     """
     ids = list(event_ids)
     if len(ids) < 2:
         return False
-    # Pair each tool call with the result that resolves it (the same adjacency
-    # walk the detector uses on the raw event stream).
-    result_of: dict[str, DerivedEvent] = {}
-    pending: Optional[str] = None
-    for e in events:
-        if e.event_type == "tool_call":
-            pending = e.event_id
-        elif e.event_type == "tool_result" and pending is not None:
-            result_of[pending] = e
-            pending = None
-    first = result_of.get(ids[0])
-    if first is None:
-        return False  # outputs not captured — the claim is unsupported
-    base = " ".join(first.text().split())
-    for eid in ids[1:]:
-        r = result_of.get(eid)
-        if r is None or " ".join(r.text().split()) != base:
+    idx_by_id = {e.event_id: i for i, e in enumerate(events)}
+    results: list[DerivedEvent] = []
+    for eid in ids:
+        i = idx_by_id.get(eid)
+        if i is None:
             return False
-    return True
+        r = paired_result(events, i)
+        if r is None:
+            return False  # outputs not captured — the claim is unsupported
+        results.append(r)
+    base = " ".join(results[0].text().split())
+    return all(" ".join(r.text().split()) == base for r in results[1:])
 
 
 # Canonical observed-status vocabulary (review 2026-09-07): the parser emits
@@ -661,6 +659,52 @@ def _link_gate(m: "ReviewMoment") -> bool:
         return True
     return (m.gate_results.get("contract_link") == "absent"
             and m.gate_results.get("observation_basis") == "tool_evidence")
+
+
+def _observation_basis(cand: Candidate, validated: list[dict], ctx: ReviewerContext,
+                       refs: dict, has_concern: bool) -> str:
+    """R1 supported-observation gate, scoped by evidence type (R4).
+
+    A negative finding with no check/contract link (typically: no verifier
+    exists) is selectable as a supported OBSERVATION only when a validated
+    fact's evidence actually establishes the proposed negative *tool*
+    behaviour — not merely because some fact validated and references
+    resolved. Returns ``tool_evidence`` | ``unsupported`` | ``n/a``.
+
+    Supported observation types and their required evidence:
+      * ``state_transition`` — an observed failed tool: the named
+        ``failure_event`` must be a tool-result/error event the capture shows
+        failing (the failed-tool/no-verifier card).
+      * ``repetition`` — correctly paired equivalent actions with no new
+        information (the detector and validator already enforce id-based
+        pairing and output equivalence).
+
+    Authentic quotation (``event_support``) establishes neither a negative
+    behaviour nor an explanation of an outcome, so a message-quote-only
+    negative finding is ``unsupported`` and does not publish. Message-only
+    concerns can be supported too, but need their own stated evidentiary rule;
+    none is defined yet, so they stay unsupported.
+    """
+    if not (cand.polarity == "negative" and cand.kind != "recovery"
+            and not has_concern and not ctx.checks):
+        return "n/a"
+    if not (_facts_valid(validated) and refs.get("status") == "resolved"):
+        return "unsupported"
+    events_by_id = {e.event_id: e for e in ctx.events}
+    for f in validated:
+        if f.get("validation") != "passed":
+            continue
+        ftype = f.get("type")
+        if ftype == "state_transition":
+            fev = events_by_id.get(f.get("failure_event"))
+            if fev is not None and is_tool_failure(fev):
+                return "tool_evidence"
+        elif ftype == "repetition":
+            return "tool_evidence"
+        # event_support / absence / requirement_status / termination: a quote or
+        # a bare status/termination does not establish a negative tool
+        # behaviour, so it cannot carry an observation-scoped negative card.
+    return "unsupported"
 
 
 def _value_key(m: ReviewMoment) -> tuple:
@@ -1001,44 +1045,41 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         has_concern = bool(cand.affected_checks or cand.affected_contract_items or linked)
         contract_link = "present" if (has_concern or cand.polarity == "positive"
                                        or cand.kind == "recovery") else "absent"
-        # Review 2026-09-07 (R1): a negative finding with no check/contract
+        # Review 2026-09-07 (R1/R4): a negative finding with no check/contract
         # link (typically: no verifier exists at all) is a SUPPORTED
-        # OBSERVATION when its facts validate against recorded tool evidence —
-        # selectable, but rendered with coverage limits and never as a
-        # task-outcome claim. The stronger failed-task/causal claim types keep
-        # their existing additional evidence requirements. With a verifier
+        # OBSERVATION only when a validated fact's evidence actually
+        # establishes the proposed negative *tool* behaviour — not merely
+        # because some fact validated and references resolved. With a verifier
         # present, concern linkage is establishable — the §8.10 gate keeps
-        # applying and unlinked negatives stay unselected (selecting them
-        # would only duplicate the check-backed cards).
-        observation_scoped = (cand.polarity == "negative" and cand.kind != "recovery"
-                              and not has_concern and not ctx.checks)
+        # applying and unlinked negatives stay unselected.
+        refs = validate_references(cand, ctx)
+        obs_basis = _observation_basis(cand, validated, ctx, refs, has_concern)
+        observation_scope = obs_basis == "tool_evidence"
         # Render from the first fact that actually PASSED validation — never
         # from a failed or unrecomputable fact, whose "recomputed" basis does
         # not exist (AGR-03: unknown fact types must not become validated prose).
         primary = next((f for f in validated if f.get("validation") == "passed"), None)
         statement = render(primary, ceiling, cand.polarity,
-                           observation_scope=observation_scoped) if primary else \
+                           observation_scope=observation_scope) if primary else \
             "No deterministic evidence supports this finding."
         gate_ok, _ = attribution_gate(statement, ceiling)
         enr = proposal.enrichment
         better_action = (
             "model_provided" if (enr and enr.better_action) else "not_available_deterministic"
         )
-        refs = validate_references(cand, ctx)
         gate_results = {
             "fact_validation": "passed" if _facts_valid(validated) else "failed",
             "validation_attempts": attempts,
             "references": refs,  # resolved | dangling (+ dangling detail)
             "contract_link": contract_link,
-            # R1: for an observation-scoped negative finding, whether the claim
-            # is backed by recorded tool evidence (the thing that makes it
-            # selectable without a contract link). ``n/a`` when a contract
-            # link already carries the moment.
-            "observation_basis": (
-                "tool_evidence" if (observation_scoped and _facts_valid(validated)
-                                    and refs.get("status") == "resolved")
-                else ("unsupported" if observation_scoped else "n/a")
-            ),
+            # R1/R4: for an observation-scoped negative finding, whether the
+            # claim is backed by recorded tool evidence of the specific
+            # negative behaviour (the thing that makes it selectable without
+            # a contract link). ``n/a`` when a contract link already carries
+            # the moment; ``unsupported`` when the evidence type does not
+            # establish a tool-behaviour observation (e.g. a quote-only
+            # finding).
+            "observation_basis": obs_basis,
             # Computed from the capability profile for model discoveries;
             # deterministic detectors were capability-gated before this envelope.
             "observability": observability_for(cand, ctx),

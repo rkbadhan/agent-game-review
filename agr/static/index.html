@@ -14,6 +14,8 @@
   <div class="app-actions">
     <button class="icon-button appbar-action" id="versions-button"
             title="Compare two versions on a matched task slice (V)">Compare versions</button>
+    <button class="icon-button appbar-action" id="fleet-button"
+            title="Fleet view: recovery episodes grouped across every run (F)">Fleet</button>
     <button class="icon-button appbar-action" id="glossary-button"
             title="Glossary of review terms (G)">Glossary</button>
     <button class="icon-button" id="help-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
@@ -99,6 +101,7 @@
       <kbd>T</kbd><span>Open full trace</span>
       <kbd>C</kbd><span>Toggle the reviewer diff (two reviews of this run)</span>
       <kbd>V</kbd><span>Compare two versions on a matched task slice</span>
+      <kbd>F</kbd><span>Fleet view: recovery episodes grouped across every run</span>
       <kbd>G</kbd><span>Open the glossary of review terms</span>
       <kbd>?</kbd><span>Show this guide</span>
       <kbd>Esc</kbd><span>Close the active layer</span>
@@ -167,7 +170,9 @@
 <script src="/static/js/evidence.js"></script>
 <script src="/static/js/panels.js"></script>
 <script src="/static/js/compare.js"></script>
+<script src="/static/js/sibling.js"></script>
 <script src="/static/js/versions.js"></script>
+<script src="/static/js/fleet.js"></script>
 <script src="/static/js/source.js"></script>
 <script src="/static/js/trace.js"></script>
 <script src="/static/js/correct.js"></script>

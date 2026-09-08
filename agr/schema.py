@@ -343,17 +343,39 @@ class RecoveryEpisode:
     action change, and eventual success. A success after an *unchanged* retry
     is recorded separately as ``retry_succeeded_without_strategy_change`` and is
     never promoted to good recovery.
+
+    Item 4 (2026-09-07): ``plausibly_resolved`` is a THIRD, weaker tier for a
+    success that shares the failed call's tool and executable and at least
+    one overlapping target token, but not its complete command tail — a
+    narrowed rerun or an adjacent command on the same target, which the
+    strict objective-identity check (``_operation_key``) deliberately never
+    links. It is evidence worth keeping, not nothing, but weaker than an
+    exact-rerun link — ``attribution_ceiling`` records that: ``hypothesized``
+    for a plausible link, the core's usual ``dependency_linked`` otherwise.
     """
 
     episode_id: str
     run_id: str
     source_capture_id: str
-    classification: str  # good_recovery | retry_succeeded_without_strategy_change | unrecovered_failure
+    classification: str  # good_recovery | retry_succeeded_without_strategy_change |
+                          # plausibly_resolved | unrecovered_failure
     failure_event_id: str
     resolution_event_id: Optional[str]
     strategy_changed: bool
     changed_action: bool
     evidence_event_ids: list[str] = field(default_factory=list)
+    attribution_ceiling: str = "dependency_linked"
+    # Item 29 (2026-09-08) fleet-view enrichment — every field below is
+    # deterministic and derived from records this module already computes;
+    # none of it is a new judgement call, only a summary of the episode.
+    tool: Optional[str] = None                   # the failed call's tool (action_signature[0])
+    error_signature: Optional[str] = None         # agr.error_signature.error_signature(failure text)
+    turns_to_resolve: Optional[int] = None        # tool_call count from failure through resolution; None if unresolved
+    tokens: int = 0                               # summed token cost across the episode's evidence events
+    wall_ms: Optional[int] = None                 # wall-clock ms failure->resolution, when both carry a timestamp
+    nth_occurrence_in_run: int = 1                # 1-indexed count of this error_signature within THIS run
+    resolved_by: Optional[str] = None             # the resolving call's tool name; None if unresolved
+    derivation_version: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

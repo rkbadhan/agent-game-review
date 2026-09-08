@@ -482,6 +482,15 @@
     background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 30%,transparent); font-size:12px; }
   .vs-caveat { color:var(--amber); font-size:11.5px; margin-top:5px; }
   .vs-table td { font-size:12px; vertical-align:middle; }
+  /* Item 32: the fleet table has more columns than the §4.16 metric tables —
+     it scrolls in its own container rather than widening the card or the page. */
+  .table-scroll { overflow-x:auto; }
+  .table-scroll .vs-table { min-width:760px; }
+  /* Item 21: the sibling divergence point — the row the whole view exists to find. */
+  .sib-divergence-point { margin:12px 0; padding:12px; border-radius:9px;
+    background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 30%,transparent); }
+  .sib-row-diverge { background:var(--rust-soft); }
+  .sib-row-diverge td { font-weight:640; }
   .vs-rate { font-family:var(--mono); font-size:11.5px; }
   .vs-arrow { color:var(--faint); padding:0 4px; }
   .vs-counts { color:var(--muted); font-size:10.5px; }

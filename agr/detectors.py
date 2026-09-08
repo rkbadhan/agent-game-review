@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import version
-from ._util import action_signature
+from ._util import action_signature, is_mutation, paired_result
 from .recovery import GOOD_RECOVERY, UNRECOVERED
 from .schema import (
     Candidate,
@@ -103,6 +103,61 @@ class UnresolvedRequirementAtSubmission(Detector):
         return out
 
 
+class TerminalFailureWithFailingChecks(Detector):
+    """A required check still failing when the run ends WITHOUT a submission,
+    because the harness terminated it (timeout or failure) — item 6 (2026-09-07).
+
+    ``UnresolvedRequirementAtSubmission`` anchors on an observed
+    ``final_submission``; a run the harness killed (a timeout, a crash) never
+    has one, so a genuinely failed run with failing checks produced ZERO
+    candidates from that detector — an empty review for a run that plainly
+    did not finish the task. This detector covers exactly that gap: it fires
+    only when the run ended ``run_timed_out``/``run_failed`` and no
+    submission was ever observed (never overlapping with the submission-
+    anchored detector), anchored on the terminal event itself and the last
+    agent action, so the run is never silently reviewed as "nothing to say".
+    """
+
+    name = "terminal_failure_with_failing_checks"
+    # Review finding #2 (2026-09-07): _run reads no tool_result event at all —
+    # only the terminal event, the last main_agent event, and ctx.checks — so
+    # requiring tool_results:complete gated this detector off on exactly the
+    # runs it exists for. A run the harness killed mid-tool-call (the normal
+    # shape of a timeout/crash) reports tool_results:partial, which made this
+    # detector report evaluated=False and emit nothing on precisely those runs.
+    required_capabilities = {"messages": "complete"}
+
+    _TERMINAL_FAILURE_TYPES = {"run_timed_out", "run_failed"}
+
+    def _run(self, ctx):
+        if ctx.submission() is not None:
+            return []  # a submitted run is UnresolvedRequirementAtSubmission's territory
+        terminal = next(
+            (e for e in ctx.events if e.event_type in self._TERMINAL_FAILURE_TYPES), None)
+        if terminal is None:
+            return []
+        last_agent_event = next(
+            (e for e in reversed(ctx.events) if e.actor == "main_agent"), None)
+        anchor = [terminal.event_id]
+        if last_agent_event is not None and last_agent_event.event_id != terminal.event_id:
+            anchor.append(last_agent_event.event_id)
+        out = []
+        for check in ctx.checks:
+            if check.status != "failed":
+                continue
+            out.append(self._candidate(
+                ctx, check.check_id, kind="omission", anchor_event_ids=anchor,
+                affected_checks=[check.check_id], affected_contract_items=list(check.contract_item_ids),
+                structured_facts=[{
+                    "type": "requirement_status", "check_id": check.check_id,
+                    "status_at_submission": "failed",
+                    "expected": check.expected, "observed": check.observed,
+                    "terminal_event_type": terminal.event_type,
+                }],
+            ))
+        return out
+
+
 class IgnoredToolFailure(Detector):
     """A tool failure left unresolved through submission (§8.5 #1)."""
 
@@ -146,29 +201,37 @@ class RepeatedActionNoNewInfo(Detector):
 
     def _run(self, ctx):
         out = []
-        # First walk: attach each tool_call to its own tool_result (the next
-        # result before the next call) and remember whether a strategy change
-        # separated it from the previous call.
+        # First walk: collect tool calls in order and remember whether a
+        # strategy change separated a call from the previous one. The result
+        # for each call is resolved through the ONE shared call↔result index
+        # (``paired_result`` — id-based, correct for parallel calls; adjacency
+        # only as a conservative id-less fallback). Detector, validator, and
+        # evidence views all use this pairing (review 2026-09-07 R2/R3).
         calls: list[dict] = []
         strategy_since = False
-        pending: DerivedEvent | None = None
-        for ev in ctx.events:
+        for i, ev in enumerate(ctx.events):
             if ev.event_type == "strategy_change":
                 strategy_since = True
                 continue
             if ev.event_type == "tool_call":
-                pending = ev
-                calls.append({"call": ev, "result": None, "strategy_since": strategy_since})
+                calls.append({"idx": i, "call": ev,
+                              "result": None, "strategy_since": strategy_since})
                 strategy_since = False
-            elif ev.event_type == "tool_result" and pending is not None:
-                calls[-1]["result"] = ev
-                pending = None
+        for c in calls:
+            c["result"] = paired_result(ctx.events, c["idx"])
         # Second walk: consecutive identical calls with no strategy change —
         # emit only when BOTH outputs are captured and equivalent.
         for a, b in zip(calls, calls[1:]):
             if action_signature(a["call"]) != action_signature(b["call"]):
                 continue
             if a["strategy_since"] or b["strategy_since"]:
+                continue
+            # R2: a repeated mutation (Edit/Write) cannot be flagged on
+            # identical acknowledgement text alone — "ok" says nothing about
+            # what the file became, so equivalent ack text does not establish
+            # that the repeat did no useful work. Resulting-state evidence is
+            # not captured here, so mutations never emit a no-new-info claim.
+            if is_mutation(b["call"]):
                 continue
             ra, rb = a["result"], b["result"]
             if ra is None or rb is None:
@@ -259,6 +322,7 @@ class CompactionRequirementLoss(Detector):
 
 DETECTORS: list[Detector] = [
     UnresolvedRequirementAtSubmission(),
+    TerminalFailureWithFailingChecks(),
     IgnoredToolFailure(),
     RepeatedActionNoNewInfo(),
     RequiredArtifactAbsent(),

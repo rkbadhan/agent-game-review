@@ -69,6 +69,185 @@ def test_tool_result_names_its_tool_from_the_call():
     assert results[0]["exit_code"] == 1
 
 
+def test_mini_swe_agent_returncode_lifted_to_exit_code_and_status(tmp_path):
+    """mini-swe-agent's own harness (not Harbor) encodes each result's exit
+    status as JSON inside ``content`` — ``{"returncode": N, "output": ...}`` —
+    since Harbor's ``extra.exit_code`` slot never carries it for this agent.
+    Item 1: decode it so a nonzero returncode becomes a real tool_result
+    failure, not an eternal 'unknown' that recovery/detectors never see."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "false"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1",
+             "content": json.dumps({"returncode": 1, "output": "boom"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    results = [s for s in res.doc["steps"] if s["kind"] == "tool_result"]
+    assert results[0]["exit_code"] == 1
+    assert results[0]["status"] == "error"
+
+
+def test_mini_swe_agent_zero_returncode_is_ok(tmp_path):
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "true"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1",
+             "content": json.dumps({"returncode": 0, "output": "ok"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    results = [s for s in res.doc["steps"] if s["kind"] == "tool_result"]
+    assert results[0]["exit_code"] == 0
+    assert results[0]["status"] == "ok"
+
+
+def test_extra_exit_code_still_wins_over_content_returncode(tmp_path):
+    """A source that (unusually) records both ``extra.exit_code`` and a JSON
+    ``returncode`` inside content keeps trusting the dedicated exit-code slot —
+    the content-decoding path is a fallback, not a competing source of truth."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "true"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1", "extra": {"exit_code": 0},
+             "content": json.dumps({"returncode": 1, "output": "stale"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    results = [s for s in res.doc["steps"] if s["kind"] == "tool_result"]
+    assert results[0]["exit_code"] == 0
+
+
+def test_non_json_content_leaves_no_exit_code(tmp_path):
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "echo hi"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1", "content": "hi\n"},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    results = [s for s in res.doc["steps"] if s["kind"] == "tool_result"]
+    assert "exit_code" not in results[0]
+    assert "status" not in results[0]
+
+
+# --- item 20 (2026-09-08): terminus-2 has no exit code anywhere --------------
+
+def test_terminus2_process_state_declared_unavailable(tmp_path):
+    """Terminus-2 observations are raw terminal screen text with no exit code
+    anywhere — process_state must be 'unavailable', not the default
+    'partial' (which implies some process evidence was captured through tool
+    I/O)."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash_command",
+             "arguments": {"keystrokes": "ls -la\n", "duration": 0.1}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1", "content": "New Terminal Output:\nroot@x:/app# ls -la\ntotal 8\n"},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, agent={"name": "terminus-2", "version": "2.0.0"}), task_id="t")
+    assert res.doc["capabilities"]["process_state"] == "unavailable"
+    assert any("terminus-2" in w for w in res.warnings)
+
+
+def test_non_terminus2_agent_keeps_partial_process_state(tmp_path):
+    res = convert(_trial(tmp_path, [
+        {"step_id": 1, "source": "user", "message": "do it"},
+    ], agent={"name": "mini-swe-agent"}), task_id="t")
+    assert res.doc["capabilities"]["process_state"] == "partial"
+
+
+def test_terminus2_keystrokes_hoisted_into_content(tmp_path):
+    """Terminus-2's tool call carries the actual shell text under
+    'keystrokes', not a structured 'command' argument — without hoisting it,
+    the real command was buried inside a JSON blob and every deterministic
+    matcher (recovery's objective identity, evidence slicing) saw
+    '{"keystrokes":...' instead of the command."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash_command",
+             "arguments": {"keystrokes": "pytest tests/\n", "duration": 0.2}},
+        ]},
+    ]
+    res = convert(_trial(tmp_path, steps, agent={"name": "terminus-2"}), task_id="t")
+    call = next(s for s in res.doc["steps"] if s["kind"] == "tool_call")
+    assert call["content"] == "pytest tests/"
+
+
+def test_terminus2_shell_error_marker_is_a_labelled_heuristic_not_exit_code(tmp_path):
+    """The optional heuristic recognises a closed set of shell error strings
+    but NEVER sets exit_code/status — those stay absent, honouring the
+    'unavailable' capability declaration. The signal is separate and
+    labelled."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash_command",
+             "arguments": {"keystrokes": "nonexistentcmd\n"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1",
+             "content": "New Terminal Output:\nroot@x:/app# nonexistentcmd\nbash: nonexistentcmd: command not found\n"},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, agent={"name": "terminus-2"}), task_id="t")
+    result = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert "exit_code" not in result
+    assert "status" not in result
+    assert result["heuristic_status"] == "error"
+    assert result["heuristic_status_source"] == "shell_error_marker"
+
+
+def test_terminus2_clean_output_has_no_heuristic_status(tmp_path):
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash_command",
+             "arguments": {"keystrokes": "ls\n"}},
+        ], "observation": {"results": [
+            {"source_call_id": "c1", "content": "New Terminal Output:\nroot@x:/app# ls\nfile.txt\n"},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, agent={"name": "terminus-2"}), task_id="t")
+    result = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert "heuristic_status" not in result
+
+
+# --- item 27 (2026-09-08): per-turn metrics -> step cost, deduped ------------
+
+def test_turn_metrics_attach_to_first_step_of_the_turn_only(tmp_path):
+    """A turn's metrics is a TURN-level aggregate — it must land on only the
+    first step this turn fans out into (reasoning/message/first tool_call),
+    never once per tool_call in a multi-call turn."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "working",
+         "reasoning_content": "let's check two things",
+         "tool_calls": [
+             {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "ls"}},
+             {"tool_call_id": "c2", "function_name": "bash", "arguments": {"command": "pwd"}},
+         ],
+         "metrics": {"prompt_tokens": 820, "completion_tokens": 64, "cost_usd": 0.01}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    non_task_steps = [s for s in res.doc["steps"] if s["kind"] != "task_received"]
+    # thinking, message, call c1, call c2 — cost only on the first (thinking).
+    assert non_task_steps[0]["cost"] == {"prompt_tokens": 820, "completion_tokens": 64, "cost_usd": 0.01}
+    assert "cost" not in non_task_steps[1]
+    assert "cost" not in non_task_steps[2]
+    assert "cost" not in non_task_steps[3]
+
+
 def test_reward_one_synthesises_a_passed_verifier(tmp_path):
     steps = [{"step_id": 1, "source": "user", "message": "do it"}]
     res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
