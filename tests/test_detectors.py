@@ -133,6 +133,101 @@ def test_unobserved_outputs_cannot_support_the_claim():
     assert cands == []
 
 
+# --- item 6 (2026-09-07): terminal-state moment for non-submitted runs -------
+
+def _terminal_ctx(terminal_kind, checks, *, with_submission=False, tool_results="complete"):
+    from agr.detectors import DetectorContext
+    from agr.schema import CapabilityProfile, DerivedEvent
+
+    events = [
+        DerivedEvent(event_id="evt_1", run_id="r", source_capture_id="c", sequence=1,
+                     source_step_ids=["s1"], event_type="tool_call", actor="main_agent",
+                     payload={"tool": "shell", "content": "pytest tests/"}),
+        DerivedEvent(event_id="evt_2", run_id="r", source_capture_id="c", sequence=2,
+                     source_step_ids=["s2"], event_type="tool_result", actor="tool",
+                     payload={"tool": "shell", "content": "E: failed", "exit_code": 1}),
+    ]
+    if with_submission:
+        events.append(DerivedEvent(
+            event_id="evt_3", run_id="r", source_capture_id="c", sequence=3,
+            source_step_ids=["s3"], event_type="final_submission", actor="main_agent",
+            payload={"content": "done"}))
+    events.append(DerivedEvent(
+        event_id="evt_4", run_id="r", source_capture_id="c", sequence=4,
+        source_step_ids=["s4"], event_type=terminal_kind, actor="harness",
+        payload={"content": "the harness ended the run"}))
+    prof = CapabilityProfile(
+        run_id="r", source_capture_id="c",
+        capabilities={"messages": "complete", "tool_calls": "complete", "tool_results": tool_results})
+    return DetectorContext(run_id="r", capture_id="c", events=events, checks=checks, doc={}, profile=prof)
+
+
+def _failed_check():
+    from agr.schema import VerifierCheck
+    return VerifierCheck(check_id="tests_pass", run_id="r", source_capture_id="c",
+                         name="tests pass", status="failed", source="native_structured")
+
+
+def test_terminal_failure_with_failing_checks_fires_on_run_timed_out():
+    """Item 6 acceptance: a run that timed out (no observed submission) with a
+    failing check produces a candidate anchored on the terminal event and the
+    last agent action — never an empty review for a plainly failed run."""
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_timed_out", [_failed_check()])
+    cands = TerminalFailureWithFailingChecks().run(ctx).candidates
+    assert len(cands) == 1
+    assert cands[0].anchor_event_ids[0] == "evt_4"  # the terminal event
+    assert "evt_1" in cands[0].anchor_event_ids     # the last agent action
+    assert cands[0].affected_checks == ["tests_pass"]
+    assert cands[0].structured_facts[0]["terminal_event_type"] == "run_timed_out"
+
+
+def test_terminal_failure_with_failing_checks_fires_on_run_failed():
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_failed", [_failed_check()])
+    cands = TerminalFailureWithFailingChecks().run(ctx).candidates
+    assert len(cands) == 1
+
+
+def test_terminal_failure_detector_silent_when_submission_observed():
+    """A submitted run is UnresolvedRequirementAtSubmission's territory —
+    never double-counted by this detector."""
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_failed", [_failed_check()], with_submission=True)
+    assert TerminalFailureWithFailingChecks().run(ctx).candidates == []
+
+
+def test_terminal_failure_detector_silent_on_run_completed():
+    """A normal harness-side completion (no submission observed, but not a
+    failure/timeout either) is out of this detector's scope."""
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_completed", [_failed_check()])
+    assert TerminalFailureWithFailingChecks().run(ctx).candidates == []
+
+
+def test_terminal_failure_detector_silent_when_checks_pass():
+    from agr.detectors import TerminalFailureWithFailingChecks
+    from agr.schema import VerifierCheck
+    passed = VerifierCheck(check_id="tests_pass", run_id="r", source_capture_id="c",
+                           name="tests pass", status="passed", source="native_structured")
+    ctx = _terminal_ctx("run_timed_out", [passed])
+    assert TerminalFailureWithFailingChecks().run(ctx).candidates == []
+
+
+def test_terminal_failure_detector_fires_with_partial_tool_results():
+    """Review finding #2: _run reads no tool_result event at all, so
+    tool_results:partial — the NORMAL capability level for a run the harness
+    killed mid-tool-call (a pending call with no observed result) — must not
+    gate this detector off. Before the fix, required_capabilities included
+    tool_results:complete and this returned evaluated=False on exactly the
+    runs the detector exists to cover."""
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_timed_out", [_failed_check()], tool_results="partial")
+    result = TerminalFailureWithFailingChecks().run(ctx)
+    assert result.evaluated is True
+    assert len(result.candidates) == 1
+
+
 def test_placeholder_detector_is_distinct_from_evaluated_no_issue(tmp_path, load_fixture):
     """Acceptance (AGR-05): a registered placeholder reports evaluated=False
     with placeholder=True — never 'evaluated, no problem found'."""

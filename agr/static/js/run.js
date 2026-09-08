@@ -23,7 +23,8 @@ async function selectRun(runId, restore) {
   if (!restoreChapter && restore && restore.moment) restoreChapter = "moments";
   const fastPath = applyEntryPreference(restoreChapter);
   if (restore) {
-    if (restore.view === "source" || restore.view === "compare") state.view = restore.view;
+    if (restore.view === "source" || restore.view === "compare" || restore.view === "sibling")
+      state.view = restore.view;
     if (restore.moment) {
       const i = currentMoments().findIndex(m => m.moment_id === restore.moment);
       if (i >= 0) state.momentIdx = i;

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 
 from . import version
+from ._util import evidence_projection, structured_input
 from .redaction import redact, redact_all, redact_value
 from .reviewer import ReviewerContext, _linked_slices, attribution_ceiling_for
 
@@ -115,16 +116,31 @@ def _timeline_digest(events: list, redacted: dict, excerpt_chars: int = _EXCERPT
     the trace fits the budget, per-event excerpts only when it does not. Quotes
     must come from these excerpts (they are substrings of the full event text,
     so Stage G re-verification matches either way).
+
+    Review 2026-09-07 (R2): each entry also carries the tool-use id and a short
+    bounded structured ``tool_input`` excerpt so two Edits of the same path
+    with different replacements stay distinguishable in the discovery view —
+    the hoisted ``content`` (the path) alone could not tell them apart.
     """
     out = []
     for e in events:
         text = redacted.get(f"event::{e.event_id}", "")
-        out.append({
+        entry = {
             "event_id": e.event_id,
             "event_type": e.event_type,
             "phase_id": getattr(e, "phase_id", None),
             "excerpt": text[:excerpt_chars],
-        })
+        }
+        # R2: the shared structured projection surfaces the tool-use id and a
+        # short bounded tool_input excerpt so two Edits of the same path with
+        # different replacements stay distinguishable in the discovery view.
+        proj = evidence_projection(e)
+        if "tool_use_id" in proj:
+            entry["tool_use_id"] = proj["tool_use_id"]
+        inp = redacted.get(f"event_input::{e.event_id}")
+        if inp is not None:
+            entry["tool_input"] = inp[:200]  # compact; full input via expansion
+        out.append(entry)
     return out
 
 
@@ -141,6 +157,12 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     raw_sections: dict[str, str] = {}
     for e in ctx.events:
         raw_sections[f"event::{e.event_id}"] = e.text()
+        # R2: the structured tool input travels as its own redacted section so
+        # the reviewer can retrieve an Edit's old/new strings or a Write's
+        # content — display excerpts stay separate from this retained evidence.
+        si = structured_input(e)
+        if si is not None:
+            raw_sections[f"event_input::{e.event_id}"] = si
     if ctx.contract is not None:
         for item in ctx.contract.items:
             raw_sections[f"item::{item.id}"] = item.description or ""
@@ -179,12 +201,26 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
             e = events_by_id.get(eid)
             if e is None:
                 continue
-            out.append({
+            entry = {
                 "event_id": eid,
                 "event_type": e.event_type,
                 "phase_id": getattr(e, "phase_id", None),
                 "content": redacted.get(f"event::{eid}", ""),  # untrusted data
-            })
+            }
+            # R2: the shared structured projection surfaces the fields text hid
+            # — the tool-use id (call↔result link), explicit tool-result status,
+            # and the bounded structured tool input — so the reviewer can
+            # distinguish two edits of the same path and retrieve what each
+            # actually changed. tool_input is taken from the redacted section.
+            proj = evidence_projection(e)
+            if "tool_use_id" in proj:
+                entry["tool_use_id"] = proj["tool_use_id"]
+            if "status" in proj:
+                entry["status"] = proj["status"]
+            inp = redacted.get(f"event_input::{eid}")
+            if inp is not None:
+                entry["tool_input"] = inp  # untrusted data
+            out.append(entry)
         return out
 
     candidates = []
@@ -373,11 +409,23 @@ def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
         if total + len(text) > _EXPANSION_MAX_CHARS:
             rejected.append({"event_id": eid, "reason": "expansion size cap reached"})
             continue
-        total += len(text)
-        granted.append({
+        # R2: the expansion round returns the FULL structured tool input
+        # (redacted), plus the tool-use id and explicit status, via the shared
+        # projection — so a finding grounded in an edit can retrieve exactly
+        # what was changed.
+        proj = evidence_projection(e)
+        entry = {
             "event_id": eid,
             "event_type": e.event_type,
             "phase_id": getattr(e, "phase_id", None),
             "content": text,  # redacted above
-        })
+        }
+        if "tool_use_id" in proj:
+            entry["tool_use_id"] = proj["tool_use_id"]
+        if "status" in proj:
+            entry["status"] = proj["status"]
+        if "tool_input" in proj:
+            entry["tool_input"] = redact(proj["tool_input"]).text
+        total += len(text) + len(entry.get("tool_input", ""))
+        granted.append(entry)
     return {"evidence": granted, "rejected": rejected}

@@ -4,7 +4,7 @@ const $ = (sel, root = document) => (sel[0] === "#" && root === document) ? docu
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 async function api(path) {
   const r = await fetch(path, { headers: { accept: "application/json" } });
-  if (!r.ok) throw new Error(path + " -> " + r.status);
+  if (!r.ok) { const e = new Error(path + " -> " + r.status); e.status = r.status; throw e; }
   return r.json();
 }
 async function apiPost(path, body) {

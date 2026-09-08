@@ -68,7 +68,7 @@ def _requirement_rows(checks) -> list[SignatureRow]:
 
 
 def _recovery_row(analysis) -> SignatureRow:
-    from .recovery import GOOD_RECOVERY, UNCHANGED_RETRY
+    from .recovery import GOOD_RECOVERY, PLAUSIBLE_RECOVERY, UNCHANGED_RETRY
 
     has_failure = any(o.trigger == "tool_failure" for o in analysis.opportunities)
     if not has_failure:
@@ -81,6 +81,7 @@ def _recovery_row(analysis) -> SignatureRow:
         )
     good = any(ep.classification == GOOD_RECOVERY for ep in analysis.recoveries)
     unchanged = any(ep.classification == UNCHANGED_RETRY for ep in analysis.recoveries)
+    plausible = any(ep.classification == PLAUSIBLE_RECOVERY for ep in analysis.recoveries)
     if good:
         observed = "Strategy change resolved the failure"
         result, interp = RESULT_SUCCESS, INTERP_POSITIVE
@@ -89,6 +90,12 @@ def _recovery_row(analysis) -> SignatureRow:
         # change is not a universal requirement for sensible recovery. The
         # wording stays honest about what resolved it.
         observed = "Same action retried unchanged and succeeded — resolved without a strategy change"
+        result, interp = RESULT_SUCCESS, INTERP_POSITIVE
+    elif plausible:
+        # Item 4: a narrowed/adjacent command on an overlapping target
+        # succeeded — real, but weaker, evidence than an exact rerun. Worded
+        # so this never reads as confirmed resolution.
+        observed = "A narrowed or adjacent command on an overlapping target succeeded — plausible, not confirmed, resolution"
         result, interp = RESULT_SUCCESS, INTERP_POSITIVE
     else:
         observed = "Failure not resolved"

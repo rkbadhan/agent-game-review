@@ -17,11 +17,14 @@ workflow beside the immutable source (never mutating it) via :mod:`agr.workflow`
     GET  /sweep                     implicit-sweep summary (§4.3.1)
     GET  /queue                     triage queue view (§4.3.2)
     GET  /runs                      run summaries
+    GET  /fleet/episodes            recovery episodes grouped across every run (item 30)
+    GET  /fleet/argument-shapes     argument-shape distribution per failing-call signature (item 31)
     GET  /runs/{run_id}             full deterministic review + workflow/feedback
     GET  /runs/{run_id}/forensic    synchronized forensic view (§4.5)
     GET  /runs/{run_id}/source      raw immutable source + hash verification
     GET  /runs/{run_id}/reviews     reviewer keys that have scored this capture
     GET  /runs/{run_id}/compare     diff of two reviews of one run (reviewer vs reviewer)
+    GET  /runs/{run_id}/divergence  aligned against a passing sibling on the same task (item 21)
     GET  /runs/{run_id}/next        next unhandled run in a queue view (§4.2)
     POST /events                    review-workflow analytics events (§4.21)
     GET  /metrics                   derived product measures over that log (§4.21)
@@ -42,7 +45,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from . import instrumentation, lessons, queue, read, version, versions, workflow
+from . import argument_shapes, divergence, fleet, instrumentation, lessons, queue, read, version, versions, workflow
 from .store import Store
 
 _STATIC = Path(__file__).parent / "static"
@@ -122,6 +125,25 @@ def create_app(store_root: str = ".agr-store"):
     def runs() -> list[dict]:
         return read.list_runs(store)
 
+    @app.get("/fleet/episodes")
+    def fleet_episodes(group_by: str = "tool,error_signature") -> list[dict]:
+        """Item 30: recovery episodes grouped across EVERY run in the store —
+        which failures repeat, how often, and how much they cost."""
+        dims = [d.strip() for d in group_by.split(",") if d.strip()] or None
+        try:
+            groups = fleet.fleet_episodes(store, group_by=dims)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return [g.to_dict() for g in groups]
+
+    @app.get("/fleet/argument-shapes")
+    def fleet_argument_shapes(min_group_size: int = 1) -> list[dict]:
+        """Item 31: the tool_input KEY SET and value TYPE distribution among
+        failing calls per (tool, error_signature) group — never the retained
+        values themselves."""
+        groups = argument_shapes.argument_shapes(store, min_group_size=min_group_size)
+        return [g.to_dict() for g in groups]
+
     # NOTE: the bare /runs/{run_id} route is defined LAST (with :path) so its
     # greedy path capture never shadows the /runs/{run_id}/... sub-routes.
 
@@ -163,6 +185,21 @@ def create_app(store_root: str = ".agr-store"):
             raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"review {str(exc)!r} not found")
+
+    @app.get("/runs/{run_id:path}/divergence")
+    def divergence_endpoint(run_id: str, sibling: Optional[str] = None) -> dict:
+        """Item 21: this run's tool_call timeline aligned against a PASSING
+        sibling on the same task — the first point their behaviour diverged,
+        not just that the outcome differs. ``sibling`` overrides the
+        automatically found one. 404 when no sibling is found/given."""
+        _ensure_run(run_id)
+        report = divergence.divergence_report(store, run_id, sibling_run_id=sibling)
+        if report is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no passing sibling found for run {run_id!r} on the same task",
+            )
+        return report
 
     @app.get("/runs/{run_id:path}/next")
     def next_run(

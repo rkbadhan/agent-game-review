@@ -58,6 +58,104 @@ def test_runs_endpoint(tmp_path):
     assert row["outcome"]["status"] == "FAILED"
 
 
+def test_fleet_episodes_endpoint(tmp_path):
+    """Item 30: GET /fleet/episodes groups recovery episodes across every run."""
+    client, _ = _client(tmp_path, "tool_failure_recovery.atif.json", "ignored_failure.atif.json")
+    resp = client.get("/fleet/episodes")
+    assert resp.status_code == 200
+    groups = resp.json()
+    assert len(groups) == 2
+    assert all(g["group_by"] == ["tool", "error_signature"] for g in groups)
+    assert all(g["key"][0] == "shell" for g in groups)
+
+    resp = client.get("/fleet/episodes?group_by=tool")
+    groups = resp.json()
+    assert len(groups) == 1
+    assert groups[0]["count"] == 2
+
+    resp = client.get("/fleet/episodes?group_by=not_a_dimension")
+    assert resp.status_code == 400
+
+
+def test_fleet_argument_shapes_endpoint(tmp_path):
+    """Item 31: GET /fleet/argument-shapes over a store with a failing Edit
+    call whose tool_input was retained."""
+    import json
+    p = tmp_path / "session.jsonl"
+    lines = [
+        {"type": "user", "sessionId": "sess-shape-1",
+         "message": {"role": "user", "content": "Fix the bug."}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "m",
+         "content": [{"type": "tool_use", "id": "t1", "name": "Edit",
+                      "input": {"file_path": "/app/x.py", "old_string": "a", "new_string": "b"}}]}},
+        {"type": "user", "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": "String to replace not found in file.", "is_error": True}]}},
+    ]
+    p.write_text("\n".join(json.dumps(l) for l in lines), encoding="utf-8")
+    from agr.ingest_claude import convert
+    from agr.pipeline import analyze
+    store = Store(str(tmp_path / "store"))
+    analyze(convert(p, task_id="t").doc, store)
+    client = TestClient(create_app(str(tmp_path / "store")))
+    resp = client.get("/fleet/argument-shapes")
+    assert resp.status_code == 200
+    groups = resp.json()
+    assert len(groups) == 1
+    assert groups[0]["key"][0] == "Edit"
+    assert groups[0]["total_failing_calls"] == 1
+
+
+def test_divergence_endpoint(tmp_path):
+    """Item 21: GET /runs/{run_id}/divergence against a passing sibling."""
+    from agr.pipeline import analyze
+    store = Store(str(tmp_path / "store"))
+    steps_common = [
+        {"step_id": "s1", "kind": "task_received", "actor": "harness", "content": "fix"},
+        {"step_id": "s2", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "ls"},
+        {"step_id": "s3", "kind": "tool_result", "actor": "tool", "tool": "shell", "content": "ok", "exit_code": 0},
+    ]
+
+    def _doc(run_id, extra, passed, task_id="fix-bug"):
+        return {
+            "atif_version": "1.0", "source_type": "synthetic", "capture_completeness": "complete",
+            "run": {"logical_run_id": run_id, "task_id": task_id, "model": "m", "agent": "a",
+                    "harness_version": "h"},
+            "capabilities": {"messages": "complete", "tool_calls": "complete", "tool_results": "complete"},
+            "task": {"instruction": "fix", "artifacts": [], "requirements": []},
+            "steps": steps_common + extra,
+            "verifier": {"raw_output": "", "checks": [
+                {"check_id": "c1", "name": "t", "status": "passed" if passed else "failed",
+                 "source": "native_structured"}]},
+        }
+
+    analyze(_doc("fail-run", [
+        {"step_id": "s4", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python bad.py"},
+        {"step_id": "s5", "kind": "tool_result", "actor": "tool", "tool": "shell", "content": "err", "exit_code": 1},
+        {"step_id": "s6", "kind": "final_submission", "actor": "main_agent", "content": "done"},
+    ], passed=False), store)
+    analyze(_doc("pass-run", [
+        {"step_id": "s4", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python good.py"},
+        {"step_id": "s5", "kind": "tool_result", "actor": "tool", "tool": "shell", "content": "ok", "exit_code": 0},
+        {"step_id": "s6", "kind": "final_submission", "actor": "main_agent", "content": "done"},
+    ], passed=True), store)
+
+    client = TestClient(create_app(str(tmp_path / "store")))
+    resp = client.get("/runs/fail-run/divergence")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["passing_run_id"] == "pass-run"
+    assert body["first_divergence"]["failed_action"]["content"] == "python bad.py"
+    assert body["first_divergence"]["passing_action"]["content"] == "python good.py"
+
+    # A run whose task has no passing sibling: 404, not an empty 200.
+    analyze(_doc("solo-run-fail", [
+        {"step_id": "s4", "kind": "final_submission", "actor": "main_agent", "content": "done"},
+    ], passed=False, task_id="unrelated-task"), store)
+    resp2 = client.get("/runs/solo-run-fail/divergence")
+    assert resp2.status_code == 404
+
+
 def test_review_endpoint(tmp_path):
     client, _ = _client(tmp_path, "chess_best_move.atif.json")
     resp = client.get("/runs/chess_best_move__seed42")
