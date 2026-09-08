@@ -78,7 +78,14 @@ class Detector:
 
 
 class UnresolvedRequirementAtSubmission(Detector):
-    """A required contract item is still failing when the run submits (§8.5 #4)."""
+    """A required contract item is still failing when the run submits (§8.5 #4).
+
+    AGR-08: one candidate for the whole run carrying every failing check —
+    never one candidate per check. Repeating the same terminal statement once
+    per failing check crowded out other, genuinely different findings on the
+    run and made "how many distinct problems does this run have" unreadable
+    from the candidate count.
+    """
 
     name = "unresolved_requirement_at_submission"
     required_capabilities = {"messages": "complete", "tool_results": "complete"}
@@ -87,20 +94,24 @@ class UnresolvedRequirementAtSubmission(Detector):
         submit = ctx.submission()
         if submit is None:
             return []
-        out = []
-        for check in ctx.checks:
-            if check.status != "failed":
-                continue
-            out.append(self._candidate(
-                ctx, check.check_id, kind="omission", anchor_event_ids=[submit.event_id],
-                affected_checks=[check.check_id], affected_contract_items=list(check.contract_item_ids),
-                structured_facts=[{
-                    "type": "requirement_status", "check_id": check.check_id,
-                    "status_at_submission": "failed",
-                    "expected": check.expected, "observed": check.observed,
-                }],
-            ))
-        return out
+        # AGR-02: the reconciled CURRENT view — an obsolete failure a later
+        # same-scope check reconciled (or a pass since invalidated by a
+        # relevant mutation) must not still flag as unresolved.
+        failing = [c for c in ctx.checks if c.effective_status == "failed"]
+        if not failing:
+            return []
+        facts = [{
+            "type": "requirement_status", "check_id": c.check_id,
+            "status_at_submission": "failed",
+            "expected": c.expected, "observed": c.observed,
+            "total_checks": len(ctx.checks),
+        } for c in failing]
+        return [self._candidate(
+            ctx, "aggregate", kind="omission", anchor_event_ids=[submit.event_id],
+            affected_checks=[c.check_id for c in failing],
+            affected_contract_items=sorted({i for c in failing for i in c.contract_item_ids}),
+            structured_facts=facts,
+        )]
 
 
 class TerminalFailureWithFailingChecks(Detector):
@@ -138,24 +149,31 @@ class TerminalFailureWithFailingChecks(Detector):
             return []
         last_agent_event = next(
             (e for e in reversed(ctx.events) if e.actor == "main_agent"), None)
+        has_last_agent_action = (
+            last_agent_event is not None and last_agent_event.event_id != terminal.event_id)
         anchor = [terminal.event_id]
-        if last_agent_event is not None and last_agent_event.event_id != terminal.event_id:
+        if has_last_agent_action:
             anchor.append(last_agent_event.event_id)
-        out = []
-        for check in ctx.checks:
-            if check.status != "failed":
-                continue
-            out.append(self._candidate(
-                ctx, check.check_id, kind="omission", anchor_event_ids=anchor,
-                affected_checks=[check.check_id], affected_contract_items=list(check.contract_item_ids),
-                structured_facts=[{
-                    "type": "requirement_status", "check_id": check.check_id,
-                    "status_at_submission": "failed",
-                    "expected": check.expected, "observed": check.observed,
-                    "terminal_event_type": terminal.event_type,
-                }],
-            ))
-        return out
+        # AGR-02: the reconciled CURRENT view — see UnresolvedRequirementAtSubmission.
+        failing = [c for c in ctx.checks if c.effective_status == "failed"]
+        if not failing:
+            return []
+        facts = [{
+            "type": "requirement_status", "check_id": c.check_id,
+            "status_at_submission": "failed",
+            "expected": c.expected, "observed": c.observed,
+            "terminal_event_type": terminal.event_type,
+            "total_checks": len(ctx.checks),
+            # AGR-08: render that limitation explicitly rather than letting a
+            # missing last-agent-action silently look like an ordinary anchor.
+            "last_agent_action_captured": has_last_agent_action,
+        } for c in failing]
+        return [self._candidate(
+            ctx, "aggregate", kind="omission", anchor_event_ids=anchor,
+            affected_checks=[c.check_id for c in failing],
+            affected_contract_items=sorted({i for c in failing for i in c.contract_item_ids}),
+            structured_facts=facts,
+        )]
 
 
 class IgnoredToolFailure(Detector):

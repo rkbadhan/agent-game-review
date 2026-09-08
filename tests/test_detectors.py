@@ -214,6 +214,79 @@ def test_terminal_failure_detector_silent_when_checks_pass():
     assert TerminalFailureWithFailingChecks().run(ctx).candidates == []
 
 
+# --- AGR-08: one aggregate candidate per run, not one per failing check -----
+
+
+def _three_checks(*, one_passing=True):
+    from agr.schema import VerifierCheck
+    checks = [
+        VerifierCheck(check_id="C1", run_id="r", source_capture_id="c", name="c1",
+                      status="failed", source="native_structured"),
+        VerifierCheck(check_id="C2", run_id="r", source_capture_id="c", name="c2",
+                      status="failed", source="native_structured"),
+        VerifierCheck(check_id="C3", run_id="r", source_capture_id="c", name="c3",
+                      status="failed", source="native_structured"),
+    ]
+    if one_passing:
+        checks.append(VerifierCheck(check_id="C4", run_id="r", source_capture_id="c", name="c4",
+                                    status="passed", source="native_structured"))
+    return checks
+
+
+def test_terminal_failure_with_failing_checks_emits_one_aggregate_candidate():
+    from agr.detectors import TerminalFailureWithFailingChecks
+    ctx = _terminal_ctx("run_timed_out", _three_checks())
+    cands = TerminalFailureWithFailingChecks().run(ctx).candidates
+    assert len(cands) == 1
+    cand = cands[0]
+    assert set(cand.affected_checks) == {"C1", "C2", "C3"}
+    assert "C4" not in cand.affected_checks  # the passing check is not carried
+    assert len(cand.structured_facts) == 3
+    assert {f["check_id"] for f in cand.structured_facts} == {"C1", "C2", "C3"}
+    assert all(f["total_checks"] == 4 for f in cand.structured_facts)
+
+
+def test_terminal_failure_no_last_agent_action_is_recorded_explicitly():
+    """When the trace has no main_agent event at all, the limitation is
+    carried on the fact rather than silently anchoring only on the terminal
+    event with no comment."""
+    from agr.detectors import DetectorContext, TerminalFailureWithFailingChecks
+    from agr.schema import CapabilityProfile, DerivedEvent
+
+    events = [DerivedEvent(
+        event_id="evt_1", run_id="r", source_capture_id="c", sequence=1,
+        source_step_ids=["s1"], event_type="run_timed_out", actor="harness",
+        payload={"content": "the harness ended the run"})]
+    prof = CapabilityProfile(run_id="r", source_capture_id="c",
+                             capabilities={"messages": "complete"})
+    ctx = DetectorContext(run_id="r", capture_id="c", events=events,
+                          checks=[_failed_check()], doc={}, profile=prof)
+    cands = TerminalFailureWithFailingChecks().run(ctx).candidates
+    assert len(cands) == 1
+    assert cands[0].anchor_event_ids == ["evt_1"]
+    assert cands[0].structured_facts[0]["last_agent_action_captured"] is False
+
+
+def test_unresolved_requirement_at_submission_emits_one_aggregate_candidate():
+    from agr.detectors import UnresolvedRequirementAtSubmission
+    ctx = _terminal_ctx("run_completed", _three_checks(), with_submission=True)
+    cands = UnresolvedRequirementAtSubmission().run(ctx).candidates
+    assert len(cands) == 1
+    cand = cands[0]
+    assert set(cand.affected_checks) == {"C1", "C2", "C3"}
+    assert len(cand.structured_facts) == 3
+    assert cand.anchor_event_ids == ["evt_3"]  # the observed submission
+
+
+def test_unresolved_requirement_at_submission_silent_when_all_pass():
+    from agr.detectors import UnresolvedRequirementAtSubmission
+    from agr.schema import VerifierCheck
+    passed = [VerifierCheck(check_id="C1", run_id="r", source_capture_id="c", name="c1",
+                            status="passed", source="native_structured")]
+    ctx = _terminal_ctx("run_completed", passed, with_submission=True)
+    assert UnresolvedRequirementAtSubmission().run(ctx).candidates == []
+
+
 def test_terminal_failure_detector_fires_with_partial_tool_results():
     """Review finding #2: _run reads no tool_result event at all, so
     tool_results:partial — the NORMAL capability level for a run the harness

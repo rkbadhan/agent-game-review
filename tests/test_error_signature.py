@@ -7,9 +7,11 @@ way it does.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from agr.error_signature import error_signature
+from agr.error_signature import error_signature, error_signature_with_basis
 
 CASES = [
     (
@@ -139,14 +141,17 @@ def test_json_wrapped_empty_output_falls_back_to_exception_info():
     assert error_signature(raw) == "action was not executed"
 
 
-def test_json_with_no_recognised_message_key_falls_back_to_brace():
+def test_json_with_no_recognised_message_key_falls_back_to_last_line():
     """Pretty-printed (multi-line) JSON with no non-empty message-like field:
-    the unwrap leaves the text unchanged, and the first non-blank LINE of a
-    pretty-printed object is its opening brace alone — the real shape a
-    terminated-command result takes (mini-swe-agent's own returncode:-15 SIGTERM
-    case, which carries no message at all)."""
+    the unwrap leaves the text unchanged, and with no traceback and no
+    recognised diagnostic marker anywhere, AGR-07's documented fallback tier
+    is the LAST non-blank line — the real shape a terminated-command result
+    takes (mini-swe-agent's own returncode:-15 SIGTERM case, which carries no
+    message at all). Neither the opening brace nor the closing one carries
+    any more information than the other; this pins which one the documented
+    fallback rule actually picks."""
     raw = '{\n  "returncode": -15,\n  "output": ""\n}'
-    assert error_signature(raw) == "{"
+    assert error_signature(raw) == "}"
 
 
 def test_single_line_json_with_no_message_key_normalises_the_whole_object():
@@ -160,3 +165,105 @@ def test_single_line_json_with_no_message_key_normalises_the_whole_object():
 def test_non_json_curly_text_is_not_mistaken_for_json():
     raw = "{not actually json"
     assert error_signature(raw) == "{not actually json"
+
+
+# --- AGR-07: diagnostic selection over noisy multi-line output --------------
+
+
+def test_os_release_preamble_does_not_win_over_a_real_diagnostic():
+    """A script that dumps /etc/os-release for context before actually
+    failing must not have that dump picked as the signature."""
+    raw = (
+        'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n'
+        "NAME=Debian\nVERSION_ID=\"12\"\n"
+        "bash: nonexistentcmd: command not found"
+    )
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "bash: nonexistentcmd: command not found"
+    assert basis == "diagnostic_line"
+
+
+def test_progress_banner_does_not_win_over_a_later_failure_line():
+    raw = (
+        "=== Running test suite ===\n"
+        "Step 1/5: installing dependencies\n"
+        "Step 2/5: building\n"
+        "FAILED tests/test_x.py::test_thing - AssertionError: boom"
+    )
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "FAILED tests/test_x.py::test_thing - AssertionError: boom"
+    assert basis == "diagnostic_line"
+
+
+def test_json_opening_brace_preamble_does_not_win_over_a_later_diagnostic():
+    """A tool prints a JSON status blob and THEN a plain-text failure — the
+    whole text is not itself valid JSON, so _unwrap_json_transport declines,
+    and the line scan must not stop at the bare opening brace."""
+    raw = '{"status": "running"}\nmore progress output\nFatal: disk quota exceeded'
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "Fatal: disk quota exceeded"
+    assert basis == "diagnostic_line"
+
+
+def test_stderr_field_preferred_over_a_large_unrelated_output_field():
+    """A dedicated stderr/error channel is preferred over the general
+    combined-output blob, even when output is non-empty."""
+    raw = json.dumps({
+        "returncode": 1,
+        "output": "Compiling...\nLinking...\nRunning 200 checks, 199 ok\n",
+        "stderr": "FATAL: disk full",
+    })
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "FATAL: disk full"
+
+
+def test_exception_info_preferred_over_error_and_output_fields():
+    raw = json.dumps({
+        "output": "some generic output",
+        "error": "generic error field",
+        "exception_info": "action was not executed",
+    })
+    assert error_signature(raw) == "action was not executed"
+
+
+def test_truncated_traceback_never_selects_the_generic_header_itself():
+    """The traceback header with nothing substantive captured after it must
+    not become the signature — every truncated traceback would otherwise
+    collapse into one generic, content-free bucket."""
+    raw = "some setup output\nTraceback (most recent call last):"
+    sig, basis = error_signature_with_basis(raw)
+    assert sig != "Traceback (most recent call last):"
+    assert basis != "traceback_exception"
+
+
+def test_traceback_not_at_the_very_end_still_selects_its_own_exception_line():
+    """Trailing output AFTER a traceback (e.g. a wrapper script's own
+    message) must not steal the traceback's own exception line."""
+    raw = (
+        "Traceback (most recent call last):\n"
+        '  File "/app/calc.py", line 12, in add\n'
+        "    return a + b + 1\n"
+        "AssertionError: assert 4 == 5\n"
+        "wrapper.sh: cleanup complete"
+    )
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "AssertionError: assert <N> == <N>"
+    assert basis == "traceback_exception"
+
+
+def test_no_diagnostic_anywhere_uses_labelled_fallback_basis():
+    raw = "line one of ordinary output\nline two of ordinary output"
+    sig, basis = error_signature_with_basis(raw)
+    assert sig == "line two of ordinary output"
+    assert basis == "fallback_last_nonempty"
+
+
+def test_single_line_diagnostic_basis_is_not_fallback():
+    sig, basis = error_signature_with_basis("AssertionError: 5 != 4")
+    assert basis in ("diagnostic_line", "traceback_exception")
+    assert basis != "fallback_last_nonempty"
+
+
+def test_empty_input_basis_is_fallback():
+    _, basis = error_signature_with_basis("")
+    assert basis == "fallback_last_nonempty"

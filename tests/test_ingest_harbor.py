@@ -359,6 +359,86 @@ def test_completed_run_still_gets_final_submission(tmp_path):
     assert sub["actor"] == "main_agent"
 
 
+def test_submission_echo_non_execution_response_is_tagged(tmp_path):
+    """AGR-03: mini-swe-agent intercepts its own submission echo and never
+    executes it, reporting that honestly as returncode -1 / exception_info
+    "action was not executed" — real Harbor captures carry no source_call_id
+    on this result at all, so the single call this turn made is the exact
+    (not guessed) pairing. The tagged result must still keep its raw fields
+    and the run must still get its final_submission."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "done", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash",
+             "arguments": {"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"}},
+        ], "observation": {"results": [
+            {"content": json.dumps({"returncode": -1, "output": "",
+                                     "exception_info": "action was not executed"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds[-1] == "final_submission"
+    result_step = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert result_step["submission_control_response"] is True
+    # raw fields are preserved, not erased by the tag.
+    assert result_step["exit_code"] == -1
+    assert result_step["status"] == "error"
+
+
+def test_unrelated_negative_returncode_is_not_tagged(tmp_path):
+    """Only the submission call's own non-execution reply is tagged — an
+    unrelated command that happens to return -1 is left as a real failure."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "trying", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "some-tool"}},
+        ], "observation": {"results": [
+            {"content": json.dumps({"returncode": -1, "output": "segfault"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps), task_id="t")
+    result_step = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert "submission_control_response" not in result_step
+    assert result_step["exit_code"] == -1
+    assert result_step["status"] == "error"
+
+
+def test_submission_call_with_ordinary_success_is_not_tagged(tmp_path):
+    """The submission call itself succeeding normally (returncode 0) is not
+    a non-execution response — only the specific sentinel message is tagged."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "done", "tool_calls": [
+            {"tool_call_id": "c1", "function_name": "bash",
+             "arguments": {"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"}},
+        ], "observation": {"results": [
+            {"content": json.dumps({"returncode": 0, "output": "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    result_step = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert "submission_control_response" not in result_step
+
+
+def test_ambiguous_multi_call_turn_is_not_tagged(tmp_path):
+    """No source_call_id and more than one call this turn: which call the
+    result answers is genuinely ambiguous, so tagging must not guess."""
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "done", "tool_calls": [
+            {"function_name": "bash", "arguments": {"command": "ls"}},
+            {"function_name": "bash", "arguments": {"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"}},
+        ], "observation": {"results": [
+            {"content": json.dumps({"returncode": -1, "output": "",
+                                     "exception_info": "action was not executed"})},
+        ]}},
+    ]
+    res = convert(_trial(tmp_path, steps, reward=1.0), task_id="t")
+    result_step = next(s for s in res.doc["steps"] if s["kind"] == "tool_result")
+    assert "submission_control_response" not in result_step
+
+
 def test_mark_task_complete_is_an_observed_submission(tmp_path):
     """terminus-2 signals completion via a mark_task_complete tool call."""
     steps = [
@@ -876,6 +956,58 @@ def test_task_checksum_and_ref_recorded_when_source_supports_them(tmp_path):
     assert res.doc["run"]["task_org"] == "terminal-bench"
     assert res.doc["run"]["task_name"] == "nginx-request-logging"
     assert res.doc["run"]["task_ref"] == "v2.1"
+
+
+# --- AGR-03 real-corpus regression -------------------------------------------
+
+_EVAL_RUNS = Path(__file__).resolve().parent.parent / "eval-runs"
+
+
+def test_published_corpus_has_exactly_seven_submission_control_responses():
+    """Pins the review's own count: "the seven inspected cases" of
+    mini-swe-agent's submission echo coming back as returncode -1 / "action
+    was not executed" in the published eval-runs/ corpus. A change to the
+    pairing or sentinel-matching logic that stops recognising one of these
+    (or starts over-matching unrelated failures) should fail this test."""
+    from agr.ingest_harbor import iter_trials
+
+    tagged = 0
+    for trial in iter_trials(str(_EVAL_RUNS)):
+        try:
+            res = convert(str(trial))
+        except ValueError:
+            continue
+        for step in res.doc["steps"]:
+            if step.get("submission_control_response"):
+                tagged += 1
+    assert tagged == 7
+
+
+def test_tagged_submission_response_never_opens_a_recovery_episode():
+    """End-to-end: a real trial carrying the tagged response must not produce
+    an UNRECOVERED episode (and therefore no ignored_tool_failure finding)
+    anchored on the submission round-trip."""
+    from agr.pipeline import analyze
+    from agr.recovery import UNRECOVERED
+    from agr.store import Store
+    import tempfile
+
+    trial = _EVAL_RUNS / "swpC-nginx-request-logging-a3" / "nginx-request-logging__rwPp8Q4"
+    res = convert(str(trial))
+    submission_result = next(s for s in res.doc["steps"]
+                             if s["kind"] == "tool_result" and s.get("submission_control_response"))
+    assert submission_result is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        analysis = analyze(res.doc, Store(tmp))
+    failure_step_ids = {ep.failure_event_id for ep in analysis.recoveries if ep.classification == UNRECOVERED}
+    anchored_events = {e.event_id for e in analysis.events
+                       if submission_result["step_id"] in e.source_step_ids}
+    assert not (failure_step_ids & anchored_events)
+    ignored_tool_failure_anchors = {
+        a for result in analysis.detector_results if result.detector == "ignored_tool_failure"
+        for cand in result.candidates for a in cand.anchor_event_ids
+    }
+    assert not (ignored_tool_failure_anchors & anchored_events)
 
 
 def test_packet_carries_the_full_instruction_and_check_timing(tmp_path):

@@ -50,6 +50,14 @@ class GoldValidationError(ValueError):
     """Raised when a gold record violates the annotation schema (spec §15.2)."""
 
 
+# Annotation provenance (AGR-01). ``human`` is independent expert annotation
+# from source evidence; ``model_draft`` is a model-generated draft label that
+# may seed or speed up annotation but must never silently stand in for it —
+# ``GoldSet.validate`` accepts either, but a scorer (agr.reviewer_eval) must
+# check ``label_source`` before treating a trajectory as independent gold.
+LABEL_SOURCES = {"human", "model_draft"}
+
+
 # --- anchor overlap ----------------------------------------------------------
 
 
@@ -216,6 +224,15 @@ class GoldTrajectory:
     adjudicated"). ``adjudicated`` is the resolved truth used for scoring; when a
     trajectory has a single annotation it is the adjudicated truth by default, so
     disagreement is *reported, not erased*.
+
+    ``label_source``, ``label_batch``, and ``frozen`` are AGR-01 annotation
+    provenance: which batch a trajectory's labels were prepared in, whether
+    that batch has been frozen (locked before its labels are used to tune
+    detector/reviewer behaviour — an unfrozen batch is still visible but not
+    yet usable for that), and whether the labels are independent human
+    annotation or a model-generated draft. A draft is a legitimate way to seed
+    or speed up annotation, but it is never independent gold: see
+    :meth:`is_independent_human_gold`.
     """
 
     run_id: str
@@ -223,10 +240,22 @@ class GoldTrajectory:
     annotations: list[GoldAnnotation] = field(default_factory=list)
     adjudicated: Optional[GoldAnnotation] = None
     schema_version: str = version.GOLD_SCHEMA_VERSION
+    label_source: str = "human"
+    label_batch: Optional[str] = None
+    frozen: bool = False
 
     @property
     def double_labelled(self) -> bool:
         return len(self.annotations) > 1
+
+    def is_independent_human_gold(self) -> bool:
+        """True only for frozen, human-sourced labels (AGR-01 accept criterion:
+
+        "model-generated draft labels are not represented as independent
+        human gold"; a scorer must call this rather than assume every loaded
+        trajectory qualifies.
+        """
+        return self.label_source == "human" and self.frozen
 
     def adjudicated_annotation(self) -> GoldAnnotation:
         """The single annotation scoring treats as truth.
@@ -249,6 +278,9 @@ class GoldTrajectory:
             "schema_version": self.schema_version,
             "annotations": [a.to_dict() for a in self.annotations],
             "adjudicated": self.adjudicated.to_dict() if self.adjudicated else None,
+            "label_source": self.label_source,
+            "label_batch": self.label_batch,
+            "frozen": self.frozen,
         })
 
     @staticmethod
@@ -260,6 +292,12 @@ class GoldTrajectory:
             annotations=[GoldAnnotation.from_dict(a) for a in d.get("annotations", [])],
             adjudicated=GoldAnnotation.from_dict(adj) if adj else None,
             schema_version=d.get("schema_version", version.GOLD_SCHEMA_VERSION),
+            # Absent on 0.1-era records, which predate this field; they are
+            # human-sourced by construction (they were hand-authored before
+            # AGR-01 introduced model_draft), unbatched, and not yet frozen.
+            label_source=d.get("label_source", "human"),
+            label_batch=d.get("label_batch"),
+            frozen=bool(d.get("frozen", False)),
         )
 
 
@@ -315,6 +353,23 @@ class GoldSet:
     def run_ids(self) -> list[str]:
         return [t.run_id for t in self.trajectories]
 
+    def unfrozen_run_ids(self) -> list[str]:
+        """Runs whose annotation is not yet frozen — unfinished, visible work.
+
+        AGR-01 accept criterion: "Unfinished annotation is visible" rather
+        than silently indistinguishable from a completed batch.
+        """
+        return [t.run_id for t in self.trajectories if not t.frozen]
+
+    def independent_human_gold(self) -> "GoldSet":
+        """The subset usable as independent human gold (frozen + human-sourced).
+
+        A scorer (:mod:`agr.reviewer_eval`) should score against this, not
+        against ``self`` directly, so an unfrozen batch or a model-drafted
+        trajectory cannot silently inflate a precision/recall claim.
+        """
+        return GoldSet([t for t in self.trajectories if t.is_independent_human_gold()])
+
     def validate(self, source_steps: Optional[dict[str, set[str]]] = None) -> "GoldSet":
         """Validate every record against the schema; return ``self`` for chaining.
 
@@ -328,6 +383,8 @@ class GoldSet:
             if t.run_id in seen:
                 raise GoldValidationError(f"duplicate gold trajectory for run {t.run_id!r}")
             seen.add(t.run_id)
+            if t.label_source not in LABEL_SOURCES:
+                raise GoldValidationError(f"{t.run_id}: unknown label_source {t.label_source!r}")
             if not t.annotations:
                 raise GoldValidationError(f"{t.run_id}: gold trajectory has no annotations")
             steps = source_steps.get(t.run_id) if source_steps else None

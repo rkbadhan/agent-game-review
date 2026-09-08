@@ -136,6 +136,14 @@ def create_app(store_root: str = ".agr-store"):
             raise HTTPException(status_code=400, detail=str(exc))
         return [g.to_dict() for g in groups]
 
+    @app.get("/fleet/usage-summary")
+    def fleet_usage_summary() -> dict:
+        """AGR-06: the whole-fleet usage headline — the union of every
+        recovery episode's usage records, independent of any --group-by
+        choice. Never a sum of per-group totals, which could double-count an
+        event covered by episodes in two different groups."""
+        return fleet.fleet_usage_summary(store).to_dict()
+
     @app.get("/fleet/argument-shapes")
     def fleet_argument_shapes(min_group_size: int = 1) -> list[dict]:
         """Item 31: the tool_input KEY SET and value TYPE distribution among

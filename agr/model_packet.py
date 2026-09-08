@@ -263,10 +263,18 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
             "expected": c.expected,
             "observed": c.observed,
             "contract_item_ids": list(c.contract_item_ids),
-            # AGR-04: post-run verifier evidence is labelled as such so the
-            # reviewer never mistakes it for something the agent observed.
+            # AGR-04 (pre-AGR-01 numbering): post-run verifier evidence is
+            # labelled as such so the reviewer never mistakes it for
+            # something the agent observed.
             "timing": c.timing,
             "source_pointers": list(c.source_pointers),
+            # AGR-02: the reconciled current view alongside the raw status —
+            # a model reviewer must see that an obsolete failure was
+            # reconciled by a later same-scope check (or a pass invalidated
+            # by a subsequent mutation), not just the historical status.
+            "effective_status": c.effective_status,
+            "superseded_by": c.superseded_by,
+            "stale_reason": c.stale_reason,
         }
         for c in ctx.checks
     ]

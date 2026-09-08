@@ -80,7 +80,16 @@ from .schema import CHECK_STATUSES
 #      JSON-encoded inside a text field — lifting it is decoding what the
 #      source already recorded, not inference: it is stamped provenance
 #      "observed" like the rest of the fanned-out step.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.8"
+# 0.9 (AGR-03): the submission echo's own tool_result is tagged
+#      submission_control_response when it is mini-swe-agent's harness
+#      declining to execute the control command it just intercepted
+#      (returncode -1, exception_info "action was not executed") — paired
+#      strictly with the call being the submission action itself, so this
+#      never suppresses an unrelated failure that happens to share the exit
+#      code or message. Downstream (agr/_util.py:is_tool_failure) excludes it
+#      from failure/recovery classification, the same way permission_denied
+#      already is.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.9"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -144,6 +153,58 @@ def _parse_returncode(content: Any) -> int | None:
     if isinstance(rc, bool) or not isinstance(rc, int):
         return None
     return rc
+
+
+def _is_submission_call(function_name: Any, arguments: Any) -> bool:
+    """Is this call the agent's own submission-protocol action?
+
+    The literal control actions the submission protocol uses: mini-swe-agent's
+    ``echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`` or terminus-2's
+    ``mark_task_complete``. A single definition shared by
+    :func:`_observed_submission` (decides whether the run gets a
+    ``final_submission`` event) and the submission-control-response tagging in
+    :func:`convert` (AGR-03), so the two can never drift apart.
+    """
+    fname = str(function_name or "").lower()
+    if fname == "mark_task_complete":
+        return True
+    args_text = json.dumps(arguments, ensure_ascii=False) if arguments is not None else ""
+    return "complete_task_and_submit_final_output" in args_text.lower()
+
+
+# AGR-03: mini-swe-agent's own harness intercepts its submission echo as a
+# control signal and deliberately never executes it, then reports that fact
+# honestly through the same channel a real command failure would use. Matched
+# as an exact, closed sentinel — never a substring of arbitrary output — and
+# only ever consulted together with _is_submission_call on the SAME call, so
+# an unrelated command that happens to return this exact message is untouched.
+_SUBMISSION_NON_EXECUTION_MESSAGE = "action was not executed"
+
+
+def _is_submission_non_execution_response(content: Any) -> bool:
+    """Is this the harness's "I did not run your submission command" reply?
+
+    Decodes the same ``{"returncode": ..., "exception_info": ...}`` shape
+    :func:`_parse_returncode` reads (mini-swe-agent's own harness serialises a
+    result this way), and recognises it only by the literal
+    ``exception_info`` sentinel above — never by ``returncode`` alone (a
+    genuine failure is also often ``-1``) and never by the message alone
+    outside that structured shape.
+    """
+    obj: Any = None
+    if isinstance(content, dict):
+        obj = content
+    elif isinstance(content, str):
+        stripped = content.strip()
+        if stripped.startswith("{"):
+            try:
+                obj = json.loads(stripped)
+            except json.JSONDecodeError:
+                obj = None
+    if not isinstance(obj, dict):
+        return False
+    exc = obj.get("exception_info")
+    return isinstance(exc, str) and exc.strip().lower() == _SUBMISSION_NON_EXECUTION_MESSAGE
 
 
 def _hoist_argument(function_name: str, arguments: Any) -> dict[str, Any]:
@@ -590,6 +651,7 @@ def convert(
     first_user_text: str | None = None
     model: str | None = agent.get("model_name")
     call_names: dict[str, str] = {}  # tool_call_id -> function_name, to name results
+    call_args: dict[str, Any] = {}  # tool_call_id -> arguments, for AGR-03 submission pairing
     saw_agent_step = False
     last_agent_tool_calls: list[dict] = []
 
@@ -637,6 +699,7 @@ def convert(
             message = _text_of(hstep.get("message"))
             if message:
                 add("model_output", "main_agent", content=message, **_cost_kwarg())
+            turn_calls: list[tuple[str, Any]] = []  # this turn's (function_name, arguments), in order
             for call in hstep.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
@@ -647,6 +710,8 @@ def convert(
                 cid = call.get("tool_call_id") or call.get("id")
                 if cid:
                     call_names[cid] = fname
+                    call_args[cid] = call.get("arguments")
+                turn_calls.append((fname, call.get("arguments")))
             # The observation records the environment's response to this turn's
             # tool calls; each result becomes its own tool_result step.
             observation = hstep.get("observation") or {}
@@ -659,6 +724,32 @@ def convert(
                     "tool": call_names.get(cid, "tool"),
                     "content": _text_of(raw_content),
                 }
+                # AGR-03: resolve which call this result answers, to check
+                # whether the pair is the submission protocol's own
+                # round-trip. Harbor's mini-swe-agent turns carry no
+                # source_call_id at all (id-based match is unavailable), but
+                # a turn's result answers the turn's OWN call — exact pairing
+                # when the turn made exactly one call, which is mini-swe-
+                # agent's normal one-action-per-turn shape. With no id and
+                # more than one call this turn, which call produced this
+                # result is genuinely ambiguous, so it is left unresolved
+                # (never guessed) and the tagging below simply does not fire.
+                if cid and cid in call_names:
+                    call_fname, call_arguments = call_names[cid], call_args.get(cid)
+                elif not cid and len(turn_calls) == 1:
+                    call_fname, call_arguments = turn_calls[0]
+                else:
+                    call_fname, call_arguments = None, None
+                # This specific call+response pair is the submission
+                # protocol's own round-trip, not evidence of a tool failure —
+                # tag it so recovery/detector classification (agr/_util.py's
+                # is_tool_failure) excludes it, the same way permission_denied
+                # already is. Both the call and the response must match: a
+                # -1 from an unrelated command, or an unrelated message, is
+                # never touched (only this exact pairing is).
+                if call_fname is not None and _is_submission_call(call_fname, call_arguments) \
+                        and _is_submission_non_execution_response(raw_content):
+                    payload["submission_control_response"] = True
                 # ATIF observations don't carry a POSIX exit code as a top-level
                 # field; only record one when the source explicitly surfaced it
                 # (via extra), never guess.
@@ -715,17 +806,8 @@ def convert(
     exc_type = exc.get("exception_type") or exc.get("type") if isinstance(exc, dict) else exc
 
     def _observed_submission(calls: list[dict]) -> bool:
-        if not calls:
-            return False
-        for c in calls:
-            fname = (c.get("function_name") or c.get("name") or "").lower()
-            args = c.get("arguments")
-            args_text = json.dumps(args, ensure_ascii=False) if args is not None else ""
-            if fname == "mark_task_complete":
-                return True
-            if "complete_task_and_submit_final_output" in args_text.lower():
-                return True
-        return False
+        return any(_is_submission_call(c.get("function_name") or c.get("name"), c.get("arguments"))
+                   for c in calls)
 
     if _observed_submission(last_agent_tool_calls):
         add("final_submission", "main_agent", provenance="observed",

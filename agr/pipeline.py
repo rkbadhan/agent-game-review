@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .audit import build_audit
-from .checks import extract_checks, outcome
+from .checks import extract_checks, outcome, reconcile_checks
 from .contract import (
     apply_confirmation,
     build_contract,
@@ -97,6 +97,10 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # Stage C1 — deterministic phase segmentation; stamps each event's phase_id.
     phases = segment_phases(events, rs.run_id, rs.source_capture_id)
     checks = extract_checks(doc, rs)
+    # AGR-02: reconcile same-scope observations and invalidate mutation-stale
+    # passes BEFORE anything reads check status for the run's outcome —
+    # events are already derived above, so a check's source_pointers resolve.
+    checks = reconcile_checks(checks, events)
     run_outcome = outcome(checks)
 
     # Stage B — build the task contract, apply any recorded human confirmation,

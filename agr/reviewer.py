@@ -632,6 +632,43 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
     return fact.get("type", "candidate")
 
 
+def _render_requirement_status_group(facts: list[dict]) -> str:
+    """One statement covering EVERY requirement_status fact on an aggregate
+    terminal-failure candidate (AGR-08), instead of the per-check sentence
+    :func:`render` produces for a single fact — otherwise the same terminal
+    statement would repeat once per failing check, crowding out other
+    findings on the run.
+
+    Only called with facts that already passed validation (canonical
+    status/expected/observed sourced from the check record — see
+    ``validate_facts``), so this only groups and phrases them; it invents no
+    status of its own. Facts are grouped by exactly the same distinction
+    :func:`render` draws for a single fact: agent-observed-at-submission vs.
+    final-verifier-only vs. a non-failed/undetermined status.
+    """
+    observed = [f["check_id"] for f in facts if f.get("status") == "failed" and f.get("agent_observed_failure")]
+    unobserved = [f["check_id"] for f in facts if f.get("status") == "failed" and not f.get("agent_observed_failure")]
+    other = [f for f in facts if f.get("status") not in ("failed", None)]
+    total = next((f.get("total_checks") for f in facts if f.get("total_checks") is not None), None)
+    denominator = f" ({len(facts)} of {total} checks)" if total is not None else ""
+    clauses = []
+    if observed:
+        clauses.append(f"still failing at submission: {', '.join(sorted(observed))}")
+    if unobserved:
+        clauses.append(
+            f"failing the run's final verifier, with no agent-observed failure before the run "
+            f"ended: {', '.join(sorted(unobserved))}")
+    for f in other:
+        clauses.append(f"{f.get('check_id')} ended with status '{f.get('status')}' (undetermined)")
+    if not clauses:
+        return "No deterministic evidence supports this finding."
+    statement = f"Requirement checks{denominator} were " + "; and ".join(clauses) + "."
+    if facts and facts[0].get("last_agent_action_captured") is False:
+        statement += (" No agent action was captured before this terminal event; the anchor "
+                      "reflects only the run's terminal state, not a specific action.")
+    return statement
+
+
 # --- Stage I: moment selection ------------------------------------------------
 
 
@@ -1055,13 +1092,21 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         refs = validate_references(cand, ctx)
         obs_basis = _observation_basis(cand, validated, ctx, refs, has_concern)
         observation_scope = obs_basis == "tool_evidence"
-        # Render from the first fact that actually PASSED validation — never
+        # Render from the fact(s) that actually PASSED validation — never
         # from a failed or unrecomputable fact, whose "recomputed" basis does
         # not exist (AGR-03: unknown fact types must not become validated prose).
-        primary = next((f for f in validated if f.get("validation") == "passed"), None)
-        statement = render(primary, ceiling, cand.polarity,
-                           observation_scope=observation_scope) if primary else \
-            "No deterministic evidence supports this finding."
+        passed_facts = [f for f in validated if f.get("validation") == "passed"]
+        requirement_status_facts = [f for f in passed_facts if f.get("type") == "requirement_status"]
+        if len(requirement_status_facts) > 1:
+            # AGR-08: an aggregate terminal-failure candidate carries one
+            # requirement_status fact per failing check — one joint statement,
+            # not the per-fact render() repeated once per check.
+            statement = _render_requirement_status_group(requirement_status_facts)
+        else:
+            primary = passed_facts[0] if passed_facts else None
+            statement = render(primary, ceiling, cand.polarity,
+                               observation_scope=observation_scope) if primary else \
+                "No deterministic evidence supports this finding."
         gate_ok, _ = attribution_gate(statement, ceiling)
         enr = proposal.enrichment
         better_action = (

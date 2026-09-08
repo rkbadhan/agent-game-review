@@ -90,3 +90,29 @@ def test_ordinary_error_without_permission_denied_flag_is_still_a_failure():
         payload={"tool": "Bash", "content": "boom", "status": "error"},
     )
     assert is_tool_failure(ev) is True
+
+
+# --- AGR-03: a submission control response is not a tool failure ------------
+
+def test_submission_control_response_is_not_a_tool_failure():
+    from agr._util import is_tool_failure
+    from agr.schema import DerivedEvent
+    ev = DerivedEvent(
+        event_id="evt_1", run_id="r", source_capture_id="c", sequence=1,
+        source_step_ids=["s1"], event_type="tool_result", actor="tool",
+        payload={"tool": "bash", "content": "action was not executed", "status": "error",
+                 "exit_code": -1, "submission_control_response": True},
+    )
+    assert is_tool_failure(ev) is False
+
+
+def test_error_result_without_submission_flag_is_still_a_failure():
+    from agr._util import is_tool_failure
+    from agr.schema import DerivedEvent
+    ev = DerivedEvent(
+        event_id="evt_1", run_id="r", source_capture_id="c", sequence=1,
+        source_step_ids=["s1"], event_type="tool_result", actor="tool",
+        payload={"tool": "bash", "content": "action was not executed", "status": "error",
+                 "exit_code": -1},
+    )
+    assert is_tool_failure(ev) is True

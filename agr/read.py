@@ -695,7 +695,20 @@ def list_runs(store: Store) -> list[dict]:
         moments, review_moments, _ = _run_moments(store, run_id, capture_id, events, detector_results)
         concern = sum(1 for m in moments if m.get("polarity") != "positive")
         strength = sum(1 for m in moments if m.get("polarity") == "positive")
-        recovered = any(ep.get("resolution_event_id") for ep in recoveries) or any(
+        # AGR-04: confirmed (good_recovery / retry_succeeded_without_strategy_
+        # change) and plausible (plausibly_resolved) recovery are counted
+        # separately — a plausible resolution must never silently read as
+        # confirmed just because it also carries a resolution_event_id.
+        recovery_counts = {"confirmed": 0, "plausible": 0, "unresolved": 0}
+        for ep in recoveries:
+            cls = ep.get("classification")
+            if cls in ("good_recovery", "retry_succeeded_without_strategy_change"):
+                recovery_counts["confirmed"] += 1
+            elif cls == "plausibly_resolved":
+                recovery_counts["plausible"] += 1
+            elif cls == "unrecovered_failure":
+                recovery_counts["unresolved"] += 1
+        recovered = recovery_counts["confirmed"] > 0 or any(
             m.get("kind") == "recovery" and m.get("polarity") == "positive" for m in moments)
         wf = workflow.read_workflow(store, run_id)
         summaries.append({
@@ -731,7 +744,12 @@ def list_runs(store: Store) -> list[dict]:
                 "moments": len(moments),
                 "recovery": sum(1 for m in moments if m.get("kind") == "recovery"),
             },
+            # AGR-04: "recovered" (a triage convenience) reports CONFIRMED
+            # recovery only; recovery_counts breaks out plausible/unresolved
+            # explicitly rather than folding them silently into "recovered".
             "recovered": bool(recovered),
+            "recovery_plausible": recovery_counts["plausible"] > 0,
+            "recovery_counts": recovery_counts,
             "verifier_concern": bool(contract.get("warnings")),
             "contract": {
                 "version": contract.get("contract_version"),

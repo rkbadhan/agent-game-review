@@ -123,6 +123,64 @@ def test_validate_rejects_no_moment_with_moments():
         gs.validate()
 
 
+# --- annotation provenance (AGR-01) ------------------------------------------
+
+
+def test_legacy_records_default_to_human_unfrozen_unbatched():
+    # 0.1-era fixtures predate label_source/label_batch/frozen entirely.
+    gs = gold.load_gold_set(GOLD)
+    for t in gs.trajectories:
+        assert t.label_source == "human"
+        assert t.label_batch is None
+        assert t.frozen is False
+        # Not independent gold yet: nothing here has been frozen.
+        assert not t.is_independent_human_gold()
+
+
+def test_unfrozen_run_ids_reports_everything_by_default():
+    gs = gold.load_gold_set(GOLD)
+    assert set(gs.unfrozen_run_ids()) == set(gs.run_ids())
+    assert gs.independent_human_gold().run_ids() == []
+
+
+def test_frozen_human_trajectory_is_independent_gold():
+    d = _chess_dict()
+    d["frozen"] = True
+    traj = gold.GoldTrajectory.from_dict(d)
+    assert traj.is_independent_human_gold()
+    gs = gold.GoldSet([traj])
+    assert gs.unfrozen_run_ids() == []
+    assert gs.independent_human_gold().run_ids() == [traj.run_id]
+
+
+def test_frozen_model_draft_is_not_independent_gold():
+    d = _chess_dict()
+    d["frozen"] = True
+    d["label_source"] = "model_draft"
+    traj = gold.GoldTrajectory.from_dict(d)
+    assert not traj.is_independent_human_gold()
+    assert gold.GoldSet([traj]).independent_human_gold().run_ids() == []
+
+
+def test_validate_rejects_unknown_label_source():
+    d = _chess_dict()
+    d["label_source"] = "vibes"
+    gs = gold.GoldSet([gold.GoldTrajectory.from_dict(d)])
+    with pytest.raises(gold.GoldValidationError, match="label_source"):
+        gs.validate()
+
+
+def test_round_trip_preserves_provenance_fields():
+    d = _chess_dict()
+    d["frozen"] = True
+    d["label_batch"] = "2026-09-batch-1"
+    traj = gold.GoldTrajectory.from_dict(d)
+    again = gold.GoldTrajectory.from_dict(copy.deepcopy(traj.to_dict()))
+    assert again.frozen is True
+    assert again.label_batch == "2026-09-batch-1"
+    assert again.label_source == "human"
+
+
 # --- adjudication ------------------------------------------------------------
 
 

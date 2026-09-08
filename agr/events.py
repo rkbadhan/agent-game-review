@@ -42,7 +42,7 @@ KIND_TO_EVENT = {
 # display excerpts stay separate; the evidence retains the full content.
 # ``status``: tool-result status (ok|error) where the source records a flag
 # rather than an OS exit code.
-_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason", "tool_use_id", "tool_input", "status", "tool_use_result", "compactMetadata", "compaction_summary", "heuristic_status", "heuristic_status_source", "permission_denied", "timestamp")
+_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason", "tool_use_id", "tool_input", "status", "tool_use_result", "compactMetadata", "compaction_summary", "heuristic_status", "heuristic_status_source", "permission_denied", "timestamp", "submission_control_response")
 
 
 class EventDerivationError(ValueError):

@@ -143,6 +143,82 @@ def test_render_matches_the_ceiling():
     assert "likely explanation" in hypo
 
 
+# --- AGR-08: aggregate terminal-failure candidates carry >1 requirement_status
+# fact — one joint statement, not the per-fact render() repeated per check.
+
+
+def test_aggregate_requirement_status_candidate_renders_one_joint_statement():
+    checks = [_check("C1", "failed"), _check("C2", "failed"), _check("C3", "passed")]
+    cand = _candidate(
+        "cand_agg", detector="unresolved_requirement_at_submission",
+        affected_checks=["C1", "C2"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed",
+             "total_checks": 3},
+            {"type": "requirement_status", "check_id": "C2", "status_at_submission": "failed",
+             "total_checks": 3},
+        ],
+    )
+    (m,) = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    assert m.gate_results["fact_validation"] == "passed"
+    assert "C1" in m.rendered_statement and "C2" in m.rendered_statement
+    assert "C3" not in m.rendered_statement
+    # one statement, not one sentence repeated per check.
+    assert m.rendered_statement.count("Requirement checks") == 1
+
+
+def test_aggregate_statement_states_the_check_denominator():
+    checks = [_check("C1", "failed"), _check("C2", "failed")]
+    cand = _candidate(
+        "cand_agg", detector="unresolved_requirement_at_submission",
+        affected_checks=["C1", "C2"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed",
+             "total_checks": 5},
+            {"type": "requirement_status", "check_id": "C2", "status_at_submission": "failed",
+             "total_checks": 5},
+        ],
+    )
+    (m,) = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    assert "2 of 5 checks" in m.rendered_statement
+
+
+def test_aggregate_statement_notes_when_no_last_agent_action_was_captured():
+    checks = [_check("C1", "failed"), _check("C2", "failed")]
+    cand = _candidate(
+        "cand_agg", detector="terminal_failure_with_failing_checks",
+        affected_checks=["C1", "C2"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed",
+             "total_checks": 2, "last_agent_action_captured": False},
+            {"type": "requirement_status", "check_id": "C2", "status_at_submission": "failed",
+             "total_checks": 2, "last_agent_action_captured": False},
+        ],
+    )
+    (m,) = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    assert "No agent action was captured" in m.rendered_statement
+
+
+def test_single_requirement_status_fact_still_uses_the_ordinary_render_path():
+    """A candidate with exactly one requirement_status fact (e.g. a run with
+    only one failing check) is unaffected by the aggregate path."""
+    checks = [_check("C1", "failed")]
+    cand = _candidate(
+        "cand_solo", detector="unresolved_requirement_at_submission",
+        affected_checks=["C1"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed"},
+        ],
+    )
+    (m,) = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    # No matching observed tool_result exists in this minimal ctx, so this
+    # exercises the ordinary single-fact render() path, not the aggregate one
+    # (the exact wording is agr.reviewer.render's own concern, not AGR-08's).
+    assert m.rendered_statement == (
+        "Requirement check C1 failed the run's final verifier; "
+        "the agent's trace records no observation of this check.")
+
+
 # --- Stage I: moment selection -----------------------------------------------
 
 

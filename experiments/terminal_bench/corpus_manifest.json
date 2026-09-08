@@ -1,0 +1,1443 @@
+{
+  "counting_definitions": {
+    "active_captures": "One per logical run: the capture each run's index currently ends on (the capture later stages read by default).",
+    "discovered_trials": "Every directory found while walking the corpus root, whether or not it turned out to be a reviewable trial.",
+    "displayed_moments": "Selected moments an actual UI or report rendered \u2014 may be fewer than selected when a surface caps what it shows.",
+    "eligible_trials": "Discovered trials that carried a reviewable trajectory and converted to an ATIF document without error.",
+    "excluded_trials": "Discovered trials that were not ingested, each with an explicit reason (no reviewable trajectory, empty job directory, conversion error).",
+    "generated_candidates": "Detector candidates produced for a run, before fact validation \u2014 a review-time count, not a corpus count.",
+    "ingested_captures": "Capture registrations this build newly created (fresh source hash + adapter version). Re-ingesting the same trial is idempotent and does not add to this count.",
+    "logical_runs": "Distinct run.logical_run_id values among the eligible trials \u2014 the execution identity a capture revision never changes.",
+    "selected_moments": "Validated candidates the reviewer selected/deduplicated into the final card set.",
+    "validated_candidates": "Generated candidates that survived fact validation against the retained evidence."
+  },
+  "counts": {
+    "active_captures": 22,
+    "discovered_trials": 32,
+    "eligible_trials": 22,
+    "excluded_trials": 10,
+    "ingested_captures": 22,
+    "logical_runs": 22
+  },
+  "derivation_versions": {
+    "AGR_VERSION": "0.1.0",
+    "AUDIT_VERSION": "audit-0.1",
+    "CHECK_DERIVATION_VERSION": "check-extract-0.3",
+    "CONTRACT_BUILDER_VERSION": "contract-builder-0.1",
+    "CONTRACT_OBSERVATION_VERSION": "contract-status-1.0",
+    "CORPUS_MANIFEST_VERSION": "corpus-manifest-0.1",
+    "DERIVATION_VERSION": "event-map-0.1",
+    "DETECTOR_VERSION": "detectors-0.2",
+    "ERROR_SIGNATURE_VERSION": "error-sig-0.2",
+    "GOLD_SCHEMA_VERSION": "gold-0.2",
+    "MODEL_REVIEWER_VERSION": "reviewer-model-0.2",
+    "PHASE_SEGMENTATION_VERSION": "phase-segment-0.1",
+    "READ_MODEL_VERSION": "read-model-0.2",
+    "RECOVERY_VERSION": "recovery-0.5",
+    "REDACTION_VERSION": "redaction-0.2",
+    "REVIEWER_EVAL_VERSION": "reviewer-eval-0.2",
+    "REVIEWER_VERSION": "reviewer-det-0.2",
+    "SLICE_DERIVATION_VERSION": "evidence-slice-0.1",
+    "TAXONOMY_VERSION": "0.1"
+  },
+  "exclusions_by_reason": {
+    "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)": 10
+  },
+  "generated_at": "2026-09-08T06:49:34Z",
+  "generated_at_commit": "f9baa257a6e5af72096ed24584fc5a8d92667189",
+  "logical_run_ids": [
+    "harbor__terminal-bench/crack-7z-hash__0b9b1946-1866-4e40-ac98-b0510a611a78",
+    "harbor__terminal-bench/crack-7z-hash__5bceed45-feeb-435a-be5c-5982a4dac5be",
+    "harbor__terminal-bench/crack-7z-hash__bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+    "harbor__terminal-bench/fix-git__9979f4ed-15d1-471d-b738-d4edff291940",
+    "harbor__terminal-bench/fix-git__afe33965-1d9e-4de0-8f48-4adce2968bbd",
+    "harbor__terminal-bench/fix-git__b9985cb5-d986-4874-9aeb-e00a98903930",
+    "harbor__terminal-bench/make-mips-interpreter__17431147-613e-4033-81e8-5366a84cd2d2",
+    "harbor__terminal-bench/make-mips-interpreter__d2f1dfd2-3c71-438b-8ca6-e12379e321fa",
+    "harbor__terminal-bench/nginx-request-logging__09d92d58-8cf2-4000-839b-8aa66579c051",
+    "harbor__terminal-bench/nginx-request-logging__334402ee-61ba-42b7-8f6d-358f1db33edc",
+    "harbor__terminal-bench/nginx-request-logging__87eba7e3-08bf-43a1-a075-7acc4374db5f",
+    "harbor__terminal-bench/nginx-request-logging__96cfb6ac-cbf9-4858-b9b3-8916b3f86827",
+    "harbor__terminal-bench/polyglot-c-py__77f91867-96ed-47f2-9214-27a252697a62",
+    "harbor__terminal-bench/polyglot-c-py__b9c3e1ba-8503-483a-b35b-bde945507e77",
+    "harbor__terminal-bench/polyglot-c-py__c6345d74-dc73-4e87-a201-d878150e7804",
+    "harbor__terminal-bench/polyglot-c-py__db052e3f-fe3a-4589-b023-ced3a07c815a",
+    "harbor__terminal-bench/prove-plus-comm__180d8e8d-f2c9-4b8e-a556-852a04ced7e1",
+    "harbor__terminal-bench/prove-plus-comm__df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+    "harbor__terminal-bench/raman-fitting__12583792-cbe3-433c-a425-1a18ac3db3d1",
+    "harbor__terminal-bench/raman-fitting__14767a87-2b85-4998-9ae2-193a2d3d29f0",
+    "harbor__terminal-bench/raman-fitting__81e7ac3f-04b0-4339-a26c-36cc7b122524",
+    "harbor__terminal-bench/raman-fitting__8b21a3a7-8411-470e-96db-ac4157077ee1"
+  ],
+  "manifest_version": "corpus-manifest-0.1",
+  "reviewed_commit": "dea7af10a0093642362d80abbc7637b2c3c12324",
+  "source_root": "/home/user/eval-game/eval-runs",
+  "trials": [
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/crack-7z-hash); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_e5593576246d",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/crack-7z-hash",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:5915f92132069fc92f50d7feda182762e7c6f57ba9513a1d47ed8594d41d5e46",
+        "trajectory.json": "sha256:4556435cccf9912a5b437ac43ab833668eed071c3e95513db43a89e3a2b9a108"
+      },
+      "idempotent_capture": false,
+      "job": "batch1-crack-7z-hash",
+      "job_id": "d5d106b3-c856-46e5-9beb-1981d8626949",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 182,
+          "job_name": "batch1-crack-7z-hash",
+          "model": null,
+          "n_input_tokens": 0,
+          "n_output_tokens": 0,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/crack-7z-hash"
+          ],
+          "ts": "2026-08-23T17:34:49+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/crack-7z-hash__0b9b1946-1866-4e40-ac98-b0510a611a78",
+      "source_hash": "sha256:e5593576246d09767d672d19f9597edfd9f3b267dd738c7855ecc31f119fa8c2",
+      "sweep_id": null,
+      "task_id": "terminal-bench/crack-7z-hash",
+      "trial_dir": "batch1-crack-7z-hash/crack-7z-hash__aNeynGE"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/fix-git); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_eabfa41c44b4",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/fix-git",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:f6730d4090eed4f440c9e9fd7bfe9de5f82650418b0d3b668ab2ba5c3e39acc2",
+        "trajectory.json": "sha256:aa2b8d2e38959cf855bce6d5270bef9b7400d87899f92c8bf636d6fce3d99295"
+      },
+      "idempotent_capture": false,
+      "job": "batch1-fix-git",
+      "job_id": "949bebd1-faa2-4a41-acea-a1dbf49f5a00",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 202,
+          "job_name": "batch1-fix-git",
+          "model": null,
+          "n_input_tokens": 0,
+          "n_output_tokens": 0,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/fix-git"
+          ],
+          "ts": "2026-08-23T17:34:49+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/fix-git__b9985cb5-d986-4874-9aeb-e00a98903930",
+      "source_hash": "sha256:eabfa41c44b49b92cc44a36633dd8d7b063a9dd946ad10d8361943d3f6b1f7b5",
+      "sweep_id": null,
+      "task_id": "terminal-bench/fix-git",
+      "trial_dir": "batch1-fix-git/fix-git__BYvpzSU"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/raman-fitting); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_d98bab284040",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/raman-fitting",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:64cb1feb8db072f76ff8cb3107cf2d92c9cd79c49f85df32f988c07b20b07b1a",
+        "trajectory.json": "sha256:e4d19cadcaa0d28bc2016f2816b8c00fc668c46b47bfed80ac8e7ac72e75840a"
+      },
+      "idempotent_capture": false,
+      "job": "batch1-raman-fitting",
+      "job_id": "3c9d62a4-7fe3-40ec-b06e-9055fd548cb5",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 210,
+          "job_name": "batch1-raman-fitting",
+          "model": null,
+          "n_input_tokens": 0,
+          "n_output_tokens": 0,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/raman-fitting"
+          ],
+          "ts": "2026-08-23T17:34:49+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/raman-fitting__81e7ac3f-04b0-4339-a26c-36cc7b122524",
+      "source_hash": "sha256:d98bab2840406af073364f55cc96ef56ff7e1a924e094341cd56b73d0ac98d8e",
+      "sweep_id": null,
+      "task_id": "terminal-bench/raman-fitting",
+      "trial_dir": "batch1-raman-fitting/raman-fitting__gJ5LS7D"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/crack-7z-hash); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_b8042f998304",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/crack-7z-hash",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:f94b4a35afa5001b45a48481ba7db85f27275684f74397f7a5b9d52b5d692819",
+        "trajectory.json": "sha256:b594a6109639a9682cea45e3e16988f05c6bce6dab3a4f93999d5eb7bc3127cf"
+      },
+      "idempotent_capture": false,
+      "job": "batch1r-crack-7z-hash",
+      "job_id": "0155e88b-d6dd-43f2-9a16-d9267a1905d6",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 1080,
+          "job_name": "batch1r-crack-7z-hash",
+          "model": null,
+          "n_input_tokens": 954436,
+          "n_output_tokens": 21081,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/crack-7z-hash"
+          ],
+          "ts": "2026-08-23T17:57:05+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/crack-7z-hash__5bceed45-feeb-435a-be5c-5982a4dac5be",
+      "source_hash": "sha256:b8042f9983045a69a5167d2442fa7159803b1be0ebb701be96cfc9feb192803e",
+      "sweep_id": null,
+      "task_id": "terminal-bench/crack-7z-hash",
+      "trial_dir": "batch1r-crack-7z-hash/crack-7z-hash__S25oipk"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/prove-plus-comm); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_b0956d7c1bc1",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/prove-plus-comm",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:5b1995d29d126042bc83d4b54331540897aa9595ecf06864f6b2e22165b72dc1",
+        "trajectory.json": "sha256:415126d3db5d9030c77503a9ea067d4968017e72463d5fe3d81092a768f437de"
+      },
+      "idempotent_capture": false,
+      "job": "batch1r-prove-plus-comm",
+      "job_id": "855c2cab-3a38-4ec5-8c6a-ee80c370bebf",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 296,
+          "job_name": "batch1r-prove-plus-comm",
+          "model": null,
+          "n_input_tokens": 21097,
+          "n_output_tokens": 2052,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/prove-plus-comm"
+          ],
+          "ts": "2026-08-23T17:57:05+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/prove-plus-comm__df798c8c-a3f6-4f03-bcc4-d0edefd0e851",
+      "source_hash": "sha256:b0956d7c1bc12743868182de9e6bebb8c6dcad73b9bc1a64c46859681d8f8350",
+      "sweep_id": null,
+      "task_id": "terminal-bench/prove-plus-comm",
+      "trial_dir": "batch1r-prove-plus-comm/prove-plus-comm__UfS8uMD"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/raman-fitting); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_897012f823e4",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/raman-fitting",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:b84990f5119da242f53d184b8f7762d9ad4314ddd3f22debd2387daac973402c",
+        "trajectory.json": "sha256:d3f350bd82815a1263f92e7216d03df8de1153932b48f9cadef4752c0f5db2f4"
+      },
+      "idempotent_capture": false,
+      "job": "batch1r-raman-fitting",
+      "job_id": "22886788-ed9e-4f37-a10d-1447f15df0c8",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 1051,
+          "job_name": "batch1r-raman-fitting",
+          "model": null,
+          "n_input_tokens": 517045,
+          "n_output_tokens": 27429,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/raman-fitting"
+          ],
+          "ts": "2026-08-23T17:57:05+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/raman-fitting__14767a87-2b85-4998-9ae2-193a2d3d29f0",
+      "source_hash": "sha256:897012f823e4349e511502ad848df709b7534afd362ced5941b8541db8db042e",
+      "sweep_id": null,
+      "task_id": "terminal-bench/raman-fitting",
+      "trial_dir": "batch1r-raman-fitting/raman-fitting__FpPoN5F"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/crack-7z-hash); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_413f31014199",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/crack-7z-hash",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:5a8903188df253bb72395a6c752335cff0ee9be1202df94671d96f632470e1a0",
+        "trajectory.json": "sha256:33a8a3c36499fa6e58149fd85ccf21e8e8c26977f81b36fdb68e24f3404224be"
+      },
+      "idempotent_capture": false,
+      "job": "batch2t-crack-7z-hash",
+      "job_id": "f0d28c7d-366d-4c86-be7f-68d361cccb74",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 1000,
+          "job_name": "batch2t-crack-7z-hash",
+          "model": null,
+          "n_input_tokens": 162934,
+          "n_output_tokens": 16941,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/crack-7z-hash"
+          ],
+          "ts": "2026-08-24T12:42:48+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/crack-7z-hash__bc70a0f9-021b-4a9f-9c15-7425a2458ece",
+      "source_hash": "sha256:413f31014199a7f1ed40ff8ff46a6932102617a670e7b3875b5f3261e3cb155c",
+      "sweep_id": null,
+      "task_id": "terminal-bench/crack-7z-hash",
+      "trial_dir": "batch2t-crack-7z-hash/crack-7z-hash__6nSnEWX"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/fix-git); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_0beab90d9278",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/fix-git",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:25143783f2c4b7fe3122c5aefa5c8dbff3a8cca898ad9a284591d21f0d3591e4",
+        "trajectory.json": "sha256:1a6303411786cd38e9a89fa90455a74cc38243823f9c3fe8d1defc2f422e6420"
+      },
+      "idempotent_capture": false,
+      "job": "batch2t-fix-git",
+      "job_id": "a33eb981-0f75-4d38-8d91-bd81d02fad24",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 293,
+          "job_name": "batch2t-fix-git",
+          "model": null,
+          "n_input_tokens": 43342,
+          "n_output_tokens": 5563,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/fix-git"
+          ],
+          "ts": "2026-08-24T12:42:48+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/fix-git__afe33965-1d9e-4de0-8f48-4adce2968bbd",
+      "source_hash": "sha256:0beab90d9278bddbb6b51969fde7734544e728c3f3ad3a0707ca937250823a4d",
+      "sweep_id": null,
+      "task_id": "terminal-bench/fix-git",
+      "trial_dir": "batch2t-fix-git/fix-git__XAZ696F"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/prove-plus-comm); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_01b218ba38bc",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/prove-plus-comm",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:9397ea6edcfef138e34e4409e54ed36084ec4927b5f2a1c749ecff3735e9ffeb",
+        "trajectory.json": "sha256:bcae985801b99ee2bfe7a6c0a67f2c33e54efa094dd55a154a61db5c0321bc42"
+      },
+      "idempotent_capture": false,
+      "job": "batch2t-prove-plus-comm",
+      "job_id": "a7ee4188-67ec-4447-9892-cef382a35116",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 166,
+          "job_name": "batch2t-prove-plus-comm",
+          "model": null,
+          "n_input_tokens": 6422,
+          "n_output_tokens": 1351,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/prove-plus-comm"
+          ],
+          "ts": "2026-08-24T12:42:48+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/prove-plus-comm__180d8e8d-f2c9-4b8e-a556-852a04ced7e1",
+      "source_hash": "sha256:01b218ba38bcea77cf06dfe45bbd252ee8b078ee5393498144afefbf31c6768f",
+      "sweep_id": null,
+      "task_id": "terminal-bench/prove-plus-comm",
+      "trial_dir": "batch2t-prove-plus-comm/prove-plus-comm__GyarhZG"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:a38a28c88be68be0daaf8ef1a02ead41ab37b2befff9b69560764b2caf42a122",
+        "trajectory.json": null
+      },
+      "job": "gateb-raman",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman/2026-08-24__20-19-14"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:24f4fc67c6bc71761f23e4cfb65f781cac6dab7c8e44fd367758dee7c3d6d01a",
+        "trajectory.json": null
+      },
+      "job": "gateb-raman2",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman2/2026-08-24__20-25-38"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:21caffe0638ccc1a0aa6bec12bdcbfe6a12f3cb17d17cb60f1e5f4b6473a132c",
+        "trajectory.json": null
+      },
+      "job": "gateb-raman3",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman3/2026-08-24__20-29-55"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:41f2f8d05f35a59877e7b731f507e38621b12cc2549af6cc42d9d8b2547d5c70",
+        "trajectory.json": null
+      },
+      "job": "gateb-raman4",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman4/2026-08-24__20-35-42"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": "terminal-bench/make-mips-interpreter",
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:0e4e2e70096958719f6575bf9ce9f399768127e02ceede7ba767d312979f3c44",
+        "trajectory.json": null
+      },
+      "job": "oracle-smoke",
+      "job_id": "382e973d-ab0d-42d4-bf9a-bbf390264e33",
+      "ledger": [
+        {
+          "agent_id": "oracle",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 138,
+          "job_name": "oracle-smoke",
+          "model": null,
+          "n_input_tokens": null,
+          "n_output_tokens": null,
+          "n_trajectories": 0,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "oracle",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/make-mips-interpreter"
+          ],
+          "ts": "2026-08-23T05:45:10+00:00"
+        }
+      ],
+      "trial_dir": "oracle-smoke/make-mips-interpreter__a7hrpdM"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/make-mips-interpreter); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_eb331c7ada15",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/make-mips-interpreter",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:e7a9390a5de5908fb02d026ee63bc862e1f08e70cefac0bdece5dcdac2a72e41",
+        "trajectory.json": "sha256:b1ebb66429cd4baf6065ce4ee515aeec1a32ff17ace0d6329135ed77ad5f378d"
+      },
+      "idempotent_capture": false,
+      "job": "pilot-miniswe",
+      "job_id": "d19ed55e-ed4c-417f-a381-88b5a834a546",
+      "ledger": [
+        {
+          "agent_id": "miniswe",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 2660,
+          "job_name": "pilot-miniswe",
+          "model": "openai/stealth/ox-alpha",
+          "n_input_tokens": 2690003,
+          "n_output_tokens": 53730,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "run",
+          "tasks": [
+            "terminal-bench/make-mips-interpreter"
+          ],
+          "ts": "2026-08-23T14:25:20+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/make-mips-interpreter__d2f1dfd2-3c71-438b-8ca6-e12379e321fa",
+      "source_hash": "sha256:eb331c7ada15333ce52be77296da91e4baa8ebe0cb49e5d05408ed32051c320f",
+      "sweep_id": null,
+      "task_id": "terminal-bench/make-mips-interpreter",
+      "trial_dir": "pilot-miniswe/make-mips-interpreter__Fj4RpHV"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/make-mips-interpreter); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier/test-stdout.txt truncated to 16384 chars",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_69ba53ed23ee",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/make-mips-interpreter",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:e0f4e01ae93e88f612d300b27f5b15a6edd26d4f9b4e050ec23cbbb04dd2a09c",
+        "trajectory.json": "sha256:fff20d1fe105d3ed499b29ae1df651d13ab523f1945f128ee1d6656f95da85a4"
+      },
+      "idempotent_capture": false,
+      "job": "pilot-terminus2",
+      "job_id": "028a6c4f-ce2e-4677-a797-a0b80360079d",
+      "ledger": [
+        {
+          "agent_id": "terminus2",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 2104,
+          "job_name": "pilot-terminus2",
+          "model": null,
+          "n_input_tokens": 469053,
+          "n_output_tokens": 36149,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/make-mips-interpreter"
+          ],
+          "ts": "2026-08-23T15:22:35+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/make-mips-interpreter__17431147-613e-4033-81e8-5366a84cd2d2",
+      "source_hash": "sha256:69ba53ed23ee9dd24eca1ad3e9fd163b5553c05c6532e71aa6c0aad60d7c882a",
+      "sweep_id": null,
+      "task_id": "terminal-bench/make-mips-interpreter",
+      "trial_dir": "pilot-terminus2/make-mips-interpreter__mU7gNZv"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/raman-fitting); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_71045f557fb8",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/raman-fitting",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:7df29dcf73a35c4441dc3db3d0d15d7a20c4a75ba77cd91b3835ed415195e86b",
+        "trajectory.json": "sha256:fc342da2d9a319477e5cb206f6be5b927309fa6ffa33e08ff8e9622879479dee"
+      },
+      "idempotent_capture": false,
+      "job": "raman-r2-raman-fitting",
+      "job_id": "b36c61ba-35b3-4e95-b236-072a6f7651b9",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 1021,
+          "job_name": "raman-r2-raman-fitting",
+          "model": null,
+          "n_input_tokens": 205222,
+          "n_output_tokens": 28212,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/raman-fitting"
+          ],
+          "ts": "2026-08-24T12:42:48+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/raman-fitting__12583792-cbe3-433c-a425-1a18ac3db3d1",
+      "source_hash": "sha256:71045f557fb80573144cbb31b77c96dc553f868b591ae164259341a01198b960",
+      "sweep_id": null,
+      "task_id": "terminal-bench/raman-fitting",
+      "trial_dir": "raman-r2-raman-fitting/raman-fitting__jCu2BAS"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/nginx-request-logging); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_e8f53626848c",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/nginx-request-logging",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:94277a30b47022dc5a58fa62cd2a6ddcfa8c7b9628edf109fcc5474c2c48c412",
+        "trajectory.json": "sha256:04e6befcda76a3b868fe2634af0cbe21c351327caed1a8b7d048b35ebe20e928"
+      },
+      "idempotent_capture": false,
+      "job": "swpA-nginx-request-logging-a1",
+      "job_id": "2e16d339-813b-4d6c-96d9-1df8a65dd8df",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 340,
+          "job_name": "swpA-nginx-request-logging-a1",
+          "model": null,
+          "n_input_tokens": 89475,
+          "n_output_tokens": 5443,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/nginx-request-logging"
+          ],
+          "ts": "2026-08-24T14:13:25+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/nginx-request-logging__96cfb6ac-cbf9-4858-b9b3-8916b3f86827",
+      "source_hash": "sha256:e8f53626848c95999c09c23b41a433aad8242e6acc5980b0b9634001efada7ef",
+      "sweep_id": null,
+      "task_id": "terminal-bench/nginx-request-logging",
+      "trial_dir": "swpA-nginx-request-logging-a1/nginx-request-logging__vTNAJM8"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/polyglot-c-py); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_3e95c8b6bb86",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/polyglot-c-py",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:936b02148257e2f177c5a43cdf08fb4e54218fe1fd333adb0d6f9b6c4eede30f",
+        "trajectory.json": "sha256:3065045578963ce52d0159742d016045cc63a4e124fafa8435314228b8b758e2"
+      },
+      "idempotent_capture": false,
+      "job": "swpA-polyglot-c-py-a1",
+      "job_id": "03eac725-a418-47b1-a5f6-52f896dacf49",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 603,
+          "job_name": "swpA-polyglot-c-py-a1",
+          "model": null,
+          "n_input_tokens": 153655,
+          "n_output_tokens": 15633,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/polyglot-c-py"
+          ],
+          "ts": "2026-08-24T14:13:25+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/polyglot-c-py__db052e3f-fe3a-4589-b023-ced3a07c815a",
+      "source_hash": "sha256:3e95c8b6bb86e5e753ac6d7a6ff1071dbd5de6a3452245a6247b22f55a19f301",
+      "sweep_id": null,
+      "task_id": "terminal-bench/polyglot-c-py",
+      "trial_dir": "swpA-polyglot-c-py-a1/polyglot-c-py__9P28G8w"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/raman-fitting); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_452c7fd5b98e",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/raman-fitting",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:7bd4038dca64c7a4bdfb08472858c169691ca37fa6fa694cfc27ccc04104f71b",
+        "trajectory.json": "sha256:9a9c86808ae481f13a30d829aa6dfeed8c83577066ff34836a23f6b8301e0f14"
+      },
+      "idempotent_capture": false,
+      "job": "swpA2-raman-fitting-a1",
+      "job_id": "d9f0acee-3f83-46a7-b44d-321b6a3cd5e9",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 955,
+          "job_name": "swpA2-raman-fitting-a1",
+          "model": null,
+          "n_input_tokens": 198997,
+          "n_output_tokens": 22241,
+          "n_trajectories": 1,
+          "outcomes": [
+            "ERROR"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/raman-fitting"
+          ],
+          "ts": "2026-08-24T14:13:25+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/raman-fitting__8b21a3a7-8411-470e-96db-ac4157077ee1",
+      "source_hash": "sha256:452c7fd5b98e3eb8f70a56fa045cf3bc307b433e600281abe7ff46d5561e6939",
+      "sweep_id": null,
+      "task_id": "terminal-bench/raman-fitting",
+      "trial_dir": "swpA2-raman-fitting-a1/raman-fitting__LMDAdti"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/nginx-request-logging); confirm the contract",
+        "verifier/test-stdout.txt truncated to 16384 chars",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_99fd6c61ab99",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/nginx-request-logging",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:98f88e9cf077ade219cb3a8bdeb6ef7d724bbb494b3b67d6c99d24c5a134af58",
+        "trajectory.json": "sha256:0afab5f4338560b7dbcb83ff18d387b280ae88eb5874e17b440f6fdb95ee7920"
+      },
+      "idempotent_capture": false,
+      "job": "swpB-nginx-request-logging-a2",
+      "job_id": "6e2cc974-72d6-4d84-a0e0-74a758cbe3fb",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 144,
+          "job_name": "swpB-nginx-request-logging-a2",
+          "model": null,
+          "n_input_tokens": 0,
+          "n_output_tokens": 0,
+          "n_trajectories": 1,
+          "outcomes": [
+            "FAIL"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/nginx-request-logging"
+          ],
+          "ts": "2026-08-24T14:22:42+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/nginx-request-logging__334402ee-61ba-42b7-8f6d-358f1db33edc",
+      "source_hash": "sha256:99fd6c61ab99c5e21631ae12de5c86717ff1101cfcdd3d49816b3a9c8818b448",
+      "sweep_id": null,
+      "task_id": "terminal-bench/nginx-request-logging",
+      "trial_dir": "swpB-nginx-request-logging-a2/nginx-request-logging__h6dA2go"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/polyglot-c-py); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_95a66d2ae13d",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/polyglot-c-py",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:caef87580975def7699bbab840bc3f5b34bbaed4fd21340283f7e7931caf3f51",
+        "trajectory.json": "sha256:0f079c439671dc346faa6fbdc1f1a2cd0fdaf58e289ab71e7dfe0b47703b95a0"
+      },
+      "idempotent_capture": false,
+      "job": "swpB-polyglot-c-py-a2",
+      "job_id": "4905c8a7-30e4-45fd-9d90-990d4fa342f0",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 442,
+          "job_name": "swpB-polyglot-c-py-a2",
+          "model": null,
+          "n_input_tokens": 116279,
+          "n_output_tokens": 8416,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/polyglot-c-py"
+          ],
+          "ts": "2026-08-24T14:22:42+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/polyglot-c-py__c6345d74-dc73-4e87-a201-d878150e7804",
+      "source_hash": "sha256:95a66d2ae13d49c3a7bfd2540f668a7579572225e9309ad791ec7fd92202fa45",
+      "sweep_id": null,
+      "task_id": "terminal-bench/polyglot-c-py",
+      "trial_dir": "swpB-polyglot-c-py-a2/polyglot-c-py__2chrYuM"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/nginx-request-logging); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_cd56cc5afb95",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/nginx-request-logging",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:bfc82e1961fc998c212ec56c887090d1c6701722df2a1e05aa84c3599de87425",
+        "trajectory.json": "sha256:c21320ea62047e8308ce092232ec05494459ab3c4e92bc7f86b380f60b709be9"
+      },
+      "idempotent_capture": false,
+      "job": "swpB2-nginx-request-logging-a2",
+      "job_id": "ed5d1648-005e-4e80-b305-6eb2ee7250ac",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": 324,
+          "job_name": "swpB2-nginx-request-logging-a2",
+          "model": null,
+          "n_input_tokens": 13952,
+          "n_output_tokens": 6112,
+          "n_trajectories": 1,
+          "outcomes": [
+            "FAIL"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/nginx-request-logging"
+          ],
+          "ts": "2026-08-24T14:22:42+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/nginx-request-logging__87eba7e3-08bf-43a1-a075-7acc4374db5f",
+      "source_hash": "sha256:cd56cc5afb951826acbb28551ae4c0129a12059d5dbc24c8c641fb459ce5ec70",
+      "sweep_id": null,
+      "task_id": "terminal-bench/nginx-request-logging",
+      "trial_dir": "swpB2-nginx-request-logging-a2/nginx-request-logging__SLfAhLz"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/nginx-request-logging); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_33192b38691b",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/nginx-request-logging",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:e11fa78619badfca119b815bcaeb452d06a55884d9a1d3db4604bc0ada161f5e",
+        "trajectory.json": "sha256:535bba408f70560785b497231f8606b195e49c5afcc7bfcc3070b01a4dc2e173"
+      },
+      "idempotent_capture": false,
+      "job": "swpC-nginx-request-logging-a3",
+      "job_id": "2adbffda-f073-46f8-990c-3bab9ca4c6fc",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 380,
+          "job_name": "swpC-nginx-request-logging-a3",
+          "model": null,
+          "n_input_tokens": 86366,
+          "n_output_tokens": 6436,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/nginx-request-logging"
+          ],
+          "ts": "2026-08-24T14:31:52+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/nginx-request-logging__09d92d58-8cf2-4000-839b-8aa66579c051",
+      "source_hash": "sha256:33192b38691b0673f87fdc6ef529885e94c1a953dcb1bd7d2b5d51c08285788c",
+      "sweep_id": null,
+      "task_id": "terminal-bench/nginx-request-logging",
+      "trial_dir": "swpC-nginx-request-logging-a3/nginx-request-logging__rwPp8Q4"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/polyglot-c-py); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_3f478bafc0df",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/polyglot-c-py",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:71cdb6e22740eb36a9749ae7b645e1499e4913f23b1e5d10a5cc895e83cd6ea2",
+        "trajectory.json": "sha256:b6834479c901500b87220903f930321cb8c56a739fbf2b6fa52cd35c3c3ad5e9"
+      },
+      "idempotent_capture": false,
+      "job": "swpC2-polyglot-c-py-a1",
+      "job_id": "6b3cd28d-0b93-4bf0-ab5e-e37a301d3ffd",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": null,
+          "job_name": "swpC2-polyglot-c-py-a1",
+          "model": null,
+          "n_input_tokens": null,
+          "n_output_tokens": null,
+          "n_trajectories": 0,
+          "outcomes": [
+            "INFRA"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 12,
+          "source": "import",
+          "tasks": [],
+          "ts": "2026-08-24T14:31:52+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/polyglot-c-py__77f91867-96ed-47f2-9214-27a252697a62",
+      "source_hash": "sha256:3f478bafc0df7a73ffd6e8f2e96126f02b9d18a66a2b7dd67c27c9e707877af1",
+      "sweep_id": null,
+      "task_id": "terminal-bench/polyglot-c-py",
+      "trial_dir": "swpC2-polyglot-c-py-a1/polyglot-c-py__CGnNC78"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/polyglot-c-py); confirm the contract",
+        "agent is terminus-2: tool observations are raw terminal screen text with no exit code \u2014 process_state is 'unavailable', not 'partial'",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "terminus-2@2.0.0",
+      "capture_completeness": "complete",
+      "capture_id": "capture_daea835b1fda",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "terminus-2",
+      "configured_model": "openrouter/stealth/ox-alpha",
+      "configured_task": "terminal-bench/polyglot-c-py",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:1d4ec89519ee33e680b1715ae1480710274d16d10cd37900a796cdbe47858c06",
+        "trajectory.json": "sha256:e53680f9ab120f75a685abedf76516c91cf7b772508d15f63017da1bac68cf6b"
+      },
+      "idempotent_capture": false,
+      "job": "swpC3-polyglot-c-py-a2",
+      "job_id": "fca96f1b-8f7e-4cf3-84ea-3c1859c3122c",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": null,
+          "duration_s": null,
+          "job_name": "swpC3-polyglot-c-py-a2",
+          "model": null,
+          "n_input_tokens": null,
+          "n_output_tokens": null,
+          "n_trajectories": 0,
+          "outcomes": [
+            "INFRA"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [],
+          "ts": "2026-08-24T14:31:52+00:00"
+        }
+      ],
+      "model": "stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/polyglot-c-py__b9c3e1ba-8503-483a-b35b-bde945507e77",
+      "source_hash": "sha256:daea835b1fdaa1fe3af0270e5eb931f949da5efa3c143356e063f5a44c5944fc",
+      "sweep_id": null,
+      "task_id": "terminal-bench/polyglot-c-py",
+      "trial_dir": "swpC3-polyglot-c-py-a2/polyglot-c-py__85wAj7j"
+    },
+    {
+      "adapter_version": "harbor-adapter-0.9",
+      "adapter_warnings": [
+        "task_id taken from result.json (terminal-bench/fix-git); confirm the contract",
+        "verifier results captured (aggregate reward + ctrf.json); the verifier's own code is not in the trial bundle \u2014 verifier_code is 'partial', not 'complete'",
+        "task instruction taken from first user step; confirm the contract"
+      ],
+      "agent": "mini-swe-agent@2.4.6",
+      "capture_completeness": "complete",
+      "capture_id": "capture_d6f219b3bcc0",
+      "capture_revision": 1,
+      "configuration_id": null,
+      "configured_agent": "mini-swe-agent",
+      "configured_model": "openai/stealth/ox-alpha",
+      "configured_task": "terminal-bench/fix-git",
+      "eligible": true,
+      "exclusion_reason": null,
+      "file_checksums": {
+        "result.json": "sha256:8bb21eb506acba40f0c13f0bf03a0e0d805c9c72d9eb65c7fe94689043b0fe97",
+        "trajectory.json": "sha256:0b5aa20e9c4da280617c5ae7f5240458256d2869ba453ce3937073fb11622cb5"
+      },
+      "idempotent_capture": false,
+      "job": "test1-fix-git",
+      "job_id": "b0a86c31-32f9-4f45-8649-48867fd3c4b7",
+      "ledger": [
+        {
+          "agent_id": "unknown",
+          "attempt": 1,
+          "cost_usd": 0.0,
+          "duration_s": 337,
+          "job_name": "test1-fix-git",
+          "model": null,
+          "n_input_tokens": 131509,
+          "n_output_tokens": 4155,
+          "n_trajectories": 1,
+          "outcomes": [
+            "PASS"
+          ],
+          "phase": "pilot",
+          "rate_limit_errors_in_log": 0,
+          "source": "import",
+          "tasks": [
+            "terminal-bench/fix-git"
+          ],
+          "ts": "2026-08-23T17:34:49+00:00"
+        }
+      ],
+      "model": "openai/stealth/ox-alpha",
+      "run_id": "harbor__terminal-bench/fix-git__9979f4ed-15d1-471d-b738-d4edff291940",
+      "source_hash": "sha256:d6f219b3bcc0bdfcdd4d07f37538c6859321479223682acae684b66588df3c66",
+      "sweep_id": null,
+      "task_id": "terminal-bench/fix-git",
+      "trial_dir": "test1-fix-git/fix-git__sTxRfrg"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": null,
+        "trajectory.json": null
+      },
+      "job": "eval-runs",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": null,
+        "trajectory.json": null
+      },
+      "job": "eval-runs",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman2"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": null,
+        "trajectory.json": null
+      },
+      "job": "eval-runs",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman3"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": null,
+        "trajectory.json": null
+      },
+      "job": "eval-runs",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "gateb-raman4"
+    },
+    {
+      "configured_agent": null,
+      "configured_model": null,
+      "configured_task": null,
+      "eligible": false,
+      "exclusion_reason": "no reviewable trajectory (agent/trajectory.json missing \u2014 errored trial or job roll-up)",
+      "file_checksums": {
+        "result.json": "sha256:b170443ceaafa99f32627a1b41b580b7e3a4ce6baa5101a20010761ceef9482a",
+        "trajectory.json": null
+      },
+      "job": "eval-runs",
+      "job_id": null,
+      "ledger": [],
+      "trial_dir": "oracle-smoke"
+    }
+  ]
+}
