@@ -65,8 +65,9 @@ verifier sidecar ingests as `UNVERIFIED`, never a vacuous pass.
 
 ## Browse the real pilot corpus (no synthetic data)
 
-This repo ships a **published evaluation corpus** — 25 real Harbor/Terminal-Bench
-trials across 6 task families and two agent configurations, with verifier
+This repo ships a **published evaluation corpus** — 32 discovered real
+Harbor/Terminal-Bench trials (22 eligible and ingested, 10 excluded with a
+reason) across 7 task families and two agent configurations, with verifier
 outputs, logs, and the honest pilot record. With the tool installed (above),
 clone the repo and browse it:
 
@@ -74,7 +75,7 @@ clone the repo and browse it:
 git clone https://github.com/rkbadhan/agent-game-review.git
 cd agent-game-review
 agr ingest-harbor eval-runs/      # ingests every published job in one command
-agr runs                          # 16 logical runs: passes, failures, sibling sets
+agr runs                          # 22 logical runs: passes, failures, sibling sets
 agr serve                         # http://127.0.0.1:8000 — click any moment's
                                   # anchor to open the raw trajectory event
 ```

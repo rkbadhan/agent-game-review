@@ -222,8 +222,10 @@ def test_packet_evidence_carries_structured_tool_input_and_ids():
 def test_expansion_returns_full_structured_tool_input():
     """The bounded expansion round returns the FULL structured tool input
     (redacted), so a finding grounded in an edit can retrieve exactly what
-    changed."""
-    big_new = "x" * 300
+    changed. Longer than the always-sent packet's _PACKET_INPUT_CHARS bound
+    (2000) so a regression that reuses that smaller bound in the expansion
+    round (AGR-10, review 82cc113) is caught rather than passing vacuously."""
+    big_new = "x" * 5000
     evs = [
         _event("c1", seq=1, payload={"tool": "Edit", "tool_use_id": "toolu_1",
                                      "content": "app.py",

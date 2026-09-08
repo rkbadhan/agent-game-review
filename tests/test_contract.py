@@ -211,3 +211,54 @@ def test_cli_confirm_survives_cp1252_console(tmp_path):
     assert show.returncode == 0, show.stderr.decode("utf-8", "replace")
     conf = _run_cli(["confirm", "greeting_report__seed7", "--all", "--by", "r"], tmp_path)
     assert conf.returncode == 0, conf.stderr.decode("utf-8", "replace")
+
+
+# --- AGR-02 (review 82cc113): observation reads effective_status, not status -
+
+def _item(item_id, mapped_checks):
+    from agr.schema import ContractItem
+    return ContractItem(id=item_id, description="", source_type="stated_requirement",
+                         mapped_checks=list(mapped_checks))
+
+
+def _check(check_id, status, superseded_by=None, stale_reason=None):
+    from agr.schema import VerifierCheck
+    return VerifierCheck(check_id=check_id, run_id="r", source_capture_id="c",
+                          name=check_id, status=status, source="output_interpretation",
+                          superseded_by=superseded_by, stale_reason=stale_reason)
+
+
+def test_superseded_failed_check_no_longer_violates_its_item():
+    """A first attempt that failed and was reconciled away by a later
+    same-scope pass must not keep the item evidenced_violated — the run's
+    own reconciliation has already moved past that failure."""
+    from agr.schema import TaskContract
+    c1 = _check("C1", "failed", superseded_by="C2")
+    c2 = _check("C2", "passed")
+    item = _item("R1", ["C1", "C2"])
+    contract = TaskContract(task_id="t", contract_version=1, status="draft", items=[item])
+    obs = derive_observations(contract, [c1, c2], [], "r")
+    assert obs[0].status == "evidenced_satisfied"
+    assert obs[0].derivation == "mapped_checks_passed"
+
+
+def test_item_mapped_only_to_a_superseded_check_is_not_observed():
+    """When every mapped check for an item has been superseded (none of the
+    superseding checks map to this item), the item has no live evidence at
+    all — not_observed, never a stale evidenced_violated."""
+    from agr.schema import TaskContract
+    c1 = _check("C1", "failed", superseded_by="C2")
+    item = _item("R1", ["C1"])
+    contract = TaskContract(task_id="t", contract_version=1, status="draft", items=[item])
+    obs = derive_observations(contract, [c1, _check("C2", "passed")], [], "r")
+    assert obs[0].status == "not_observed"
+    assert obs[0].derivation == "all_mapped_checks_superseded"
+
+
+def test_live_failed_check_still_violates_its_item():
+    """A check with no superseded_by still counts as live evidence."""
+    from agr.schema import TaskContract
+    item = _item("R1", ["C1"])
+    contract = TaskContract(task_id="t", contract_version=1, status="draft", items=[item])
+    obs = derive_observations(contract, [_check("C1", "failed")], [], "r")
+    assert obs[0].status == "evidenced_violated"

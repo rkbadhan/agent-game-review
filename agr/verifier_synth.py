@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ._util import paired_result
+from ._util import is_tool_failure, paired_result
 from .events import derive_events
 from .schema import RunSource
 
@@ -112,6 +112,16 @@ def _cargo_invocation_errored(output: str) -> bool:
     return bool(_CARGO_COMPILE_ERROR.search(output))
 
 
+# AGR-02 (review 82cc113): a Go package that fails to BUILD never produces
+# any --- PASS/FAIL line — it never compiled far enough to run a single
+# test — only its own "FAIL <pkg> [build failed]" summary line. Checked
+# and merged in ADDITION to per-test counts below, never instead of them: a
+# sibling package's verbose test passes must not mask a build failure
+# elsewhere in the same invocation. Can never double-count a package that
+# also has verbose --- FAIL: lines, since a build-failed package has none.
+_GO_BUILD_FAILED_PACKAGE = re.compile(r"^FAIL\s+\S+\s+\[build failed\]", re.MULTILINE)
+
+
 def _parse_go_test(output: str) -> Optional[tuple[int, int]]:
     """Count every per-test AND every per-package summary line (AGR-02).
 
@@ -123,14 +133,16 @@ def _parse_go_test(output: str) -> Optional[tuple[int, int]]:
     semantics, checked before ever looking for FAIL) reported an all-pass
     result even when a sibling package's ``FAIL`` line was sitting right
     below it. Counting ALL package lines (``findall``) makes one passing
-    package's line unable to hide a failing sibling's. A package whose build
-    itself failed prints ``FAIL <pkg> [build failed]``, which the FAIL
-    pattern already matches, so that case needs no separate handling here.
+    package's line unable to hide a failing sibling's.
     """
     passed = len(re.findall(r"^--- PASS:", output, re.MULTILINE))
     failed = len(re.findall(r"^--- FAIL:", output, re.MULTILINE))
     if passed or failed:
-        return passed, failed
+        # AGR-02 (review 82cc113): verbose per-test lines exist because SOME
+        # package ran tests — that must not hide an ENTIRELY DIFFERENT
+        # package failing to build, which never produces one of those lines
+        # at all.
+        return passed, failed + len(_GO_BUILD_FAILED_PACKAGE.findall(output))
     ok_pkgs = len(re.findall(r"^ok\s+\S+", output, re.MULTILINE))
     fail_pkgs = len(re.findall(r"^FAIL\s+\S+", output, re.MULTILINE))
     if ok_pkgs or fail_pkgs:
@@ -196,9 +208,15 @@ def synthesize_verifier(doc: dict) -> Optional[dict]:
         # or prefix match, so a narrower invocation never shares scope with,
         # and so can never supersede or be superseded by, a broader one.
         scope = " ".join(command.split())
+        # AGR-02 (review 82cc113): a cargo workspace crate can produce a
+        # clean "test result: ok. ..." summary while a DIFFERENT crate in
+        # the SAME invocation fails to compile — checked unconditionally,
+        # never only when no summary parsed at all, so a passing crate's
+        # summary can't hide a sibling's compile error.
+        cargo_errored = runner == "cargo_test" and _cargo_invocation_errored(output)
         parsed = _PARSERS[runner](output)
         if parsed is None:
-            if runner == "cargo_test" and _cargo_invocation_errored(output):
+            if cargo_errored:
                 check_id = f"insession_{runner}_{len(checks) + 1}"
                 checks.append({
                     "check_id": check_id,
@@ -213,7 +231,32 @@ def synthesize_verifier(doc: dict) -> Optional[dict]:
                 raw_chunks.append(f"[{ev.event_id} -> {result.event_id}] {command}\n{output}")
             continue
         passed, failed = parsed
-        status = "passed" if failed == 0 and passed > 0 else "failed" if failed > 0 else "unknown"
+        # AGR-02 (review 82cc113): reconcile the parsed text against the
+        # TOOL's own explicit failure signal (a non-zero exit code, an
+        # explicit error status) — a fatal crash during cleanup AFTER the
+        # framework printed "N passed" is a real invocation failure a text
+        # parse alone cannot see. An explicit tool-level failure signal is
+        # never overridden by a clean-looking PASSING parsed summary; it
+        # demotes that case to "error" (the invocation itself did not
+        # succeed) rather than a bare "passed".
+        #
+        # Reviewed 82cc113 on PR #57: this must be checked only when the text
+        # parse found no failures. A test runner exits non-zero WHENEVER any
+        # test fails — that is the normal, expected shape of a genuine
+        # failure, not evidence of a separate invocation crash. Checking
+        # tool_level_failure before failed > 0 turned every ordinary failing
+        # run with a captured exit code into "error" instead of "failed",
+        # which flips the run outcome to UNDETERMINED and skips the AGR-08
+        # detectors (they select on effective_status == "failed").
+        tool_level_failure = is_tool_failure(result)
+        if failed > 0:
+            status = "failed"
+        elif cargo_errored or tool_level_failure:
+            status = "error"
+        elif passed > 0:
+            status = "passed"
+        else:
+            status = "unknown"
         check_id = f"insession_{runner}_{len(checks) + 1}"
         checks.append({
             "check_id": check_id,

@@ -140,6 +140,51 @@ def test_run_task_survives_a_crashing_claude_runner(tmp_path):
     assert result.run_id is None
 
 
+def test_run_task_timeout_preserves_workdir_and_partial_output(tmp_path):
+    """A timeout is exactly when a human needs the evidence: the workdir must
+    survive, and any output subprocess captured before the deadline must be
+    written out rather than discarded with the rest of the crash."""
+    store = Store(str(tmp_path / "store"))
+    task = runner.Task(task_id="t1", prompt="do it", verifier="./verify.sh")
+
+    def timing_out_runner(prompt, workdir, timeout_s):
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=1800, output="partial output before deadline")
+
+    result = runner.run_task(task, store, "cfg-a", claude_runner=timing_out_runner)
+    assert result.error is not None
+    assert Path(result.workdir).exists()
+    session_path = Path(result.workdir) / "session.stream.jsonl"
+    assert session_path.exists()
+    assert session_path.read_text(encoding="utf-8") == "partial output before deadline"
+
+
+def test_run_task_setup_failure_preserves_workdir(tmp_path):
+    """A failed setup command leaves diagnostic output in the workdir (e.g.
+    stderr captured by the shell); it must not be deleted out from under it."""
+    store = Store(str(tmp_path / "store"))
+    task = runner.Task(task_id="t1", prompt="do it", verifier="./verify.sh", setup=["exit 1"])
+    result = runner.run_task(task, store, "cfg-a")
+    assert result.error is not None
+    assert Path(result.workdir).exists()
+
+
+def test_run_task_stores_the_actual_task_prompt_as_the_instruction(tmp_path):
+    """The runner always knows the exact prompt it sent — it must not rely on
+    the transcript echoing it back (claude -p's stream-json output does not
+    reliably include a user event for the initiating prompt)."""
+    store = Store(str(tmp_path / "store"))
+    task = runner.Task(task_id="t1", prompt="fix the flaky retry logic", verifier="./verify.sh")
+    result = runner.run_task(
+        task, store, "cfg-a",
+        claude_runner=_fake_claude_runner(_stream_json_lines("sess-instr")),
+        verifier_runner=_fake_verifier_runner(0),
+    )
+    assert result.error is None
+    capture_id = store.latest_capture_id(result.run_id)
+    doc = store.read_source(result.run_id, capture_id)
+    assert doc["task"]["instruction"] == "fix the flaky retry logic"
+
+
 def test_run_task_survives_a_failed_setup_command(tmp_path):
     store = Store(str(tmp_path / "store"))
     task = runner.Task(task_id="t1", prompt="do it", verifier="./verify.sh",

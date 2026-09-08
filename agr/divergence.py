@@ -26,8 +26,19 @@ from .store import Store
 
 
 def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
-    """A PASSING run on the SAME task as ``run_id``, preferring one that
-    shares its sweep_id (an intentionally paired run) when available.
+    """A PASSING run on the SAME task as ``run_id``, requiring a shared
+    configuration_id FIRST (AGR-12) — a divergence report assumes both runs
+    attempted the same thing; a run under a different configuration (a
+    different prompt, tool set, or harness version) is not that, however
+    tempting a coincidentally-passing run on the same task_id looks. When the
+    target declares a configuration_id, a passing run under a DIFFERENT one
+    is never returned — not even as a fallback when no same-config sibling
+    exists, since presenting one anyway would be exactly the incompatible
+    pairing this filter exists to reject. Only when the target declared NO
+    configuration_id (the source never stamped one) does the whole
+    task-matched pool stay eligible. Within whatever pool configuration
+    filtering leaves, prefer one that also shares its sweep_id (an
+    intentionally paired run).
 
     Returns ``None`` when ``run_id`` is not in the store, has no task_id, or
     no passing sibling exists — never a guess at "the closest other run".
@@ -45,8 +56,14 @@ def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
     ]
     if not candidates:
         return None
-    same_sweep = [r for r in candidates if target.get("sweep_id") and r.get("sweep_id") == target.get("sweep_id")]
-    pool = same_sweep or candidates
+    if target.get("configuration_id"):
+        pool = [r for r in candidates if r.get("configuration_id") == target.get("configuration_id")]
+        if not pool:
+            return None
+    else:
+        pool = candidates
+    same_sweep = [r for r in pool if target.get("sweep_id") and r.get("sweep_id") == target.get("sweep_id")]
+    pool = same_sweep or pool
     return pool[0]["run_id"]
 
 
@@ -59,9 +76,19 @@ def _phase_kind_by_event(phases: list[dict]) -> dict[str, str]:
 
 
 def _tool_call_sequence(store: Store, run_id: str, capture_id: str) -> tuple[list[tuple], list[dict]]:
-    """The comparable sequence for one run: (phase_kind, tool, content) for
-    every ``tool_call`` event, in order, alongside the raw event dicts (same
-    index) so a matched/diverged pair can be reported with its event_id.
+    """The comparable sequence for one run: (phase_kind, tool, content,
+    input_identity) for every ``tool_call`` event, in order, alongside the
+    raw event dicts (same index) so a matched/diverged pair can be reported
+    with its event_id.
+
+    The full ``action_signature`` — including its structured
+    ``input_identity`` — is part of the comparison key (AGR-13): dropping it
+    made two Edits of the same path with DIFFERENT replacements compare
+    equal (same phase/tool/path), so a real behavioural divergence between a
+    failing and a passing run went undetected whenever it took the shape of
+    "edited the same file differently" rather than "touched a different
+    file" — exactly the case ``action_signature`` (_util.py) exists to
+    distinguish (R2).
     """
     events = store.read_derived(run_id, capture_id, "events.json") or []
     phases = store.read_derived(run_id, capture_id, "phases.json") or []
@@ -72,18 +99,24 @@ def _tool_call_sequence(store: Store, run_id: str, capture_id: str) -> tuple[lis
         if e.get("event_type") != "tool_call":
             continue
         sig = action_signature(DerivedEvent(**e))
-        seq.append((phase_kind.get(e["event_id"]), sig[0], sig[1]))
+        seq.append((phase_kind.get(e["event_id"]), sig[0], sig[1], sig[2]))
         refs.append(e)
     return seq, refs
 
 
 def _labeled_action(ref: dict, key: tuple) -> dict:
-    return {
+    action = {
         "event_id": ref.get("event_id"),
         "phase_kind": key[0],
         "tool": key[1],
         "content": key[2],
     }
+    if key[3]:
+        # AGR-13: surface WHAT distinguished this action beyond tool+path —
+        # e.g. an Edit's old/new strings — so a reviewer sees why two same-
+        # path actions were reported as a divergence rather than a match.
+        action["input_identity"] = key[3]
+    return action
 
 
 def divergence_report(

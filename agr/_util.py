@@ -57,7 +57,9 @@ def is_tool_failure(event: DerivedEvent) -> bool:
     return event.event_type == "tool_result" and tool_status(event) == STATUS_ERROR
 
 
-def is_tool_success(event: DerivedEvent) -> bool:
+def is_tool_success(event: Optional[DerivedEvent]) -> bool:
+    if event is None:
+        return False
     return event.event_type == "tool_result" and tool_status(event) == STATUS_OK
 
 
@@ -293,25 +295,50 @@ def is_state_changing_action(event: DerivedEvent) -> bool:
 # anything ("rm -f a" should not "relate" to any command via the token "a").
 _MIN_RELATED_TOKEN_LEN = 3
 
-# AGR-04 (PR #56 review): a closed, mechanical set of path markers/extensions
-# that can never be the FUNCTIONAL fix for a failing command — editing
-# documentation or a plain-text note cannot change what a test or a shell
-# command does. Deliberately narrow and format-based (never a semantic read
-# of the file's actual content): a source-code edit under any OTHER path
-# still credits unconditionally below, which is what preserves the
-# "the fix commonly lives in a source file the failing command's own target
-# text never names" reasoning this function was built on — only the
-# unambiguous non-functional cases (a docs/README/text-note edit) are
-# excluded.
-_NON_FUNCTIONAL_EDIT_MARKERS = ("docs/", "documentation/", "/docs/", "readme")
-_NON_FUNCTIONAL_EDIT_EXTENSIONS = (".md", ".rst", ".txt")
+# AGR-04 (PR #56 review), narrowed further by AGR-02 (review 82cc113): a
+# closed, mechanical set of PATH markers — never a file extension — that can
+# never be the FUNCTIONAL fix for a failing command. A path marker names a
+# conventionally repo-meta location (project documentation, licensing,
+# changelog) that no test runner or build ever reads as an input; a bare
+# extension does NOT — a review 82cc113 finding confirmed that excluding
+# every ``.txt``/``.md``/``.rst`` edit by extension alone wrongly excluded a
+# test fixture (``tests/fixtures/input.txt``) and a dependency manifest
+# (``requirements.txt``), both of which are genuinely functional inputs a
+# test run reads. Deliberately narrow and path-based (never a semantic read
+# of the file's actual content): a source-code edit, or a plain-text file
+# NOT under one of these markers, still credits unconditionally below, which
+# is what preserves the "the fix commonly lives in a source file the failing
+# command's own target text never names" reasoning this function was built
+# on — only the unambiguous non-functional, repo-meta locations are excluded.
+_NON_FUNCTIONAL_EDIT_MARKERS = (
+    "docs/", "documentation/", "/docs/", "readme",
+    "changelog", "contributing", "license", "code_of_conduct", "notice",
+)
 
 
 def _is_functional_edit_target(path: str) -> bool:
     lower = path.lower()
-    if any(marker in lower for marker in _NON_FUNCTIONAL_EDIT_MARKERS):
-        return False
-    return not lower.endswith(_NON_FUNCTIONAL_EDIT_EXTENSIONS)
+    return not any(marker in lower for marker in _NON_FUNCTIONAL_EDIT_MARKERS)
+
+
+# AGR-04 (review 82cc113): a closed set of executables whose ordinary effect
+# is a NETWORK probe/request with no plausible relationship to an arbitrary
+# LOCAL file edit — unlike a test/build command (where "the fix lives in a
+# different source file" is the common, expected shape this module was built
+# to credit), a raw connectivity failure has no such story: editing
+# ``calculator.py`` cannot be why a ``curl`` retry to an unrelated host
+# started succeeding. Deliberately narrow and closed, mirroring
+# ``_STATE_CHANGING_EXECUTABLES``: these are the only executables for which a
+# structured mutation is held to the SAME target-overlap test a shell
+# mutation already needs, rather than crediting unconditionally.
+# "http"/"https" are HTTPie's own executable names (invoked as `http GET
+# example.com` / `https example.com`), not URL scheme prefixes.
+_NETWORK_PROBE_EXECUTABLES = {"curl", "wget", "nc", "ncat", "ping", "telnet", "http", "https"}
+
+
+def _target_tokens(target_sig: Optional[tuple]) -> set[str]:
+    tokens = str((target_sig[1] if target_sig else "") or "").split()
+    return {t for t in tokens[1:] if not t.startswith("-") and len(t) >= _MIN_RELATED_TOKEN_LEN}
 
 
 def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optional[tuple]) -> bool:
@@ -323,26 +350,37 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
     IDENTICAL, unchanged ``curl X`` retry was misclassified ``good_recovery``.
 
     The structured mutation tools (Edit/Write/MultiEdit/NotebookEdit) count
-    for any FUNCTIONAL target — editing ANY source file between a failure
-    and its retry is item 5's own primary example of "the agent changed
-    something", and a literal path/token match is unreliable there anyway
-    (the fix is usually in a SOURCE file, not the TEST path the failed
-    command names — hence no target-overlap requirement for these tools, only
-    the format-based functional/non-functional check below). AGR-04 (PR #56
-    review): a documentation/text-note edit (``_is_functional_edit_target``)
-    is excluded even so — a docs/README/.md edit cannot be the functional fix
-    for a failing command, so it must not credit "the agent changed
-    something" merely because SOME file changed. A shell state-changing
-    command counts only when it shares a target with ``target_sig``'s command
-    tail — checked as substring containment, not exact equality, so
-    ``rm -rf tests/__pycache__`` still relates to a failed ``pytest tests/``
-    (the target/tail token ``tests/`` names a directory the rm's own target
-    path lives under). A target under ``_MIN_RELATED_TOKEN_LEN`` characters is
-    excluded from the check.
+    for any FUNCTIONAL target (``_is_functional_edit_target`` — AGR-04/PR #56
+    review, narrowed by AGR-02/review 82cc113 to path markers only, never a
+    bare extension) WHEN the failed operation is not a network probe —
+    editing ANY source file between a failure and its retry is item 5's own
+    primary example of "the agent changed something", and a literal
+    path/token match is unreliable there anyway (the fix is usually in a
+    SOURCE file, not the TEST path the failed command names). AGR-04 (review
+    82cc113): that leniency does not extend to a failed NETWORK PROBE
+    (``_NETWORK_PROBE_EXECUTABLES``) — a source-code edit's extension does
+    not establish any dependency on an unrelated network request, so a
+    mutation only counts there when it shares a target with the failed
+    command, the SAME substring-containment check a shell mutation needs
+    below. A shell state-changing command counts only when it shares a
+    target with ``target_sig``'s command tail — checked as substring
+    containment, not exact equality, so ``rm -rf tests/__pycache__`` still
+    relates to a failed ``pytest tests/`` (the target/tail token ``tests/``
+    names a directory the rm's own target path lives under). A target under
+    ``_MIN_RELATED_TOKEN_LEN`` characters is excluded from the check.
     """
+    failed_tokens = str((target_sig[1] if target_sig else "") or "").split()
+    failed_executable = failed_tokens[0] if failed_tokens else None
     if is_mutation(event):
         path = str(event.payload.get("path") or event.payload.get("content") or "")
-        return _is_functional_edit_target(path)
+        if not _is_functional_edit_target(path):
+            return False
+        if failed_executable not in _NETWORK_PROBE_EXECUTABLES:
+            return True
+        failed_targets = _target_tokens(target_sig)
+        if not failed_targets:
+            return True  # nothing to compare against — cannot rule out relatedness
+        return any(t in path or path in t for t in failed_targets)
     if event.event_type != "tool_call":
         return False
     content = str(event.payload.get("content") or "")
@@ -352,8 +390,7 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
     if target_sig is None:
         return False
     action_targets = {t for t in tokens[1:] if not t.startswith("-") and len(t) >= _MIN_RELATED_TOKEN_LEN}
-    target_tokens = str(target_sig[1] or "").split()
-    failed_targets = {t for t in target_tokens[1:] if not t.startswith("-") and len(t) >= _MIN_RELATED_TOKEN_LEN}
+    failed_targets = _target_tokens(target_sig)
     return any(a in b or b in a for a in action_targets for b in failed_targets)
 
 

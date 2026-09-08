@@ -50,13 +50,27 @@ jobs:
       - name: Build wheel
         run: uv build --wheel
 
+      - name: Resolve the built wheel path
+        id: wheel
+        run: |
+          # The wheel filename embeds the package version (pyproject.toml), so
+          # it must never be hardcoded here — that breaks CI on every version
+          # bump (exactly the version/metadata mismatch AGR-18 is about). uv
+          # does not expand wildcards on install, so resolve the exact path
+          # here and fail loudly if it's missing or ambiguous, never silently
+          # install nothing.
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "expected exactly one wheel in dist/, found: ${wheels[*]:-none}" >&2
+            exit 1
+          fi
+          echo "path=${wheels[0]}" >> "$GITHUB_OUTPUT"
+
       - name: Install wheel into a clean venv (with the api extra)
         run: |
           uv venv /tmp/agr-clean
-          uv pip install --python /tmp/agr-clean/bin/python "dist/agent_game_review-0.1.0-py3-none-any.whl[api]"
-          # Guard the glob shortcut this replaces: uv does not expand wildcards,
-          # so a renamed wheel must fail loudly here, not silently install nothing.
-          test -f dist/agent_game_review-0.1.0-py3-none-any.whl
+          uv pip install --python /tmp/agr-clean/bin/python "${{ steps.wheel.outputs.path }}[api]"
 
       - name: Serve the installed demo outside the repository
         # Run from / so the test cannot accidentally import assets from the

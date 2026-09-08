@@ -104,7 +104,11 @@ class UnresolvedRequirementAtSubmission(Detector):
             "type": "requirement_status", "check_id": c.check_id,
             "status_at_submission": "failed",
             "expected": c.expected, "observed": c.observed,
-            "total_checks": len(ctx.checks),
+            # AGR-08 (review 82cc113): the CURRENT (reconciled) denominator —
+            # a superseded historical observation (agr.checks.reconcile_checks)
+            # no longer speaks for the run's outcome and must not inflate this
+            # count either; matches agr.checks.outcome()'s own `total`.
+            "total_checks": sum(1 for c in ctx.checks if c.effective_status is not None),
         } for c in failing]
         return [self._candidate(
             ctx, "aggregate", kind="omission", anchor_event_ids=[submit.event_id],
@@ -163,7 +167,11 @@ class TerminalFailureWithFailingChecks(Detector):
             "status_at_submission": "failed",
             "expected": c.expected, "observed": c.observed,
             "terminal_event_type": terminal.event_type,
-            "total_checks": len(ctx.checks),
+            # AGR-08 (review 82cc113): the CURRENT (reconciled) denominator —
+            # a superseded historical observation (agr.checks.reconcile_checks)
+            # no longer speaks for the run's outcome and must not inflate this
+            # count either; matches agr.checks.outcome()'s own `total`.
+            "total_checks": sum(1 for c in ctx.checks if c.effective_status is not None),
             # AGR-08: render that limitation explicitly rather than letting a
             # missing last-agent-action silently look like an ordinary anchor.
             "last_agent_action_captured": has_last_agent_action,

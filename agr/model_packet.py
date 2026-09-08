@@ -414,13 +414,20 @@ def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
             rejected.append({"event_id": eid, "reason": "expansion event cap reached"})
             continue
         text = redact(e.text()).text
-        if total + len(text) > _EXPANSION_MAX_CHARS:
-            rejected.append({"event_id": eid, "reason": "expansion size cap reached"})
-            continue
         # R2: the expansion round returns the FULL structured tool input
         # (redacted), plus the tool-use id and explicit status, via the shared
         # projection — so a finding grounded in an edit can retrieve exactly
-        # what was changed.
+        # what was changed. The retained tool_input is bounded only by this
+        # round's own size cap — NOT by evidence_projection()'s small
+        # _PACKET_INPUT_CHARS bound (that bound is for the always-sent packet
+        # excerpt); reusing it here would silently truncate the "full" input
+        # the round promises for anything longer than that excerpt.
+        raw_input = structured_input(e, max_chars=_EXPANSION_MAX_CHARS)
+        tool_input = redact(raw_input).text if raw_input is not None else None
+        combined_len = len(text) + len(tool_input or "")
+        if total + combined_len > _EXPANSION_MAX_CHARS:
+            rejected.append({"event_id": eid, "reason": "expansion size cap reached"})
+            continue
         proj = evidence_projection(e)
         entry = {
             "event_id": eid,
@@ -432,8 +439,8 @@ def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
             entry["tool_use_id"] = proj["tool_use_id"]
         if "status" in proj:
             entry["status"] = proj["status"]
-        if "tool_input" in proj:
-            entry["tool_input"] = redact(proj["tool_input"]).text
-        total += len(text) + len(entry.get("tool_input", ""))
+        if tool_input is not None:
+            entry["tool_input"] = tool_input
+        total += combined_len
         granted.append(entry)
     return {"evidence": granted, "rejected": rejected}

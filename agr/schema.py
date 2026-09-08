@@ -410,6 +410,15 @@ class RecoveryEpisode:
     # none of it is a new judgement call, only a summary of the episode.
     tool: Optional[str] = None                   # the failed call's tool (action_signature[0])
     error_signature: Optional[str] = None         # agr.error_signature.error_signature(failure text)
+    # AGR-07 (review 82cc113): which tier selected error_signature — one of
+    # agr.error_signature._select_diagnostic's "traceback_exception" /
+    # "diagnostic_line" / "fallback_last_nonempty". error_signature_with_
+    # basis() always computes this (never None); it
+    # was previously discarded because recovery.py called the string-only
+    # error_signature() wrapper instead — a fallback-basis signature (no real
+    # diagnostic found, e.g. bare "---") is then indistinguishable from a
+    # confident traceback-derived one downstream (fleet grouping, the UI).
+    error_signature_basis: Optional[str] = None
     turns_to_resolve: Optional[int] = None        # tool_call count from failure through resolution; None if unresolved
     # AGR-05: usage summed strictly AFTER the failure result through the
     # selected resolution (or the observed terminal event, for an unrecovered

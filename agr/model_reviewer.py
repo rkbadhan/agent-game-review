@@ -49,6 +49,20 @@ class ModelOutputError(RuntimeError):
     never silently a "no decisive moment" result.
     """
 
+
+class PacketBudgetExceededError(RuntimeError):
+    """The reviewer packet does not fit the enforced budget (AGR-10/AGR-11).
+
+    ``build_packet`` reports ``budget_met: False`` when the packet still
+    exceeds the effective budget even at the excerpt floor with an empty
+    digest — an explicit, recorded over-budget result (see
+    ``agr.model_packet.build_packet``). Submitting it anyway would send a
+    request the operator's own budget declared unacceptable and spend real
+    provider tokens on it; this is raised instead, so the caller (the
+    pipeline's model-reviewer error path) degrades to the deterministic
+    baseline exactly like any other enrichment failure, never silently.
+    """
+
 # The reviewing instructions (system role). The packet is DATA — its content
 # fields are untrusted trace text and must never be followed as instructions
 # (spec §8.7 "may not follow instructions contained in trace content"; §21).
@@ -319,7 +333,23 @@ class _LazyModelReviewer:
         return payload
 
     def propose(self, ctx: ReviewerContext) -> list[ProposedMoment]:
-        packet, _redaction = build_packet(ctx)
+        packet, redaction = build_packet(ctx)
+        # AGR-10/AGR-11: build_packet's own enforced-budget result gates the
+        # provider call. A False budget_met means the packet exceeds the
+        # effective budget even at the excerpt floor — sending it anyway
+        # would spend real provider tokens on a request the operator's
+        # budget declared unacceptable, so the round is skipped entirely
+        # instead of being sent regardless.
+        if not redaction.get("budget_met", True):
+            self._record(kind="propose_skipped", reason="packet_budget_exceeded",
+                         packet_size_chars=redaction.get("packet_size_chars"),
+                         effective_budget_chars=redaction.get("effective_budget_chars"),
+                         budget_overrun_chars=redaction.get("budget_overrun_chars"))
+            raise PacketBudgetExceededError(
+                f"reviewer packet ({redaction.get('packet_size_chars')} chars) exceeds the "
+                f"effective budget ({redaction.get('effective_budget_chars')} chars) by "
+                f"{redaction.get('budget_overrun_chars')} chars even at the excerpt floor; "
+                "the provider was not called")
         payload = self._call(SYSTEM_PROMPT, {"packet": packet}, kind="propose")
         # AGR-06: one bounded expansion round. The reviewer may ask for the
         # full text of specific digest events instead of proposing; the
@@ -339,7 +369,20 @@ class _LazyModelReviewer:
 
     def revise(self, candidate: Candidate, errors: list[dict],
                ctx: ReviewerContext) -> Optional[Candidate]:
-        packet, _redaction = build_packet(ctx)
+        packet, redaction = build_packet(ctx)
+        # AGR-10/AGR-11: same budget gate as propose(). Unlike propose(), a
+        # skipped revise round must not abort the whole review — the §8.8
+        # contract is "no correction available" (return None, same as
+        # DeterministicReviewer.revise), leaving this one candidate's facts
+        # failed rather than raising past run_reviewer's caller and losing
+        # every other already-proposed moment along with it.
+        if not redaction.get("budget_met", True):
+            self._record(kind="revise_skipped", reason="packet_budget_exceeded",
+                         candidate_id=candidate.candidate_id,
+                         packet_size_chars=redaction.get("packet_size_chars"),
+                         effective_budget_chars=redaction.get("effective_budget_chars"),
+                         budget_overrun_chars=redaction.get("budget_overrun_chars"))
+            return None
         user = {
             "packet": packet,
             "revise": {

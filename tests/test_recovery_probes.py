@@ -372,3 +372,46 @@ def test_changed_attempt_without_success_records_changed_action():
         assert ep.resolution_event_id is None
     # A narrowed command establishes nothing about the original objective.
     assert by_failure["evt_2"].changed_action is False
+
+
+# --- AGR-04 (review 82cc113): missing result / plausible-resolution freeze --
+
+
+def test_mutation_with_no_captured_result_does_not_credit_strategy_change():
+    """An Edit whose result was never captured at all (a partial/interrupted
+    capture — no paired tool_result exists) previously fell back to checking
+    the CALL event itself, which can never be a tool failure either and so
+    silently credited the change. A missing result must leave the change
+    unconfirmed, not default to crediting it."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="Edit", content="/app/calc.py"),
+        # No evt_4 tool_result for the Edit — its result was never captured.
+        ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_6", "tool_result", tool="shell", content="3 passed", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].strategy_changed is False
+    assert eps[0].classification == UNCHANGED_RETRY
+
+
+def test_strategy_changed_is_frozen_at_the_plausible_resolution_point():
+    """The scan keeps running after finding a plausible resolution (still
+    looking for a strict match). A mutation that happens AFTER the plausible
+    resolution already succeeded must not attach strategy-change credit to
+    it — that resolution had already closed before the mutation happened."""
+    events = [
+        ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        ev("evt_2", "tool_result", tool="shell", content="E: failed", exit_code=1),
+        ev("evt_3", "tool_call", tool="shell", content="pytest tests/ -k fast"),
+        ev("evt_4", "tool_result", tool="shell", content="1 passed", exit_code=0),  # plausible
+        ev("evt_5", "tool_call", tool="Edit", content="/app/calc.py"),
+        ev("evt_6", "tool_result", tool="Edit", content="edited", exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == PLAUSIBLE_RECOVERY
+    assert eps[0].resolution_event_id == "evt_4"
+    assert eps[0].strategy_changed is False

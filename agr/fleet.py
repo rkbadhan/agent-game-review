@@ -78,7 +78,39 @@ class EpisodeGroup:
     # (shared events are real, not a bug to eliminate).
     overlapping_usage_events: int = 0
     total_wall_ms: int = 0
+    # AGR-05/06 (review 82cc113): how many of this group's episodes have
+    # usage_completeness == "unavailable" — no cost was ever recorded in
+    # their window at all. A group where every episode is unavailable would
+    # otherwise render as a measured "0 token(s)", indistinguishable from a
+    # group that genuinely cost nothing.
+    usage_unavailable_count: int = 0
+    # AGR-07 (review 82cc113): how many of this group's episodes selected
+    # their error_signature via the opaque "fallback_last_nonempty" tier —
+    # no traceback, no recognised diagnostic marker anywhere in the failure
+    # text, so the signature is just whatever line happened to be last (the
+    # groups like bare "---"/"}"/"===" the review calls out). Distinct from a
+    # confident traceback/diagnostic-derived signature, which the UI should
+    # not present identically.
+    fallback_basis_count: int = 0
     example_anchors: list[dict] = field(default_factory=list)
+
+    @property
+    def all_fallback_basis(self) -> bool:
+        """True when EVERY episode in the group is an opaque fallback
+        signature — this group's key is not a meaningful diagnostic at all."""
+        return self.count > 0 and self.fallback_basis_count == self.count
+
+    @property
+    def usage_availability(self) -> str:
+        """"unavailable" (no episode in the group ever measured usage),
+        "partial" (some did, some didn't), or "measured" (every episode has
+        at least some recorded usage — total_tokens can be trusted as a real
+        count, including a genuine zero)."""
+        if self.usage_unavailable_count == 0:
+            return "measured"
+        if self.usage_unavailable_count == self.count:
+            return "unavailable"
+        return "partial"
 
     @property
     def distinct_runs(self) -> int:
@@ -144,12 +176,19 @@ class EpisodeGroup:
             # count of tokens the underlying events recorded, nothing more.
             "total_tokens": self.total_tokens,
             "overlapping_usage_events": self.overlapping_usage_events,
+            "usage_unavailable_count": self.usage_unavailable_count,
+            "usage_availability": self.usage_availability,
             "usage_note": (
                 "total_tokens is the union of underlying usage records across this "
                 "group's episodes; overlapping_usage_events > 0 means some events were "
                 "covered by more than one episode and are counted once, not per episode."
+                + (f" {self.usage_unavailable_count} of {self.count} episode(s) never had "
+                   "usage instrumented at all — total_tokens undercounts this group's real "
+                   "cost." if self.usage_unavailable_count else "")
             ),
             "total_wall_ms": self.total_wall_ms,
+            "fallback_basis_count": self.fallback_basis_count,
+            "all_fallback_basis": self.all_fallback_basis,
             "example_anchors": self.example_anchors,
         }
 
@@ -182,6 +221,9 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
                 "episode_id": e.get("episode_id"),
                 "failure_event_id": e.get("failure_event_id"),
                 "classification": e.get("classification"),
+                # AGR-07: which tier actually selected error_signature for
+                # THIS episode — preserved through to the UI's drill-in.
+                "error_signature_basis": e.get("error_signature_basis"),
             }
             for e in eps[:_MAX_ANCHORS]
         ]
@@ -203,6 +245,9 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
             # otherwise double-count those events' tokens.
             **dict(zip(("total_tokens", "overlapping_usage_events"), _usage_union(eps))),
             total_wall_ms=sum(e.get("wall_ms") or 0 for e in eps),
+            usage_unavailable_count=sum(1 for e in eps if e.get("usage_completeness") == "unavailable"),
+            fallback_basis_count=sum(
+                1 for e in eps if e.get("error_signature_basis") == "fallback_last_nonempty"),
             example_anchors=anchors,
         ))
     groups.sort(key=lambda g: g.count, reverse=True)
@@ -245,6 +290,12 @@ class FleetUsageSummary:
     episode_count: int
     affected_runs: int
     overlapping_usage_events: int
+    # AGR-05/06 (review 82cc113): how many of EVERY episode in the store has
+    # usage_completeness == "unavailable" — no cost was ever recorded for it.
+    # Those episodes contribute nothing to total_tokens, so a fleet with many
+    # unavailable episodes otherwise reads as "0 token(s)" with no way to
+    # tell that apart from a fleet that genuinely cost nothing.
+    usage_unavailable_episode_count: int = 0
     usage_note: str = (
         "total_tokens is the union of underlying usage records across every recovery "
         "episode in the store; it is associated with episode windows, not avoidable "
@@ -254,12 +305,18 @@ class FleetUsageSummary:
     )
 
     def to_dict(self) -> dict:
+        note = self.usage_note
+        if self.usage_unavailable_episode_count:
+            note += (f" {self.usage_unavailable_episode_count} of {self.episode_count} "
+                     "episode(s) never had usage instrumented at all — total_tokens "
+                     "undercounts the fleet's real cost.")
         return {
             "total_tokens": self.total_tokens,
             "episode_count": self.episode_count,
             "affected_runs": self.affected_runs,
             "overlapping_usage_events": self.overlapping_usage_events,
-            "usage_note": self.usage_note,
+            "usage_unavailable_episode_count": self.usage_unavailable_episode_count,
+            "usage_note": note,
         }
 
 
@@ -287,4 +344,6 @@ def fleet_usage_summary(store: Store) -> FleetUsageSummary:
         episode_count=len(all_eps),
         affected_runs=len({e["run_id"] for e in all_eps}),
         overlapping_usage_events=overlapping,
+        usage_unavailable_episode_count=sum(
+            1 for e in all_eps if e.get("usage_completeness") == "unavailable"),
     )
