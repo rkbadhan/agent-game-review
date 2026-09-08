@@ -246,6 +246,37 @@ def test_terminal_failure_with_failing_checks_emits_one_aggregate_candidate():
     assert all(f["total_checks"] == 4 for f in cand.structured_facts)
 
 
+def test_total_checks_uses_the_reconciled_denominator_not_every_observation(tmp_path):
+    """AGR-08 (review 82cc113): a fixture with four HISTORICAL observations
+    but three CURRENT (reconciled) checks must report total_checks == 3, not
+    the raw len(ctx.checks) == 4 — an earlier same-scope observation a later
+    one superseded no longer speaks for the run's outcome (agr.checks.
+    reconcile_checks) and must not inflate this denominator either."""
+    from agr.detectors import TerminalFailureWithFailingChecks
+    from agr.schema import VerifierCheck
+    checks = [
+        # Superseded by C1b: excluded from the CURRENT view (effective_status
+        # is None), so it must not count toward total_checks.
+        VerifierCheck(check_id="C1a", run_id="r", source_capture_id="c", name="c1",
+                      status="failed", source="output_interpretation", timing="during_run",
+                      scope="pytest tests/", sequence=0, superseded_by="C1b"),
+        VerifierCheck(check_id="C1b", run_id="r", source_capture_id="c", name="c1",
+                      status="failed", source="output_interpretation", timing="during_run",
+                      scope="pytest tests/", sequence=1),
+        VerifierCheck(check_id="C2", run_id="r", source_capture_id="c", name="c2",
+                      status="failed", source="native_structured"),
+        VerifierCheck(check_id="C3", run_id="r", source_capture_id="c", name="c3",
+                      status="passed", source="native_structured"),
+    ]
+    ctx = _terminal_ctx("run_timed_out", checks)
+    cands = TerminalFailureWithFailingChecks().run(ctx).candidates
+    assert len(cands) == 1
+    cand = cands[0]
+    # C1a is superseded: not a current failure, so not in affected_checks.
+    assert set(cand.affected_checks) == {"C1b", "C2"}
+    assert all(f["total_checks"] == 3 for f in cand.structured_facts)
+
+
 def test_terminal_failure_no_last_agent_action_is_recorded_explicitly():
     """When the trace has no main_agent event at all, the limitation is
     carried on the fact rather than silently anchoring only on the terminal

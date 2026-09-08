@@ -137,12 +137,24 @@ def run_task(
     claude_runner = claude_runner if claude_runner is not None else default_claude_runner
     verifier_runner = verifier_runner if verifier_runner is not None else default_verifier_runner
     workdir = Path(tempfile.mkdtemp(prefix=f"agr-runner-{task.task_id}-"))
+    session_path = workdir / "session.stream.jsonl"
+    succeeded = False
     try:
         for cmd in task.setup:
             subprocess.run(cmd, shell=True, cwd=str(workdir), timeout=task.timeout_s, check=True)
 
-        proc = claude_runner(task.prompt, workdir, task.timeout_s)
-        session_path = workdir / "session.stream.jsonl"
+        try:
+            proc = claude_runner(task.prompt, workdir, task.timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            # A timed-out claude_runner never returns a CompletedProcess, but
+            # subprocess attaches whatever it managed to capture before the
+            # deadline to the exception itself — write that out so a timeout
+            # still leaves a (partial) transcript instead of no evidence at all.
+            partial = exc.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", "replace")
+            session_path.write_text(partial, encoding="utf-8")
+            raise
         session_path.write_text(proc.stdout or "", encoding="utf-8")
 
         verifier_proc = verifier_runner(task.verifier, workdir, task.timeout_s)
@@ -153,11 +165,12 @@ def run_task(
 
         adapter = get_adapter("claude")
         result = adapter.convert(
-            str(session_path), task_id=task.task_id, verifier=sidecar,
+            str(session_path), task_id=task.task_id, instruction=task.prompt, verifier=sidecar,
             configuration_id=configuration_id,
         )
         rc = _ingest_doc(result.doc, store)
         run_id = (result.doc.get("run") or {}).get("logical_run_id")
+        succeeded = True
         return TaskRunResult(
             task_id=task.task_id, run_id=run_id, ingested=(rc == 0),
             verifier_status=sidecar["checks"][0]["status"], workdir=str(workdir),
@@ -167,7 +180,11 @@ def run_task(
             task_id=task.task_id, error=f"{type(exc).__name__}: {exc}", workdir=str(workdir),
         )
     finally:
-        if not keep_workdir:
+        # A workdir is the only evidence of what happened. Discard it after a
+        # successful, ingested run — there is nothing left to learn from it —
+        # but never on failure: a crash or timeout is exactly when a human
+        # needs the workdir (partial transcript, setup output) to diagnose it.
+        if succeeded and not keep_workdir:
             shutil.rmtree(workdir, ignore_errors=True)
 
 

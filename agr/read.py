@@ -720,6 +720,12 @@ def list_runs(store: Store) -> list[dict]:
             # The real sweep this run was ingested under (§7.1), or None when the
             # source declared none — the honest input to the §4.3.1 sweep summary.
             "sweep_id": rs.get("sweep_id"),
+            # AGR-12: the configuration this run was ingested under (item 26's
+            # runner harness stamps it; other sources may leave it None) — the
+            # grouping a sibling comparison must prefer before sweep_id, since
+            # two runs under different configurations (prompt, tool set,
+            # harness version) are not attempting the same thing.
+            "configuration_id": rs.get("configuration_id"),
             "capture_id": capture_id,
             "capture_revision": entry.get("capture_revision"),
             "capture_completeness": entry.get("capture_completeness"),

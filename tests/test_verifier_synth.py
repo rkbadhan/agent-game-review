@@ -128,6 +128,83 @@ def test_cargo_compile_error_produces_an_explicit_error_check_not_silence():
     assert check["status"] == "error"
 
 
+# --- AGR-02 (review 82cc113): mixed pass+failure signals in one invocation --
+
+
+def test_go_build_failed_sibling_is_not_masked_by_verbose_passing_tests():
+    """A package that fails to BUILD never produces a --- PASS/FAIL line (it
+    never compiled) — only its own summary line. Verbose per-test PASSES for
+    a DIFFERENT, successfully-built package must not mask it."""
+    output = "--- PASS: TestOK (0.00s)\nPASS\nok  \tmypkg\t0.010s\nFAIL\tother/package [build failed]\n"
+    steps = _call_result("c1", "go test ./...", output)
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "failed"
+    assert "1 failed" in check["name"]
+
+
+def test_cargo_compile_error_alongside_a_passing_crate_summary_is_not_masked():
+    """A workspace where one crate's tests pass cleanly (a real "test
+    result: ok." line) while ANOTHER crate fails to compile must not read as
+    a clean pass just because a parseable summary exists somewhere."""
+    output = ("test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured\n\n"
+              "error[E0308]: mismatched types\n"
+              "error: could not compile `other-crate` due to previous error\n")
+    steps = _call_result("c1", "cargo test --workspace", output)
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "error"
+
+
+def test_passing_summary_text_does_not_override_an_explicit_tool_failure():
+    """The tool's own exit status (a fatal crash during cleanup AFTER pytest
+    printed its summary) is a real invocation failure a text parse alone
+    cannot see — reconciled, never silently overridden by a clean-looking
+    parsed summary."""
+    steps = [
+        {"step_id": "c1c", "kind": "tool_call", "actor": "main_agent", "tool": "shell",
+         "content": "pytest tests/", "tool_use_id": "c1"},
+        {"step_id": "c1r", "kind": "tool_result", "actor": "tool", "tool": "shell",
+         "content": "10 passed", "tool_use_id": "c1", "exit_code": 1},
+    ]
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "error"
+
+
+def test_explicit_tool_success_with_a_clean_pass_still_passes():
+    """The reconciliation must not demote an ORDINARY clean pass."""
+    steps = [
+        {"step_id": "c1c", "kind": "tool_call", "actor": "main_agent", "tool": "shell",
+         "content": "pytest tests/", "tool_use_id": "c1"},
+        {"step_id": "c1r", "kind": "tool_result", "actor": "tool", "tool": "shell",
+         "content": "10 passed", "tool_use_id": "c1", "exit_code": 0},
+    ]
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "passed"
+
+
+def test_genuine_test_failure_with_its_normal_nonzero_exit_is_failed_not_error():
+    """PR #57 review: a test runner exits non-zero WHENEVER any test fails —
+    that is the ordinary, expected shape of a real failure, not evidence of a
+    separate tool-level crash. tool_level_failure must only ever demote a
+    PASSING text summary the tool contradicts (see the sibling test above);
+    it must never override a text parse that already found real failures,
+    or every ordinary failing run with a captured exit code would silently
+    become "error" instead of "failed" and skip the AGR-08 detectors, which
+    select on effective_status == "failed"."""
+    steps = [
+        {"step_id": "c1c", "kind": "tool_call", "actor": "main_agent", "tool": "shell",
+         "content": "pytest tests/", "tool_use_id": "c1"},
+        {"step_id": "c1r", "kind": "tool_result", "actor": "tool", "tool": "shell",
+         "content": "3 passed, 2 failed in 1.2s", "tool_use_id": "c1", "exit_code": 1},
+    ]
+    verifier = synthesize_verifier(_doc(steps))
+    check = verifier["checks"][0]
+    assert check["status"] == "failed"
+
+
 def test_synthesized_checks_carry_scope_and_sequence():
     steps = _call_result("c1", "pytest tests/test_a.py", "1 passed")
     verifier = synthesize_verifier(_doc(steps))

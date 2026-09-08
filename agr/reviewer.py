@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 from . import version
-from ._util import action_signature, is_tool_failure, paired_result
+from ._util import action_signature, is_mutation, is_tool_failure, paired_result, structured_input
 from .recovery import GOOD_RECOVERY, UNRECOVERED
 from .schema import (
     ATTRIBUTION_LEVELS,
@@ -143,6 +143,7 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
     deterministic code actually verified).
     """
     check_by_id = {c.check_id: c for c in ctx.checks}
+    events_by_id = {e.event_id: e for e in ctx.events}
     event_ids = {e.event_id for e in ctx.events}
     observed_artifacts = {
         e.payload.get("artifact_path")
@@ -177,19 +178,39 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             # then render as a failure.
             passed = check is not None and claimed == check.status
             recomputed = check.status if check else None
-            # What the recomputation can honestly support: the FINAL verifier
-            # status is always known; "at submission" is only known when the
-            # agent's own trace observed the failure before the run ended (AGR-03:
-            # a later failing check is not an agent-observed failure unless the
-            # trace supports that timing and visibility).
-            annotated["status_basis"] = "final_verifier"
-            annotated["agent_observed_failure"] = bool(
-                passed and claimed == "failed"
-                and observed_check_statuses.get(fact.get("check_id")) == "failed")
-            # The agent's last observed status for this check, if any — the UI
-            # uses it to word the timing honestly (observed-pass vs never seen).
-            annotated["agent_observed_status"] = observed_check_statuses.get(
-                fact.get("check_id"))
+            # AGR-08 (review 82cc113): an in-session check (agr.verifier_synth,
+            # source == "output_interpretation", timing == "during_run") is
+            # built DIRECTLY from the agent's own trace — its source_pointers
+            # already ARE the agent's observation of this result. It never
+            # needs the check-id/status text pattern below, which only ever
+            # matches when the agent's OWN OUTPUT happens to echo a check id
+            # like "C1 FAILED" — never a synthesized id like insession_pytest_1,
+            # so that pattern can never match an in-session check and always
+            # reported "no agent-observed failure" for one, even with the
+            # failing pytest/cargo/go output sitting right in the trace.
+            in_session = check is not None and check.source == "output_interpretation" \
+                and check.timing == "during_run"
+            if in_session:
+                annotated["status_basis"] = "in_session_observation"
+                annotated["agent_observed_failure"] = bool(
+                    passed and claimed == "failed" and check.status == "failed")
+                annotated["agent_observed_status"] = check.status if check else None
+            else:
+                # What the recomputation can honestly support: the FINAL
+                # verifier status is always known; "at submission" is only
+                # known when the agent's own trace observed the failure
+                # before the run ended (AGR-03: a later failing check is not
+                # an agent-observed failure unless the trace supports that
+                # timing and visibility).
+                annotated["status_basis"] = "final_verifier"
+                annotated["agent_observed_failure"] = bool(
+                    passed and claimed == "failed"
+                    and observed_check_statuses.get(fact.get("check_id")) == "failed")
+                # The agent's last observed status for this check, if any —
+                # the UI uses it to word the timing honestly (observed-pass
+                # vs never seen).
+                annotated["agent_observed_status"] = observed_check_statuses.get(
+                    fact.get("check_id"))
             if check is not None:
                 # Canonical fields (AGR follow-up F1): the displayed status and
                 # expected/observed values are sourced from the check record,
@@ -231,11 +252,21 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             # action signatures alone are not "no new information" — the
             # recorded outputs must also be captured and equivalent. Two
             # identical polls returning different results are an observation.
+            # AGR-10: a repeated mutation (Edit/Write) cannot be validated as
+            # "no new information" from acknowledgement text alone — "ok"
+            # says nothing about what the file became. detectors.py never
+            # emits this claim for a mutation for exactly that reason; the
+            # validator must refuse to pass a model-proposed one too, or a
+            # repeated-mutation moment slips through Stage G on ack-text
+            # equivalence alone.
+            cited = [events_by_id.get(e) for e in evs]
+            any_mutation = any(ev is not None and is_mutation(ev) for ev in cited)
             passed = (
                 len(evs) >= 2
                 and all(s is not None for s in sigs)
                 and len(set(sigs)) == 1
                 and not strat_after.get(tuple(evs[:2]), False)
+                and not any_mutation
                 and _outputs_equivalent(ctx.events, evs)
             )
         elif ftype == "state_transition":
@@ -280,7 +311,7 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
                                        "reason": "empty_quote"})
                     continue
                 ev = next((e for e in ctx.events if e.event_id == eid), None)
-                matched = ev is not None and quote in _norm_text(ev.text())
+                matched = ev is not None and quote in _norm_text(_quotable_text(ev))
                 recomputed.append({"event_id": eid, "matched": matched,
                                    "event_present": ev is not None})
             passed = bool(quotes) and all(r["matched"] for r in recomputed)
@@ -300,6 +331,21 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
 def _norm_text(s: str) -> str:
     """Normalise for quote matching: lowercase, collapse whitespace."""
     return " ".join((s or "").lower().split())
+
+
+def _quotable_text(ev: DerivedEvent) -> str:
+    """Everything a quote may legitimately be copied from for this event.
+
+    ``DerivedEvent.text()`` only hoists a few display fields (content/data/
+    path/tool/summary) — it does NOT include the structured ``tool_input``
+    (an Edit's old/new strings, a Write's content) that the reviewer packet
+    and expansion round hand the model as this event's retained evidence
+    (R2). A quote copied verbatim from that structured input is authentic
+    evidence and must not fail recomputation just because it is absent from
+    the narrower display text.
+    """
+    si = structured_input(ev, max_chars=10**9)
+    return ev.text() if si is None else f"{ev.text()} {si}"
 
 
 def _outputs_equivalent(events: list[DerivedEvent], event_ids: list[str]) -> bool:
@@ -581,18 +627,24 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
         detail = ""
         if fact.get("expected") is not None or fact.get("observed") is not None:
             detail = f" (expected {fact.get('expected')}, observed {fact.get('observed')})"
+        # AGR-08 (review 82cc113): an in-session check (agr.verifier_synth) is
+        # not the run's post-run verifier — it is a test invocation the agent
+        # itself ran and observed mid-trace. Naming it "the run's final
+        # verifier" misdescribes where the evidence came from.
+        source_label = ("an in-session observation" if fact.get("status_basis") == "in_session_observation"
+                        else "the run's final verifier")
         if status == "passed":
-            return f"Requirement check {fact.get('check_id')} passed the run's final verifier."
+            return f"Requirement check {fact.get('check_id')} passed {source_label}."
         if status not in ("failed", None):
-            return (f"Requirement check {fact.get('check_id')} ended with status '{status}' in the "
-                    f"run's final verifier; the outcome is undetermined.")
+            return (f"Requirement check {fact.get('check_id')} ended with status '{status}' in "
+                    f"{source_label}; the outcome is undetermined.")
         if fact.get("agent_observed_failure"):
             # The agent's own trace shows it seeing this failure before the run
             # ended, so "still failing at submission" is evidence-backed.
             return f"Requirement check {fact.get('check_id')} was still failing at submission{detail}."
         # A post-run verifier result is not something the agent saw (AGR-03:
         # final verifier status ≠ status known at submission).
-        return (f"Requirement check {fact.get('check_id')} failed the run's final verifier"
+        return (f"Requirement check {fact.get('check_id')} failed {source_label}"
                 f"{detail}; the agent's trace records no observation of this check.")
     if ftype == "repetition":
         evs = fact.get("events", [])
@@ -655,8 +707,17 @@ def _render_requirement_status_group(facts: list[dict]) -> str:
     if observed:
         clauses.append(f"still failing at submission: {', '.join(sorted(observed))}")
     if unobserved:
+        # AGR-08 (review 82cc113): "the run's final verifier" only describes a
+        # post-run check — an in-session check the agent ran itself never
+        # reaches this bucket for a status the agent actually observed
+        # (see validate_facts), but the wording still names its real source
+        # rather than assuming every failing check came from a post-run verifier.
+        by_check = {f["check_id"]: f for f in facts}
+        unobs_source = ("an in-session observation"
+                        if all(by_check[cid].get("status_basis") == "in_session_observation" for cid in unobserved)
+                        else "the run's final verifier")
         clauses.append(
-            f"failing the run's final verifier, with no agent-observed failure before the run "
+            f"failing {unobs_source}, with no agent-observed failure before the run "
             f"ended: {', '.join(sorted(unobserved))}")
     for f in other:
         clauses.append(f"{f.get('check_id')} ended with status '{f.get('status')}' (undetermined)")
@@ -948,7 +1009,7 @@ def _quote_authenticity(enr: Enrichment, ctx: ReviewerContext) -> str:
         eid = q.get("event_id")
         quote = _norm_text(q.get("quote") or "")
         ev = next((e for e in ctx.events if e.event_id == eid), None)
-        if not quote or ev is None or quote not in _norm_text(ev.text()):
+        if not quote or ev is None or quote not in _norm_text(_quotable_text(ev)):
             return "dangling"
     return "authentic"
 
@@ -989,7 +1050,7 @@ def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
         eid = q.get("event_id")
         quote = _norm_text(q.get("quote") or "")
         ev = next((e for e in ctx.events if e.event_id == eid), None)
-        if not quote or ev is None or quote not in _norm_text(ev.text()):
+        if not quote or ev is None or quote not in _norm_text(_quotable_text(ev)):
             return "dangling_references"
         quoted.append(quote)
     if not quoted:

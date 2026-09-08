@@ -416,6 +416,7 @@
   th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
   td.mono, .mono { font-family:var(--mono); }
   .subline { color:var(--muted); font-size:12px; margin-bottom:8px; }
+  .subline.warn { color:var(--amber); }
   .chip { font-family:var(--mono); font-size:11px; padding:1px 6px; border:1px solid var(--line); border-radius:5px; color:var(--muted); }
   .badge { display:inline-flex; align-items:center; gap:5px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:650; }
   .badge.pass { color:var(--moss); background:var(--moss-soft); } .badge.fail { color:var(--rust); background:var(--rust-soft); }
@@ -486,6 +487,13 @@
      it scrolls in its own container rather than widening the card or the page. */
   .table-scroll { overflow-x:auto; }
   .table-scroll .vs-table { min-width:760px; }
+  /* §4.18 "Tables support keyboard navigation and retain headers when
+     scrolled" (AGR-14): the header row stays pinned below the app bar as a
+     long fleet/sibling table scrolls past it, instead of scrolling the
+     column labels out of view on a table that can run to dozens of rows. An
+     opaque background is required — sticky content must not show whatever
+     scrolls underneath it. */
+  .vs-table th { position:sticky; top:60px; z-index:1; background:var(--paper); }
   /* Item 21: the sibling divergence point — the row the whole view exists to find. */
   .sib-divergence-point { margin:12px 0; padding:12px; border-radius:9px;
     background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 30%,transparent); }
@@ -494,6 +502,14 @@
   .vs-rate { font-family:var(--mono); font-size:11.5px; }
   .vs-arrow { color:var(--faint); padding:0 4px; }
   .vs-counts { color:var(--muted); font-size:10.5px; }
+  /* AGR-04 (review 82cc113): the fleet table's per-group resolution
+     breakdown — confirmed/plausible/unrecovered as distinct labeled parts
+     sharing one cell, instead of one collapsed unrecovered percentage. */
+  .vs-resolution { display:flex; flex-direction:column; gap:2px; font-size:10.5px; }
+  .vs-resolution-part { white-space:nowrap; }
+  .vs-resolution-part.confirmed { color:var(--moss); }
+  .vs-resolution-part.plausible { color:var(--amber); }
+  .vs-resolution-part.unrecovered { color:var(--rust); }
   .chg { display:inline-flex; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:730;
     white-space:nowrap; border:1px solid; }
   .chg.improved { color:var(--moss); background:var(--moss-soft); border-color:color-mix(in srgb,var(--moss) 34%,transparent); }

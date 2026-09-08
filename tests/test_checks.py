@@ -224,3 +224,73 @@ def test_error_status_check_counts_as_undetermined_not_failed():
     assert result["status"] == "UNDETERMINED"
     assert result["undetermined_checks"] == ["k1"]
     assert result["failed_checks"] == []
+
+
+# --- AGR-02 (review 82cc113): in-session-only PASSED needs declared coverage -
+
+def _contract(items):
+    from agr.schema import ContractItem, TaskContract
+    return TaskContract(task_id="t", contract_version=1, status="draft", items=[
+        ContractItem(id=iid, description="", source_type=st, importance=imp,
+                     mapped_checks=list(mapped))
+        for iid, st, imp, mapped in items
+    ])
+
+
+def test_in_session_pass_with_uncovered_required_item_is_undetermined():
+    """One passing smoke test the agent happened to run must not become a
+    task-level PASSED when the author's declared instruction has a required
+    item no check ever mapped to."""
+    check = _check("k1", "passed", scope="pytest tests/test_smoke.py", sequence=0)
+    contract = _contract([
+        ("R1", "stated_requirement", "required", ["k1"]),
+        ("R2", "stated_requirement", "required", []),  # never covered by any check
+    ])
+    result = outcome([check], contract)
+    assert result["status"] == "UNDETERMINED"
+    assert result["coverage_gaps"] == ["R2"]
+
+
+def test_in_session_pass_with_full_declared_coverage_still_passes():
+    check = _check("k1", "passed", scope="pytest tests/", sequence=0)
+    contract = _contract([("R1", "stated_requirement", "required", ["k1"])])
+    result = outcome([check], contract)
+    assert result["status"] == "PASSED"
+    assert result["coverage_gaps"] == []
+
+
+def test_native_structured_pass_is_unaffected_by_coverage_gaps():
+    """A real external verifier's PASSED already carries author authority —
+    the coverage requirement is specific to in-session-synthesized evidence."""
+    check = VerifierCheck(check_id="k1", run_id="r", source_capture_id="c", name="k1",
+                          status="passed", source="native_structured")
+    contract = _contract([
+        ("R1", "stated_requirement", "required", ["k1"]),
+        ("R2", "stated_requirement", "required", []),
+    ])
+    result = outcome([check], contract)
+    assert result["status"] == "PASSED"
+
+
+def test_uncovered_optional_item_does_not_block_in_session_pass():
+    check = _check("k1", "passed", scope="pytest tests/", sequence=0)
+    contract = _contract([
+        ("R1", "stated_requirement", "required", ["k1"]),
+        ("R2", "stated_requirement", "optional", []),
+    ])
+    result = outcome([check], contract)
+    assert result["status"] == "PASSED"
+
+
+def test_uncovered_verifier_enforced_item_does_not_block_in_session_pass():
+    """A verifier_enforced item is synthesized FROM a check — it is covered by
+    construction and must never itself count as a coverage gap."""
+    check = _check("k1", "passed", scope="pytest tests/", sequence=0)
+    contract = _contract([("V-k1", "verifier_enforced", "required", [])])
+    result = outcome([check], contract)
+    assert result["status"] == "PASSED"
+
+
+def test_omitting_contract_preserves_original_behaviour():
+    check = _check("k1", "passed", scope="pytest tests/", sequence=0)
+    assert outcome([check])["status"] == "PASSED"

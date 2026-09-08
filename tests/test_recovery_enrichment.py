@@ -38,8 +38,12 @@ def test_exact_rerun_recovery_is_fully_enriched():
             ts="2026-09-08T10:00:01Z", cost={"usage": {"input_tokens": 100, "output_tokens": 20}}, exit_code=1),
         _ev("evt_3", "tool_call", tool="shell", content="cat calc.py",
             ts="2026-09-08T10:00:05Z"),
+        # AGR-05 (review 82cc113): a MEASURED zero (cost data present, it just
+        # sums to 0 tokens for this cheap read) is what "every turn in the
+        # window is instrumented" looks like — distinct from a turn with no
+        # cost record at all (see the partial-coverage test below).
         _ev("evt_4", "tool_result", tool="shell", content="def add(a, b): return a + b + 1",
-            ts="2026-09-08T10:00:06Z", exit_code=0),
+            ts="2026-09-08T10:00:06Z", cost={"usage": {"input_tokens": 0, "output_tokens": 0}}, exit_code=0),
         _ev("evt_5", "tool_call", tool="shell", content="pytest tests/",
             ts="2026-09-08T10:00:10Z"),
         _ev("evt_6", "tool_result", tool="shell", content="3 passed",
@@ -61,6 +65,26 @@ def test_exact_rerun_recovery_is_fully_enriched():
     assert ep.usage_completeness == "complete"
     assert ep.wall_ms == 11000  # 10:00:01 -> 10:00:12
     assert ep.resolved_by == "shell"
+
+
+def test_usage_completeness_is_partial_when_one_turn_in_the_window_is_unmeasured():
+    """AGR-05 (review 82cc113): observing the window's own end (a real
+    resolution) does not prove every turn inside it was cost-instrumented.
+    Here "cat calc.py" carries no cost record at all while the resolving
+    "pytest tests/" does — a genuine coverage gap, not a measured zero."""
+    events = [
+        _ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        _ev("evt_2", "tool_result", tool="shell", content="AssertionError: 5 != 4",
+            cost={"usage": {"input_tokens": 100, "output_tokens": 20}}, exit_code=1),
+        _ev("evt_3", "tool_call", tool="shell", content="cat calc.py"),
+        _ev("evt_4", "tool_result", tool="shell", content="def add(a, b): return a + b + 1", exit_code=0),
+        _ev("evt_5", "tool_call", tool="shell", content="pytest tests/"),
+        _ev("evt_6", "tool_result", tool="shell", content="3 passed",
+            cost={"usage": {"input_tokens": 50, "output_tokens": 10}}, exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].usage_completeness == "partial"
 
 
 def test_unrecovered_failure_has_no_resolution_derived_fields():
@@ -293,3 +317,34 @@ def test_initiating_attempt_tokens_come_from_the_failing_call_and_result():
     eps = classify_recoveries(events, "r", "c")
     assert eps[0].initiating_attempt_tokens == 500 + 60
     assert eps[0].episode_window_tokens == 0
+
+
+# --- AGR-07 (review 82cc113): error_signature_basis is preserved -----------
+
+
+def test_error_signature_basis_is_a_real_diagnostic_tier_not_discarded():
+    """A traceback-derived signature carries its confident basis, not just
+    the bare text — recovery previously called the string-only
+    error_signature() wrapper and lost this before it ever reached storage."""
+    events = [
+        _ev("evt_1", "tool_call", tool="shell", content="pytest tests/"),
+        _ev("evt_2", "tool_result", tool="shell",
+            content="Traceback (most recent call last):\n  File \"a.py\", line 1\nAssertionError: 5 != 4",
+            exit_code=1),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].error_signature_basis == "traceback_exception"
+
+
+def test_error_signature_basis_is_fallback_when_no_diagnostic_is_found():
+    """A failure with no traceback and no recognised diagnostic marker
+    anywhere gets the labelled fallback basis, not one indistinguishable
+    from a confident selection."""
+    events = [
+        _ev("evt_1", "tool_call", tool="shell", content="./run.sh"),
+        _ev("evt_2", "tool_result", tool="shell", content="---", exit_code=1),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].error_signature_basis == "fallback_last_nonempty"

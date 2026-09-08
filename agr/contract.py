@@ -343,23 +343,32 @@ def derive_observations(
     """Derive each item's satisfaction from its mapped verifier checks (spec §6.5).
 
     Satisfaction is an evidence-backed *observation*, not assumed ground truth.
-    The deterministic derivation is intentionally conservative:
+    The deterministic derivation is intentionally conservative, and reads each
+    mapped check's *current* (reconciled) view — ``effective_status`` — never
+    its raw, immutable ``status``. A check a later same-scope check has
+    superseded no longer speaks for its item at all (AGR-02, review 82cc113):
+    a first attempt that failed and was superseded by a passing retry must not
+    keep marking the item ``evidenced_violated`` after the run's own
+    reconciliation has moved past it.
 
-    * any mapped check failed        -> ``evidenced_violated``
-    * all mapped checks passed        -> ``evidenced_satisfied``
-    * mapped checks only skipped/error/unknown -> ``unknown``
-    * no mapped check at all           -> ``not_observed``
+    * any live check's effective status is "failed"      -> ``evidenced_violated``
+    * every live check's effective status is "passed"     -> ``evidenced_satisfied``
+    * live checks exist but are only skipped/error/unknown -> ``unknown``
+    * mapped checks exist but every one is superseded      -> ``not_observed``
+    * no mapped check at all                                -> ``not_observed``
     """
     by_id = {c.check_id: c for c in checks}
     at_event = _final_event_id(events)
     observations: list[ContractObservation] = []
     for item in contract.items:
         mapped = [by_id[cid] for cid in item.mapped_checks if cid in by_id]
-        if not mapped:
-            status, derivation = "not_observed", "no_mapped_check"
-        elif any(c.status == "failed" for c in mapped):
+        live = [c for c in mapped if c.effective_status is not None]
+        if not live:
+            derivation = "all_mapped_checks_superseded" if mapped else "no_mapped_check"
+            status = "not_observed"
+        elif any(c.effective_status == "failed" for c in live):
             status, derivation = "evidenced_violated", "mapped_check_failed"
-        elif all(c.status == "passed" for c in mapped):
+        elif all(c.effective_status == "passed" for c in live):
             status, derivation = "evidenced_satisfied", "mapped_checks_passed"
         else:
             status, derivation = "unknown", "mapped_check_inconclusive"

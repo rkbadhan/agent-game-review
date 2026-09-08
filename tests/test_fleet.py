@@ -278,5 +278,69 @@ def test_to_dict_shape(tmp_path):
         # AGR-06: total_tokens is a union, not a plain sum — overlapping_
         # usage_events and usage_note say so explicitly.
         "overlapping_usage_events", "usage_note",
+        # AGR-05/06 (review 82cc113): how many/whether this group's episodes
+        # ever had usage instrumented at all — total_tokens alone cannot tell
+        # a genuine zero apart from unmeasured usage.
+        "usage_unavailable_count", "usage_availability",
+        # AGR-07 (review 82cc113): whether this group's episodes selected
+        # error_signature via the opaque fallback tier.
+        "fallback_basis_count", "all_fallback_basis",
         "example_anchors",
     }
+
+
+# --- AGR-05/06 (review 82cc113): usage availability, not a bare zero --------
+
+
+def _doc_with_run_id_and_cost(run_id, cost=None):
+    """A copy of tool_failure_recovery.atif.json under a different run id,
+    optionally stamping ``cost`` onto its resolving step (s9, "python
+    solve.py" succeeding) — the fixture otherwise carries no cost data at
+    all, which is exactly what makes its own episode usage_completeness ==
+    "unavailable"."""
+    with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["run"]["logical_run_id"] = run_id
+    if cost is not None:
+        for step in doc["steps"]:
+            if step["step_id"] == "s9":
+                step["cost"] = cost
+    return doc
+
+
+def test_group_usage_unavailable_reads_as_such_not_a_bare_zero(tmp_path):
+    store = _store(tmp_path, "tool_failure_recovery.atif.json")
+    g = fleet.fleet_episodes(store)[0]
+    assert g.usage_unavailable_count == 1 == g.count
+    assert g.usage_availability == "unavailable"
+    assert g.total_tokens == 0
+
+
+def test_group_usage_partial_when_only_some_episodes_are_measured(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    analyze(_doc_with_run_id_and_cost("run_a"), store)  # no cost: unavailable
+    analyze(_doc_with_run_id_and_cost(
+        "run_b", cost={"input_tokens": 40, "output_tokens": 10}), store)  # measured
+    groups = fleet.fleet_episodes(store)
+    assert len(groups) == 1  # same tool + error_signature: one group
+    g = groups[0]
+    assert g.count == 2
+    assert g.usage_unavailable_count == 1
+    assert g.usage_availability == "partial"
+    assert g.total_tokens == 50
+
+
+def test_group_usage_measured_when_every_episode_has_some_usage(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    analyze(_doc_with_run_id_and_cost("run_a", cost={"input_tokens": 40, "output_tokens": 10}), store)
+    analyze(_doc_with_run_id_and_cost("run_b", cost={"input_tokens": 5, "output_tokens": 0}), store)
+    g = fleet.fleet_episodes(store)[0]
+    assert g.usage_unavailable_count == 0
+    assert g.usage_availability == "measured"
+
+
+def test_fleet_usage_summary_reports_unavailable_episode_count(tmp_path):
+    store = _store(tmp_path, "tool_failure_recovery.atif.json")
+    summary = fleet.fleet_usage_summary(store)
+    assert summary.usage_unavailable_episode_count == 1
+    assert "never had usage instrumented" in summary.to_dict()["usage_note"]

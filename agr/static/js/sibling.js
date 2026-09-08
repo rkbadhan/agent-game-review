@@ -93,6 +93,11 @@ function siblingActionCell(label, action, isFailedSide) {
   b.addEventListener("click", () => jumpToEventInCurrentRun(action.event_id, isFailedSide));
   cell.append(b);
   if (action.phase_kind) cell.append(el("div", "vs-counts", "phase: " + action.phase_kind));
+  // AGR-13: two actions can share the same phase/tool/path and still be a
+  // real divergence (e.g. two Edits of the same file with different
+  // replacements) — surface what actually differed so this does not read
+  // like an unexplained false match.
+  if (action.input_identity) cell.append(el("div", "vs-counts", action.input_identity));
   return cell;
 }
 

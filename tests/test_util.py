@@ -106,6 +106,70 @@ def test_submission_control_response_is_not_a_tool_failure():
     assert is_tool_failure(ev) is False
 
 
+# --- AGR-02/04 (review 82cc113): mutation relatedness ------------------------
+
+
+def _mutation(path: str) -> DerivedEvent:
+    return DerivedEvent(
+        event_id="e1", run_id="r", source_capture_id="c", sequence=1,
+        source_step_ids=["s1"], event_type="tool_call", actor="main_agent",
+        payload={"tool": "Edit", "content": path},
+    )
+
+
+def test_docs_edit_is_not_functionally_related():
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "pytest tests/", ())
+    assert is_state_changing_action_related_to(_mutation("docs/notes.md"), failed) is False
+    assert is_state_changing_action_related_to(_mutation("README.md"), failed) is False
+
+
+def test_txt_fixture_edit_is_functionally_related_not_excluded_by_extension():
+    """Review 82cc113: excluding every .txt/.md/.rst edit by extension alone
+    wrongly excluded a test fixture and a dependency manifest — both are
+    genuinely functional inputs a test run reads. Only conventionally
+    repo-meta PATHS (docs/, README, ...) are excluded, never a bare
+    extension."""
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "pytest tests/", ())
+    assert is_state_changing_action_related_to(_mutation("tests/fixtures/input.txt"), failed) is True
+    assert is_state_changing_action_related_to(_mutation("requirements.txt"), failed) is True
+
+
+def test_source_edit_unrelated_by_path_still_credits_for_a_non_network_failure():
+    """The primary legitimate case this module exists for: a fix in a
+    differently-named source file, for an ordinary command (not a network
+    probe) — must keep crediting unconditionally."""
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "pytest tests/", ())
+    assert is_state_changing_action_related_to(_mutation("/app/calculator.py"), failed) is True
+
+
+def test_source_edit_unrelated_to_a_network_probe_does_not_credit():
+    """Review 82cc113: a source-code edit's extension does not establish a
+    dependency on an unrelated network request — a failed curl/wget/ping
+    holds a mutation to the SAME target-overlap test a shell mutation needs,
+    unlike an ordinary build/test command."""
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "curl https://api.example.com/health", ())
+    assert is_state_changing_action_related_to(_mutation("/app/calculator.py"), failed) is False
+
+
+def test_source_edit_related_to_a_network_probes_own_target_still_credits():
+    """The network-probe gate requires target overlap, it does not ban
+    crediting mutations for network failures outright — a config file whose
+    path contains the failed target's own host token still relates."""
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "curl api.example.com", ())
+    assert is_state_changing_action_related_to(_mutation("/etc/hosts/api.example.com"), failed) is True
+
+
+def test_network_probe_with_no_resolvable_target_still_credits_any_source_edit():
+    from agr._util import is_state_changing_action_related_to
+    failed = ("shell", "ping", ())
+    assert is_state_changing_action_related_to(_mutation("/app/calculator.py"), failed) is True
+
+
 def test_error_result_without_submission_flag_is_still_a_failure():
     from agr._util import is_tool_failure
     from agr.schema import DerivedEvent

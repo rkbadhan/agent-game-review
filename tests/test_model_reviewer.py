@@ -545,3 +545,49 @@ def test_rejection_reasons_recorded_in_telemetry():
                  ScriptedReviewer(payload), telemetry=telemetry)
     assert telemetry["selected"] >= 1
     assert "rejections" in telemetry
+
+
+def test_propose_never_calls_the_provider_when_budget_is_not_met(monkeypatch):
+    """AGR-10/AGR-11: build_packet's own enforced-budget result must gate the
+    provider call — a packet that does not fit the effective budget even at
+    the excerpt floor (budget_met: False) must never reach the provider."""
+    from agr import model_reviewer as mr
+
+    real_build_packet = mr.build_packet
+    monkeypatch.setattr(mr, "build_packet",
+                        lambda ctx: real_build_packet(ctx, budget_chars=50))
+
+    rev = _FakeProvider([{"moments": []}])
+    ev = DerivedEvent(event_id="evt_sub", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": "x" * 2000})
+    ctx = _ctx([_cand("cand_1")], events=[ev])
+
+    with pytest.raises(mr.PacketBudgetExceededError):
+        rev.propose(ctx)
+    assert rev.sent == []  # the provider stub was never called
+    assert rev.telemetry[-1]["kind"] == "propose_skipped"
+    assert rev.telemetry[-1]["reason"] == "packet_budget_exceeded"
+
+
+def test_revise_returns_none_without_calling_the_provider_when_budget_is_not_met(monkeypatch):
+    """The revise round honours the same gate, but degrades to 'no correction'
+    (None) rather than raising — a skipped revise must not abort the whole
+    review and lose every other already-proposed moment with it."""
+    from agr import model_reviewer as mr
+
+    real_build_packet = mr.build_packet
+    monkeypatch.setattr(mr, "build_packet",
+                        lambda ctx: real_build_packet(ctx, budget_chars=50))
+
+    rev = _FakeProvider([])
+    ev = DerivedEvent(event_id="evt_sub", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": "x" * 2000})
+    cand = _cand("cand_1")
+    ctx = _ctx([cand], events=[ev])
+
+    result = rev.revise(cand, [{"reason": "bad fact"}], ctx)
+    assert result is None
+    assert rev.sent == []  # the provider stub was never called
+    assert rev.telemetry[-1]["kind"] == "revise_skipped"

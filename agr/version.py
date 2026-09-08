@@ -14,7 +14,7 @@ RAW_ATIF_IMPORT_VERSION = "atif-import-0.1"
 
 # The package version, stamped into eval manifests so a result record is
 # auditable against the release that produced it (never null).
-AGR_VERSION = "0.1.0"
+AGR_VERSION = "0.2.0"
 
 DERIVATION_VERSION = "event-map-0.1"
 # 0.2 (AGR-02): checks carry scope/sequence/superseded_by/stale_reason and an
@@ -25,16 +25,43 @@ DERIVATION_VERSION = "event-map-0.1"
 # agr._util.is_state_changing_action_related_to with AGR-04's recovery
 # credit fix) — a docs/README/.md edit cannot invalidate a check as evidence
 # of final state.
-CHECK_DERIVATION_VERSION = "check-extract-0.3"
+# 0.4 (review 82cc113): synthesized in-session checks (agr.verifier_synth) no
+# longer let a passing text summary mask a Go package build failure, a Cargo
+# compile error alongside a passing crate, or a tool-level failure signal
+# (non-zero exit/error status) the text parse alone couldn't see — each now
+# demotes the check to "error"/adds the missed failure instead of reporting a
+# clean pass. The shared mutation-relatedness helper also no longer excludes
+# a functional edit by bare extension (.txt/.md/.rst) — only by conventional
+# repo-meta PATH marker — so a test fixture or dependency manifest edit is no
+# longer wrongly treated as staleness-irrelevant.
+# 0.5 (PR #57 review): fixes a regression 0.4 introduced. A genuine failing
+# test run's own exit code is non-zero WHENEVER any test fails — that is the
+# ordinary shape of a real failure, not evidence of a separate tool-level
+# crash. Checking the tool-level failure signal before the parsed failed
+# count turned every ordinary failing run with a captured exit code into
+# "error" instead of "failed", which flipped the run outcome to UNDETERMINED
+# and skipped the AGR-08 detectors (they select on effective_status ==
+# "failed"). The tool-level signal now only overrides a PASSING parse it
+# contradicts, never a parse that already found real failures.
+CHECK_DERIVATION_VERSION = "check-extract-0.5"
 SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # 0.2 (AGR-08): UnresolvedRequirementAtSubmission and
 # TerminalFailureWithFailingChecks each emit ONE aggregate candidate per
 # eligible run/capture carrying every failing check, not one candidate per
 # check — a run with N failing checks previously produced N near-identical
 # terminal-statement candidates that crowded out other findings.
-DETECTOR_VERSION = "detectors-0.2"
+# 0.3 (review 82cc113): total_checks on each aggregate's structured facts is
+# now the CURRENT (reconciled, effective_status is not None) check count,
+# never len(ctx.checks) — a superseded historical observation no longer
+# inflates the denominator a selected card renders as "N of total checks".
+DETECTOR_VERSION = "detectors-0.3"
 CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
-CONTRACT_OBSERVATION_VERSION = "contract-status-1.0"
+# 1.1 (AGR-02, review 82cc113): reads each mapped check's effective_status
+# (the current, reconciled view) rather than its raw immutable status — a
+# check a later same-scope check has superseded no longer speaks for its
+# item, so an item is no longer stuck evidenced_violated by a first attempt
+# the run's own reconciliation has already moved past.
+CONTRACT_OBSERVATION_VERSION = "contract-status-1.1"
 PHASE_SEGMENTATION_VERSION = "phase-segment-0.1"
 TAXONOMY_VERSION = "0.1"
 
@@ -64,7 +91,16 @@ REVIEWER_EVAL_VERSION = "reviewer-eval-0.2"
 # assigns attribution language no stronger than the evidence slice licenses, and
 # selects/de-duplicates the final cards — all deterministically, with no model
 # call. Every ReviewMoment embeds this version. Stage F plugs in behind it.
-REVIEWER_VERSION = "reviewer-det-0.2"
+# 0.3 (AGR-08, review 82cc113): an in-session check (agr.verifier_synth,
+# source == "output_interpretation", timing == "during_run") is now
+# recognised as agent-observed by construction — its status_basis is
+# "in_session_observation" and agent_observed_failure follows the check's own
+# status directly, instead of requiring the check-id/status text pattern that
+# can only ever match a literal echoed id like "C1 FAILED" (never a
+# synthesized id like insession_pytest_1, so it always reported no observed
+# failure for one). Rendered wording no longer calls an in-session check "the
+# run's final verifier", a post-run-only concept.
+REVIEWER_VERSION = "reviewer-det-0.3"
 
 # Stage F — the model reviewer (spec §8.7). The reviewer runs behind the
 # deterministic envelope: its structured facts are recomputed (Stage G), its
@@ -127,7 +163,38 @@ ERROR_SIGNATURE_VERSION = "error-sig-0.2"
 # failing call's own turn opened with reasoning/message text (item 27's
 # per-turn cost attribution) — previously read as 0 whenever that was the
 # case (confirmed on the real corpus: 11/22 episodes, now 0/22).
-RECOVERY_VERSION = "recovery-0.5"
+# 0.6 (review 82cc113): three independent AGR-04 fixes.
+# * A source-code edit unrelated by path/target to a failed NETWORK PROBE
+#   (curl/wget/ping/...) no longer credits strategy_changed unconditionally
+#   just because it touches a "functional" path — it now needs the same
+#   target-overlap evidence a shell mutation already required, since there is
+#   no legitimate "fix lives in a differently-named file" story for a raw
+#   connectivity failure. (Editing any other, non-probe command's related
+#   source file is unaffected and still credits unconditionally.)
+# * A mutation's result now needs OBSERVED success (is_tool_success), not
+#   merely the absence of an observed failure — the previous check fell back
+#   to the tool_call event itself when no result was captured, which can
+#   never satisfy is_tool_failure either and so silently credited a change
+#   from evidence that was never actually observed.
+# * strategy_changed is frozen at the moment a PLAUSIBLE resolution is found
+#   (the scan keeps running afterward, still looking for a strict match) —
+#   activity after that point can no longer attach change credit to a
+#   resolution that had already closed before it happened.
+# 0.7 (review 82cc113, AGR-05): usage_completeness now also checks PER-TURN
+# cost coverage inside the window, not just whether the window closed on an
+# observed event — a window can contain one measured turn and a sibling turn
+# with no recorded usage at all, which previously still read as "complete".
+# Any turn (a tool_call, its own model_output lead-in, and its paired result)
+# with no cost recorded anywhere in it, while at least one other turn in the
+# same window has some, now demotes the window to "partial". A window whose
+# turns are ALL cost-instrumented (including a measured zero) is unaffected.
+# 0.8 (review 82cc113, AGR-07): episodes now carry error_signature_basis —
+# recovery.py previously called the string-only error_signature() wrapper and
+# discarded which tier (traceback_exception/diagnostic_line/fallback_last_
+# nonempty) actually selected the line, so an opaque fallback signature (bare
+# "---"/"}"/"===", no real diagnostic anywhere) was indistinguishable from a
+# confident traceback-derived one downstream (fleet grouping, the UI).
+RECOVERY_VERSION = "recovery-0.8"
 
 # The corpus manifest (AGR-01): reproducible provenance over a Harbor eval
 # corpus root — source locations/checksums, logical run ids, capture ids, and

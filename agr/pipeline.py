@@ -101,7 +101,6 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # passes BEFORE anything reads check status for the run's outcome —
     # events are already derived above, so a check's source_pointers resolve.
     checks = reconcile_checks(checks, events)
-    run_outcome = outcome(checks)
 
     # Stage B — build the task contract, apply any recorded human confirmation,
     # and connect it to the atomic checks. Verifier-only checks that mapped to a
@@ -122,6 +121,10 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         if not c.contract_item_ids and c.check_id in item_for_check:
             c.contract_item_ids = list(item_for_check[c.check_id])
     contract_observations = derive_observations(contract, checks, events, rs.run_id)
+    # AGR-02 (review 82cc113): the run-outcome rollup needs the contract to
+    # apply its declared-coverage requirement to in-session-only evidence, so
+    # this runs after the contract (and its item<->check backfill) above.
+    run_outcome = outcome(checks, contract)
 
     opportunities = detect_opportunities(events, rs.run_id, rs.source_capture_id)
     recoveries = classify_recoveries(events, rs.run_id, rs.source_capture_id)

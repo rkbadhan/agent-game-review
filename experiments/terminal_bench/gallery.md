@@ -34,6 +34,19 @@ prose** (one sourced from Harbor's `harbor analyze`); AGR itself generated two
 surviving annotations — one deterministic (Review 2) and one semantic (`sem_1`,
 Review 4) — though the semantic moment does not yet match Harbor's depth.
 
+**Regeneration note (2026-09-08, AGR-16):** the five featured trajectories
+were re-ingested and re-shown against the current deterministic pipeline
+(`agr ingest-harbor` + `agr show`, no `--provider` — no paid model calls;
+the same discipline as the original disclosures) after the AGR-02–14 fixes
+landed. Verified: all five outcomes and check counts are unchanged. Two
+deterministic-layer deltas were found and are called out inline (Review 1,
+2, 4, 5) rather than silently folded into the original prose, per this
+document's own audit convention. The semantic layer (Stage F / `sem_1`) was
+**not** re-verified this pass — that requires a live model call this
+regeneration deliberately avoided, matching how the original disclosures
+were produced; Review 4's semantic-discovery claim stands as previously
+disclosed, unconfirmed against the current code.
+
 ---
 
 ## Review 1 — Format-loop crash contrasted with same-task successful runs
@@ -64,13 +77,25 @@ semantic reviewer, re-run on this capture, now generates exactly this moment
 itself — verdict "task_never_attempted", grounded on the zero-tool-call
 timeline and terminal event.)
 
-**Moments:** *none automatically generated.* All detectors returned "no
-candidate" — correctly so: the run has no agent-authored submission to anchor
-on. (Earlier generated versions carried an
-`unresolved_requirement_at_submission` moment here; the manual post-hoc audit showed it
-was anchored on a harness-synthesised submission event for a run that crashed
-before acting. The ingest adapter was fixed, the capture was re-ingested, and
-this review was rewritten from the raw log.)
+**Moments:** *none automatically generated* at the time this review was
+written. All detectors returned "no candidate" — correctly so: the run has
+no agent-authored submission to anchor on. (Earlier generated versions
+carried an `unresolved_requirement_at_submission` moment here; the manual
+post-hoc audit showed it was anchored on a harness-synthesised submission
+event for a run that crashed before acting. The ingest adapter was fixed,
+the capture was re-ingested, and this review was rewritten from the raw
+log.)
+
+**Regeneration update (2026-09-08, AGR-16):** re-shown against the current
+deterministic pipeline, this capture now surfaces one `[concern]` card from
+`terminal_failure_with_failing_checks` (added after this review was
+written): it reports all 9 checks failing at the run's terminal event, with
+`ceiling=hypothesized` and an explicit note that "no agent action was
+captured before this terminal event; the anchor reflects only the run's
+terminal state, not a specific action." This is a mechanical restatement of
+the same fact already reported in the outcome table above (0/9 checks), not
+a new behavioral claim — it does not change the "zero-tool-call, format-loop
+crash" reading below.
 
 **Successful-run divergence (the brief's §5.1):** The two passing runs
 used the same task, agent, model, and verifier; only the attempt
@@ -106,7 +131,7 @@ agent called its task-completion tool twice (`evt_014`, `evt_018`) with no
 new information in between, then proceeded to final submission. The task
 passed; the repeated call was wasted work, not outcome-relevant.
 
-**Moments:**
+**Moments (at the time this review was written):**
 1. `redundant completion signal` / `repeated_action_no_new_info` (behaviour,
    negative) — **auto, accepted.** Anchors: `evt_014`, `evt_018`. Ceiling:
    `dependency_linked` (the repeat is linked to the first call, not an
@@ -117,9 +142,33 @@ passed; the repeated call was wasted work, not outcome-relevant.
    the first call's result — a confirmation prompt — was visible to the agent,
    so this recommendation references observable state.)
 
-**Disclosure:** deterministic_auto=1, semantic_auto=0, accepted=1,
-removed=0, manual_moments=0, manual_narrative_sections=1 (timeline prose),
-manual_edits=0. Human editing time: ~4 min.
+**Regeneration update (2026-09-08, AGR-16) — this moment no longer fires,
+and the original characterization above does not hold up:** re-shown
+against the current deterministic pipeline, `repeated_action_no_new_info`
+now returns *no candidate* for this run. Re-reading the raw trace explains
+why, and shows the original annotation was itself imprecise: `evt_015`
+(the first `mark_task_complete` call's result) is the harness's own
+confirmation gate — *"Are you sure you want to mark the task as complete?
+... If so, include `task_complete: true` in your JSON response again."* —
+not an acknowledgement of completion. `evt_019` (the second call's result)
+is the actual post-completion terminal state. These two results are
+genuinely different text, not an identical acknowledgement, so the second
+call is the harness-*required* confirmation step, not wasted repetition.
+The current code's repetition detector requires the two calls' *captured
+results* to match (not just the call signature) before crediting "no new
+information" — this pair correctly no longer qualifies. The "wasted work,
+not outcome-relevant" framing above should be read as **superseded**: the
+agent behaved correctly; the earlier auto-moment (and the human review that
+accepted it) both missed that the first result was a confirmation prompt,
+not a no-op.
+
+**Disclosure (as originally written):** deterministic_auto=1, semantic_auto=0,
+accepted=1, removed=0, manual_moments=0, manual_narrative_sections=1
+(timeline prose), manual_edits=0. Human editing time: ~4 min.
+**As of the 2026-09-08 regeneration:** deterministic_auto=0, accepted=0 —
+the sole moment above no longer survives against the current code (see the
+regeneration update); this run now contributes zero auto-generated moments
+to the aggregate counts below.
 
 ---
 
@@ -197,8 +246,14 @@ writing the output file. It never called `curve_fit`, never created
 `/app/results.json`, and the trial ended with `AgentTimeoutError` at 900 s.
 All three verifier tests failed because the output file did not exist.
 
-**Moments:** AGR's deterministic detectors abstain natively on this capture
-(after `harbor-adapter-0.4`, timeout terminations are never submissions). The
+**Moments:** AGR's *behaviour/recovery* detectors abstain natively on this
+capture (after `harbor-adapter-0.4`, timeout terminations are never
+submissions). **Regeneration update (2026-09-08, AGR-16):** re-shown
+against the current pipeline, one `[concern]` card now fires from
+`terminal_failure_with_failing_checks` — the same mechanical restatement of
+"all 4 checks failing at the terminal event" described in Review 1's
+regeneration update above, not a new behavioral claim; it does not
+contradict "abstain natively" for the behaviour/recovery detectors. The
 semantic-discovery stage independently proposed one grounded moment (`sem_1`,
 verdict "timeout_without_submission"): it quoted the agent's still-running
 window-scan work (evt_063/064), anchored on the `run_timed_out` terminal event
@@ -257,12 +312,21 @@ same task/agent/model/configuration, a 30-minute arm and an extended-budget
 arm, multiple attempts per arm. We label this run **potential evaluation-budget
 confound; causal locus unresolved** — not confirmed infrastructure failure.
 
-**Moments:** *none automatically generated.* The
-`unresolved_requirement_at_submission` moment in earlier generated versions was
-anchored on the timeout-forced terminal event; the adapter fix
-(`harbor-adapter-0.4`) now records timeout terminations as run_timed_out — never
-a submission, so the detectors abstain natively. The budget-confound discussion
-above is a human reading of the evidence, recorded as manual narrative.
+**Moments:** *none automatically generated* at the time this review was
+written. The `unresolved_requirement_at_submission` moment in earlier
+generated versions was anchored on the timeout-forced terminal event; the
+adapter fix (`harbor-adapter-0.4`) now records timeout terminations as
+run_timed_out — never a submission, so that detector abstains natively. The
+budget-confound discussion above is a human reading of the evidence,
+recorded as manual narrative.
+
+**Regeneration update (2026-09-08, AGR-16):** re-shown against the current
+pipeline, one `[concern]` card now fires from
+`terminal_failure_with_failing_checks` (all 4 checks failing at the
+terminal event) — the same mechanical restatement described in Review 1's
+regeneration update, not a new behavioral claim. It does not bear on the
+budget-confound question above, which remains a human interpretation the
+detectors have no basis to make either way.
 
 **The separation (brief §3 `Infrastructure failure`):** the timeout itself is
 harness-side (`run_timed_out`, provenance `synthetic`), and no moment blames
@@ -302,7 +366,8 @@ manual_edits=0. Human editing time: ~10 min.
 | Verifier failures | 8 — 6 timeouts (`run_timed_out`), 1 format-loop crash before any action (`RepeatedFormatError`, zero agent steps → recorded as `run_failed` with `termination_reason: agent_protocol_failure`, never `run_completed`), 1 genuine failed attempt |
 | Infrastructure-invalid runs | 0 confirmed (1 potential budget confound under human review: make-mips — causal locus unresolved) |
 | Unreviewable runs | 0 of 15 canonical logical runs unreviewable (15/15 ingested and reviewed) |
-| Runs with ≥ 1 valid auto moment | 2 of 5 featured (Review 2 deterministic; Review 4 semantic); corpus-wide, only repeated-action detections fired deterministically |
+| Runs with ≥ 1 valid auto moment (as originally written) | 2 of 5 featured (Review 2 deterministic; Review 4 semantic); corpus-wide, only repeated-action detections fired deterministically |
+| Runs with ≥ 1 valid auto moment (2026-09-08 regeneration, 5 featured only) | 3 of 5 featured (Reviews 1, 4, 5 — a `terminal_failure_with_failing_checks` concern card, added after this gallery was written; see each review's regeneration update) rather than the 2 above. Review 2's moment no longer survives (0, down from 1) — see its regeneration update. Review 3 still contributes 0. Only the 5 featured runs were re-verified this pass; the full 15/22-run corpus was not re-swept, so the "corpus-wide" figure above is not re-confirmed either way. |
 | Recorded token usage | ≈ 5.86M input / 261K output |
 | Model cost per run / per review | $0 (free tier for both agent and reviewer models) |
 
@@ -310,7 +375,8 @@ manual_edits=0. Human editing time: ~10 min.
 
 | measure | value |
 |---|---|
-| Automatically generated moments surviving audit | 2 — 1 deterministic (Review 2) + 1 semantic (`sem_1`, Review 4) |
+| Automatically generated moments surviving audit (as originally written) | 2 — 1 deterministic (Review 2) + 1 semantic (`sem_1`, Review 4) |
+| Automatically generated moments, 2026-09-08 regeneration (5 featured, deterministic layer only) | 3 `[concern]` cards (Reviews 1, 4, 5 — `terminal_failure_with_failing_checks`, added after this gallery was written) + 0 from Review 2 (superseded, see its update) + 0 from Review 3. The semantic layer (`sem_1`, Review 4) was not re-verified this pass (would require a live paid model call) — its status is carried forward unconfirmed, not re-counted here. |
 | Moments removed as unsupported | 3 — all three `unresolved_requirement_at_submission` moments (Reviews 1/4/5) were false positives anchored on harness-synthesised submission events for runs that timed out or crashed before acting; found by a manual post-hoc audit, fixed at the adapter level (`harbor-adapter-0.4`: submissions are recorded only when directly observed, with provenance tags), captures re-ingested, detectors now abstain natively |
 | Moments added manually | 0 (abstentions kept) |
 | Human editing time per review | 4–15 min (incl. audit + rewrite session) |
@@ -358,11 +424,13 @@ checksums as recorded by Harbor in each trial's `result.json`:
 Terminal-Bench 2.1 fixed 26–28 tasks, and its published change list explicitly
 includes **two** of our seven featured tasks: `fix-git` and `polyglot-c-py`
 ([official Terminal-Bench 2.1 changes](https://github.com/harbor-framework/terminal-bench-2/pull/53)).
-`polyglot-c-py` is Review 2 — the only surviving deterministic AGR moment. Its
-behavioral annotation may remain valid, but that run must be rerun or
-hash-compared against the 2.1 revision before any launch claim. Unchanged 2.0
-trajectories for the other five tasks are not invalidated, and new runs should
-pin 2.1.
+`polyglot-c-py` is Review 2 — originally described as the only surviving
+deterministic AGR moment, though the 2026-09-08 regeneration found that
+moment no longer survives against the current code (see Review 2's
+regeneration update). Its behavioral annotation may remain valid regardless,
+but that run must be rerun or hash-compared against the 2.1 revision before
+any launch claim. Unchanged 2.0 trajectories for the other five tasks are not
+invalidated, and new runs should pin 2.1.
 
 ## The claim
 
@@ -371,17 +439,32 @@ pin 2.1.
 > information easier to inspect.
 
 The claim is **not** that every highlighted action caused the final outcome.
-Review 2 (the surviving deterministic moment) uses `ceiling=dependency_linked`
-and avoids counterfactual causation; Review 4's semantic moment (`sem_1`) is
-evidence-grounded but recognizes only the timeout-without-submission outcome,
-not the deeper strategy drift. Reviews 1, 3, and 5 abstain entirely — after
-the audit fix, the honest answer for those runs is "no supported moment", plus
-manual, source-linked prose. This is the discipline the brief requires.
+Review 4's semantic moment (`sem_1`) is evidence-grounded but recognizes only
+the timeout-without-submission outcome, not the deeper strategy drift.
+Reviews 1, 3, and 5 abstain on behaviour/recovery moments entirely — after
+the audit fix, the honest answer for those runs is "no supported behaviour
+moment", plus manual, source-linked prose. This is the discipline the brief
+requires.
+
+**(2026-09-08 update, AGR-16):** this paragraph originally credited Review 2's
+`repeated_action_no_new_info` card as "the surviving deterministic moment"
+with `ceiling=dependency_linked`. That card no longer survives against the
+current code — see Review 2's regeneration update above, which explains the
+original characterization was itself imprecise (a required harness
+confirmation step misread as a redundant repeat). Reviews 1, 4, and 5 each
+now additionally surface a `terminal_failure_with_failing_checks` concern
+card, which is a mechanical restatement of the outcome-table check counts,
+not a new behavioral finding — it does not change the "abstain on behaviour"
+reading above for those three runs.
 
 **Status: pilot gallery and failure audit — not a launch gallery.** The
 document itself records why: trajectories are local (not publicly
 downloadable), exact reproduction is weak while the model is unnamed and
 unpinned, Gate B is on HOLD, four of five reviews rely on manual narrative,
-and only two AGR-generated moments survived audit (one deterministic, one
-semantic). "Launch Gallery" is restored only when public artifacts exist and
-several useful AGR-generated semantic moments reproduce across runs.
+and — as originally written — only two AGR-generated moments survived audit
+(one deterministic, one semantic; the 2026-09-08 regeneration found the
+deterministic one no longer survives, see above, and added three mechanical
+`terminal_failure_with_failing_checks` concern cards not present when this
+line was first written). "Launch Gallery" is restored only when public
+artifacts exist and several useful AGR-generated semantic moments reproduce
+across runs.

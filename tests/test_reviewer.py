@@ -219,6 +219,84 @@ def test_single_requirement_status_fact_still_uses_the_ordinary_render_path():
         "the agent's trace records no observation of this check.")
 
 
+# --- AGR-08 (review 82cc113): in-session checks are agent-observed by
+# construction, and must not be mislabelled the run's post-run "final verifier".
+
+
+def test_in_session_check_is_agent_observed_not_final_verifier():
+    """agr.verifier_synth synthesizes a check DIRECTLY from a test invocation
+    the agent itself ran and saw fail — its source_pointers ARE the agent's
+    own observation. It must never need the check-id/status text pattern
+    only a literal echoed check id ("C1 FAILED") satisfies, and it must never
+    be described as "the run's final verifier" (a post-run concept)."""
+    check = VerifierCheck(
+        check_id="insession_pytest_1", run_id="r", source_capture_id="c",
+        name="pytest: 2 passed, 1 failed (in-session)", status="failed",
+        source="output_interpretation", timing="during_run",
+    )
+    cand = _candidate(
+        "cand_solo", detector="unresolved_requirement_at_submission",
+        affected_checks=["insession_pytest_1"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "insession_pytest_1",
+             "status_at_submission": "failed"},
+        ],
+    )
+    ctx = _ctx([cand], checks=[check])
+    validated = reviewer.validate_facts(cand, ctx)
+    fact = validated[0]
+    assert fact["status_basis"] == "in_session_observation"
+    assert fact["agent_observed_failure"] is True
+    (m,) = reviewer.run_reviewer(ctx)
+    assert "still failing at submission" in m.rendered_statement
+    assert "final verifier" not in m.rendered_statement
+
+
+def test_native_structured_check_still_reads_as_final_verifier():
+    """A real post-run/native check keeps the existing wording and basis —
+    only an in-session (verifier_synth) check gets the new label."""
+    check = _check("C1", "failed")
+    cand = _candidate(
+        "cand_solo", detector="unresolved_requirement_at_submission",
+        affected_checks=["C1"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed"},
+        ],
+    )
+    ctx = _ctx([cand], checks=[check])
+    validated = reviewer.validate_facts(cand, ctx)
+    assert validated[0]["status_basis"] == "final_verifier"
+    assert validated[0]["agent_observed_failure"] is False
+
+
+def test_aggregate_in_session_failures_are_grouped_as_still_failing():
+    """The aggregate card's "unobserved" bucket must not claim no
+    agent-observed failure for checks the agent's own trace directly
+    produced — both land in the "still failing at submission" clause."""
+    checks = [
+        VerifierCheck(check_id="insession_1", run_id="r", source_capture_id="c",
+                      name="c1", status="failed", source="output_interpretation",
+                      timing="during_run"),
+        VerifierCheck(check_id="insession_2", run_id="r", source_capture_id="c",
+                      name="c2", status="failed", source="output_interpretation",
+                      timing="during_run"),
+    ]
+    cand = _candidate(
+        "cand_agg", detector="unresolved_requirement_at_submission",
+        affected_checks=["insession_1", "insession_2"],
+        structured_facts=[
+            {"type": "requirement_status", "check_id": "insession_1",
+             "status_at_submission": "failed", "total_checks": 2},
+            {"type": "requirement_status", "check_id": "insession_2",
+             "status_at_submission": "failed", "total_checks": 2},
+        ],
+    )
+    (m,) = reviewer.run_reviewer(_ctx([cand], checks=checks))
+    assert "still failing at submission: insession_1, insession_2" in m.rendered_statement
+    assert "final verifier" not in m.rendered_statement
+    assert "no agent-observed failure" not in m.rendered_statement
+
+
 # --- Stage I: moment selection -----------------------------------------------
 
 

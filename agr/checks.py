@@ -7,14 +7,14 @@ core reads the ``verifier.checks[]`` array the adapter provides.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from . import version
 from ._util import action_signature, is_state_changing_action_related_to
 from .schema import CHECK_SOURCES, CHECK_STATUSES, CHECK_TIMINGS, RunSource, VerifierCheck
 
 if TYPE_CHECKING:
-    from .schema import DerivedEvent
+    from .schema import DerivedEvent, TaskContract
 
 
 class CheckExtractionError(ValueError):
@@ -118,7 +118,38 @@ def reconcile_checks(checks: list["VerifierCheck"], events: list["DerivedEvent"]
     return checks
 
 
-def outcome(checks: list[VerifierCheck]) -> dict:
+# AGR-02 (review 82cc113): a declared, required item is one the task author
+# actually stated (or an environment precondition) — never a
+# ``verifier_enforced`` item (synthesized FROM a check that already covers
+# it, by definition) or a ``reference_assumption`` (not author-required; see
+# agr.contract._coverage_warnings' own "reference_only_assumption" split).
+_DECLARED_SOURCE_TYPES = ("stated_requirement", "environment_precondition")
+
+
+def _in_session_only(current: list[tuple[VerifierCheck, str]]) -> bool:
+    """True when every current check is an in-session synthesized observation.
+
+    A native/structured external verifier check (``source ==
+    "native_structured"``) was authored to cover the task's own requirements,
+    so its PASSED carries that authority already. An in-session check
+    (``agr.verifier_synth``) is synthesized from whatever test invocation the
+    agent happened to run — it can be one narrow smoke test with no relation
+    to the rest of a broader declared instruction.
+    """
+    return bool(current) and all(
+        c.source == "output_interpretation" and c.timing == "during_run" for c, _ in current
+    )
+
+
+def _uncovered_required_items(contract: "TaskContract") -> list[str]:
+    return [
+        i.id for i in contract.items
+        if i.importance == "required" and i.source_type in _DECLARED_SOURCE_TYPES
+        and not i.mapped_checks
+    ]
+
+
+def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = None) -> dict:
     """Roll checks up into a run outcome summary.
 
     A run with no checks carries no verifier evidence. That is an explicit
@@ -140,6 +171,15 @@ def outcome(checks: list[VerifierCheck]) -> dict:
     exactly as before. Nothing in ``checks`` is discarded here — the full
     historical list, and which entries were excluded/demoted and why, is
     still available from the input list and reported below.
+
+    AGR-02 (review 82cc113): when ``contract`` is given and every current
+    check is in-session-only (:func:`_in_session_only`), an otherwise-PASSED
+    rollup demotes to UNDETERMINED if any author-``required`` declared item
+    has no mapped check at all — a passing smoke test the agent happened to
+    run does not establish that the rest of the declared instruction was
+    exercised. This never turns a pass into a FAILED: missing coverage is
+    unknown, not a failure. Omitting ``contract`` (the default) preserves the
+    original, pre-review behaviour exactly.
     """
     current = [(c, c.effective_status) for c in checks]
     current = [(c, s) for c, s in current if s is not None]
@@ -147,12 +187,17 @@ def outcome(checks: list[VerifierCheck]) -> dict:
     passed = sum(1 for _, s in current if s == "passed")
     failed = [c.check_id for c, s in current if s == "failed"]
     undetermined = [c.check_id for c, s in current if s in ("unknown", "skipped", "error")]
+    coverage_gaps: list[str] = []
     if total == 0:
         status = "UNVERIFIED"
     elif failed:
         status = "FAILED"
     elif passed == total:
         status = "PASSED"
+        if contract is not None and _in_session_only(current):
+            coverage_gaps = _uncovered_required_items(contract)
+            if coverage_gaps:
+                status = "UNDETERMINED"
     else:
         status = "UNDETERMINED"
     return {
@@ -164,4 +209,5 @@ def outcome(checks: list[VerifierCheck]) -> dict:
         "total_observations": len(checks),
         "superseded_checks": [c.check_id for c in checks if c.superseded_by is not None],
         "stale_checks": [c.check_id for c in checks if c.stale_reason is not None],
+        "coverage_gaps": coverage_gaps,
     }
