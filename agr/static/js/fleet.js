@@ -15,7 +15,7 @@ const FLEET_GROUP_OPTIONS = [
 function renderFleetSurface(main) {
   const nav = el("div", "review-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Fleet · recovery episodes across every run"));
+  head.append(el("span", "eyebrow", "Patterns · tool failures and recovery episodes across every run"));
   nav.append(head);
   const util = el("div", "review-util");
   const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");
@@ -39,7 +39,7 @@ async function loadFleetEpisodes() {
 // double-count an event two different groups' episodes both cover).
 function renderFleetUsageSummaryCard(summary) {
   const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", "Fleet usage"));
+  card.append(el("p", "eyebrow", "Patterns usage"));
   const line = el("p", "chapter-lede",
     summary.total_tokens + " token(s) across " + summary.episode_count + " episode(s) in "
     + summary.affected_runs + " affected run(s).");
@@ -102,7 +102,7 @@ async function renderFleet(main) {
   if (!fl.episodes || !fl.episodes.length) {
     wrap.append(el("div", "empty",
       "No recovery episodes in this store yet — a run needs at least one qualifying "
-      + "tool failure for the fleet view to have anything to group."));
+      + "tool failure for Patterns to have anything to group."));
     return;
   }
   if (!fl.usageSummary) {

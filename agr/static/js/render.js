@@ -1,5 +1,32 @@
 "use strict";
 
+// A one-line, plain-language verdict for the run header. Mirrors the Overview
+// "What happened" logic so the two never disagree, and — like Overview — it only
+// restates validated check facts (never invents impact or intent). Returns
+// { tone, headline, detail } or null when there is nothing faithful to say.
+function verdictSummary(rv) {
+  if (!rv) return null;
+  const checks = rv.checks || [];
+  const failed = checks.filter(c => c.status === "failed");
+  const undetermined = checks.filter(c => ["unknown", "skipped", "error"].includes(c.status));
+  if (rv.review_mode === "not_reviewable")
+    return { tone: "warn", headline: "Not reviewable —",
+      detail: "the captured evidence is insufficient for a trustworthy review." };
+  if (!checks.length)
+    return { tone: "warn", headline: "Unverified —",
+      detail: "no atomic check evidence was captured, so nothing here should be read as a pass." };
+  if (failed.length)
+    return { tone: "fail", headline: "Failed —",
+      detail: failed.length + " of " + checks.length + " checks failed: "
+        + failed.map(c => c.check_id + " (" + c.name + ")").join("; ") + "." };
+  if (undetermined.length)
+    return { tone: "warn", headline: "Undetermined —",
+      detail: "no check failed, but " + undetermined.map(c => c.check_id + " (" + c.status + ")").join(", ")
+        + " recorded no verdict." };
+  return { tone: "pass", headline: "Passed —",
+    detail: "all " + checks.length + " requirement " + (checks.length === 1 ? "check" : "checks") + " evidenced." };
+}
+
 // --- render root -------------------------------------------------------------
 function render() {
   const main = $("#main"); main.textContent = "";
@@ -8,7 +35,7 @@ function render() {
   // "pick a run" guard.
   if (state.view === "versions") { renderVersionsSurface(main); syncUrl(); return; }
   if (state.view === "fleet") { renderFleetSurface(main); syncUrl(); return; }
-  if (!state.review) { main.append(el("div", "empty", "Select a run to begin.")); return; }
+  if (!state.review) { main.append(el("div", "empty", "Select a run to begin.")); syncUrl(); return; }
   const rv = state.review, run = rv.run || {};
   $("#crumb-task").textContent = run.task_id || state.runId;
 
@@ -22,8 +49,25 @@ function render() {
   eyebrow.append(document.createTextNode("Task review"));
   const sweepLabel = shellSweepLabel(run);
   if (sweepLabel) eyebrow.append(el("span", "eyebrow-sep", "·"), document.createTextNode(sweepLabel));
+  // Queue position doubles as a stepper: walk the sweep run-by-run from the
+  // header without going back to the queue list. (Bottom bar's "Next unhandled"
+  // skips handled runs; this steps every run in order.)
   const pos = queuePosition();
-  if (pos) eyebrow.append(el("span", "eyebrow-sep", "·"), document.createTextNode("Run " + pos.index + " of " + pos.total));
+  if (pos) {
+    const ids = state.queue.run_ids;
+    eyebrow.append(el("span", "eyebrow-sep", "·"));
+    const stepper = el("span", "run-stepper");
+    const prev = el("button", "step-arrow", "‹");
+    prev.title = "Previous run in this queue";
+    if (pos.index > 1) prev.addEventListener("click", () => selectRun(ids[pos.index - 2]));
+    else prev.disabled = true;
+    const next = el("button", "step-arrow", "›");
+    next.title = "Next run in this queue";
+    if (pos.index < pos.total) next.addEventListener("click", () => selectRun(ids[pos.index]));
+    else next.disabled = true;
+    stepper.append(prev, el("span", "step-label", "Run " + pos.index + " of " + pos.total), next);
+    eyebrow.append(stepper);
+  }
   left.append(eyebrow);
   left.append(el("h1", null, run.task_id || state.runId));
   const steps = (state.forensic && state.forensic.steps) ? state.forensic.steps.length : null;
@@ -34,6 +78,15 @@ function render() {
   if (subBits) sub.append(document.createTextNode(subBits + " · "));
   sub.append(el("span", "mono", state.runId));
   left.append(sub);
+  // Persistent one-line verdict (plain language) directly under the title, so
+  // the run's result reads in one glance from any chapter — not only Overview.
+  // Restated from validated check facts; no interpretation is added here.
+  const vsum = verdictSummary(rv);
+  if (vsum) {
+    const v = el("p", "run-verdict " + vsum.tone);
+    v.append(el("span", "run-verdict-key", vsum.headline), document.createTextNode(" " + vsum.detail));
+    left.append(v);
+  }
   header.append(left);
   const o = rv.outcome || {}, sc = statusClass(o.status);
   const hs = el("div", "header-status " + sc);
@@ -48,17 +101,17 @@ function render() {
   // presenting empty chapters as if a review had run.
   if (rv.review_mode === "not_reviewable") main.append(renderNotReviewable(rv));
 
-  // review outline rail (§4.2 / §4.4) — the chapter list drives the main stage.
-  // The compare view (§4.16) is not a chapter, so the outline hides there.
+  // The run's view bar (T1 / §4.2 / §4.4) has two zones on one rail. LEFT: the
+  // review itself — Overview · Key moments · Checks, as tabs. RIGHT: one cluster
+  // gathering every OTHER way to view this run — the full trace, the raw source,
+  // "More analysis" (Opportunities / Ability signature), and Compare — so the
+  // tabs read purely as "the review" and the tools sit together in one place.
   if (state.view === "review") state.viewed.add(state.chapter);
   const meta = chapterMeta();
   const nav = el("div", "review-nav");
-  if (state.view !== "compare") {
-  const outline = el("div", "outline"); outline.setAttribute("role", "tablist");
-  outline.setAttribute("aria-label", "Review chapters");
-  for (const [id, label] of CHAPTERS) {
-    const m = meta[id];
-    const current = state.view === "review" && state.chapter === id;
+  // Shared chapter-chip builder, used by both the tabs and the "More analysis"
+  // menu, so it is defined before either is built.
+  const ochip = (id, label, m, current) => {
     let cls = "ochip";
     if (current) cls += " current";
     else if (!m.available) cls += " unavailable";
@@ -70,43 +123,74 @@ function render() {
     b.title = m.available ? label : label + " · Not available — " + m.reason;
     b.setAttribute("aria-current", current ? "step" : "false");
     b.addEventListener("click", () => setChapter(id));
-    outline.append(b);
+    return b;
+  };
+  // LEFT zone: the three primary chapters as tabs. The compare view has no
+  // chapter, so the tabs hide there.
+  if (state.view !== "compare") {
+    const outline = el("div", "outline"); outline.setAttribute("role", "tablist");
+    outline.setAttribute("aria-label", "Review chapters");
+    for (const [id, label] of CHAPTERS)
+      outline.append(ochip(id, label, meta[id], state.view === "review" && state.chapter === id));
+    nav.append(outline);
   }
-  nav.append(outline);
-  } // end outline (hidden in compare view)
+  // RIGHT zone: other views & tools, all together.
   const util = el("div", "review-util");
+  // Trace opens the full-trace drawer rather than swapping the main stage.
+  const traceChip = el("button", "seg trace-chip", "↗ Trace");
+  traceChip.title = "Open the full trace (T)";
+  traceChip.addEventListener("click", () => openTrace(null));
+  util.append(traceChip);
+  // Raw immutable source.
   const srcBtn = el("button", "seg" + (state.view === "source" ? " active" : ""), "Source");
+  srcBtn.title = "The immutable source events behind this review";
   srcBtn.addEventListener("click", () => { state.view = "source"; render(); });
   util.append(srcBtn);
-  // §4.16 compare surface: enabled only when two or more reviews of this
-  // capture exist. With just the deterministic baseline it shows a disabled
-  // affordance with an honest tooltip — the same pattern as the §4.11 lesson.
-  const avail = (rv.available_reviews || []);
-  const cmpBtn = el("button", "seg" + (state.view === "compare" ? " active" : ""), "Compare");
-  if (avail.length >= 2) {
-    cmpBtn.title = "Side-by-side comparison of two reviews (§4.16)";
-    cmpBtn.addEventListener("click", () => { state.view = "compare"; render(); });
-  } else {
-    cmpBtn.disabled = true;
-    cmpBtn.title = "Compare needs a second review of this run (e.g. a model-reviewer pass).";
-  }
-  util.append(cmpBtn);
-  // Item 21: the sibling divergence view only makes sense for a FAILED run —
-  // it aligns against a PASSING sibling on the same task. A passed run gets
-  // a disabled affordance with an honest tooltip, the same pattern as Compare.
-  const sibBtn = el("button", "seg" + (state.view === "sibling" ? " active" : ""), "Sibling");
+  // "More analysis": Opportunities and the Task Ability Signature, kept off the
+  // primary tabs but reachable here.
+  const more = el("details", "more-analysis");
+  if (state.view === "review" && (state.chapter === "opportunities" || state.chapter === "signature")) more.open = true;
+  more.append(el("summary", null, "More analysis"));
+  const moreList = el("div", "more-analysis-list");
+  for (const [id, label] of MORE_ANALYSIS_CHAPTERS)
+    moreList.append(ochip(id, label, meta[id], state.view === "review" && state.chapter === id));
+  more.append(moreList);
+  util.append(more);
+  // Compare (§4.16 / item 21): one control gathers every way to put this run
+  // beside another — a passing sibling, another reviewer's take, or another
+  // version — instead of three differently-named entry points in three places.
+  const avail = rv.available_reviews || [];
+  const cmpMenu = el("details", "more-analysis compare-menu");
+  const cmpSummary = el("summary", (state.view === "sibling" || state.view === "compare") ? "active" : null, "Compare");
+  cmpSummary.title = "Put this run beside another — a passing run, a reviewer, or a version";
+  cmpMenu.append(cmpSummary);
+  const cmpList = el("div", "more-analysis-list");
+  // 1. Against a passing sibling — only meaningful for a FAILED run; a passed
+  //    run gets a disabled row with an honest reason.
+  const sib = el("button", "compare-item" + (state.view === "sibling" ? " current" : ""), "Against a passing run");
   if ((o.status || "").toUpperCase() === "FAILED") {
-    sibBtn.title = "Align this run against a passing sibling on the same task (§item 21)";
-    sibBtn.addEventListener("click", () => { state.view = "sibling"; render(); });
+    sib.title = "Align this run against a passing sibling on the same task (§item 21)";
+    sib.addEventListener("click", () => { state.view = "sibling"; render(); });
   } else {
-    sibBtn.disabled = true;
-    sibBtn.title = "Sibling divergence compares a FAILED run against a passing one.";
+    sib.disabled = true;
+    sib.title = "Needs a FAILED run to align against a passing one.";
   }
-  util.append(sibBtn);
-  const traceBtn = el("button", "button subtle", "Full trace");
-  traceBtn.append(el("span", "shortcut", "T"));
-  traceBtn.addEventListener("click", () => openTrace(null));
-  util.append(traceBtn);
+  cmpList.append(sib);
+  // 2. Between two reviewers of this run — only when more than one review exists.
+  if (avail.length >= 2) {
+    const rev = el("button", "compare-item" + (state.view === "compare" ? " current" : ""), "Between reviewers");
+    rev.title = "Side-by-side comparison of two reviews of this run (§4.16) (C)";
+    rev.addEventListener("click", () => { state.view = "compare"; render(); });
+    cmpList.append(rev);
+  }
+  // 3. Across versions — a matched task slice; a surface of its own, also on the
+  //    app bar, gathered here so "compare" is one idea in one place.
+  const ver = el("button", "compare-item", "Across versions →");
+  ver.title = "Compare configurations on a matched task slice (V)";
+  ver.addEventListener("click", () => { state.view = "versions"; render(); });
+  cmpList.append(ver);
+  cmpMenu.append(cmpList);
+  util.append(cmpMenu);
   nav.append(util);
   main.append(nav);
 
@@ -159,6 +243,8 @@ function renderShellMeta(rv) {
       });
       flip.append(tab);
     }
+    // These chips switch which reviewer's snapshot is served; comparing two
+    // reviews side by side lives in the unified "Compare" control by the tabs.
     wrap.append(flip);
   } else {
     // Honest affordance: the AI review has not been run — name the command.

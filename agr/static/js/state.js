@@ -3,11 +3,26 @@
 // --- state -------------------------------------------------------------------
 const state = { runId: null, view: "review", chapter: "moments", forensic: null, review: null,
   momentIdx: 0, showAllContract: false, pendingStep: null, viewed: new Set(),
+  // T2: which moment cards a reader expanded to the full five-part detail, by
+  // moment_id — survives a re-render (e.g. after Agree) but not a run change.
+  expandedMoments: new Set(),
+  // Same idea for the inline "Eval lesson available" disclosure — without this,
+  // approving/editing a lesson triggers a refetch + re-render that would
+  // silently re-collapse the section a reviewer is actively working in.
+  expandedLessons: new Set(),
+  // T3: which anchor event the evidence panel is currently focused on. Reset
+  // per run; renderEvidencePanel falls back to the current moment's first
+  // anchor whenever this id is not one of that moment's own anchors, so a
+  // newly selected finding shows its own source without extra clicks.
+  evidenceFocus: null,
   sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "RK", dispOpen: false,
   compare: null, sibling: null, traceOpen: false, traceStep: null,
   // §4.3.5 fast/deep entry preference — where each run opens, remembered per
-  // browser like the panel widths. Default is the recommended fast path.
-  entryPref: (localStorage.getItem("agr-entry-pref") === "outcome" ? "outcome" : "first_moment"),
+  // browser like the panel widths. Default is Overview: a first-time reader
+  // should land on the synthesis (what happened + main finding) and understand
+  // the run in one pass, rather than dropping into moment 1. A reviewer doing
+  // fast repeat triage can switch to "First key moment"; that choice is kept.
+  entryPref: (localStorage.getItem("agr-entry-pref") === "first_moment" ? "first_moment" : "outcome"),
   // §4.16 version comparison: a surface of its own, so its state does not ride
   // on the selected run the way the per-run reviewer diff does.
   versions: { configurations: null, baseline: null, candidate: null,

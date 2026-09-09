@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Game Review</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f3442'/%3E%3Cg transform='rotate(45 16 16)'%3E%3Crect x='9' y='14.5' width='14' height='3' rx='1.5' fill='%23df9a76'/%3E%3Crect x='14.5' y='9' width='3' height='14' rx='1.5' fill='%23df9a76'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
+<!-- Restore the reader's saved light/dark choice before first paint so there
+     is no theme flash on load. The toggle in ui-utils.js writes agr-theme. -->
+<script>try{var t=localStorage.getItem('agr-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 </head>
 <body>
 <header class="appbar">
@@ -12,14 +16,31 @@
   <div class="brand"><div class="brand-mark"></div><span>Agent Game Review</span></div>
   <div class="crumbs"><span id="crumb-sweep">Sweep</span><span>›</span><strong id="crumb-task">Select a run</strong></div>
   <div class="app-actions">
-    <button class="icon-button appbar-action" id="versions-button"
-            title="Compare two versions on a matched task slice (V)">Compare versions</button>
+    <!-- T1 primary navigation: Runs · Patterns · Compare versions. -->
+    <button class="icon-button appbar-action" id="runs-button"
+            title="Runs: the sweep triage queue">Runs</button>
     <button class="icon-button appbar-action" id="fleet-button"
-            title="Fleet view: recovery episodes grouped across every run (F)">Fleet</button>
+            title="Patterns: tool failures and recovery episodes across every run (F)">Patterns</button>
+    <button class="icon-button appbar-action" id="versions-button"
+            title="Compare versions on a matched task slice (V)">Compare versions</button>
     <button class="icon-button appbar-action" id="glossary-button"
             title="Glossary of review terms (G)">Glossary</button>
     <button class="icon-button" id="help-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
     <button class="icon-button" id="theme-toggle" aria-label="Toggle light/dark" title="Toggle theme">◐</button>
+    <!-- Narrow-screen overflow: on mobile the labelled nav buttons above are
+         hidden and reached through this menu instead. Each item is a thin proxy
+         that clicks its real (hidden) button, so there is one set of handlers. -->
+    <details class="appbar-menu" id="appbar-menu">
+      <summary class="icon-button" aria-label="More actions" title="More">⋯</summary>
+      <div class="appbar-menu-list">
+        <button type="button" data-proxy="runs-button">Runs</button>
+        <button type="button" data-proxy="fleet-button">Patterns</button>
+        <button type="button" data-proxy="versions-button">Compare versions</button>
+        <button type="button" data-proxy="glossary-button">Glossary</button>
+        <button type="button" data-proxy="help-button">Keyboard shortcuts</button>
+        <button type="button" data-proxy="theme-toggle">Toggle light / dark</button>
+      </div>
+    </details>
     <div class="avatar" id="reviewer-avatar" title="Reviewer">RK</div>
   </div>
 </header>
@@ -93,20 +114,23 @@
     <h2>Review shortcuts</h2>
     <p>Move quickly without sacrificing evidence checks.</p>
     <div class="shortcut-grid">
-      <kbd>[ / ]</kbd><span>Previous / next review chapter</span>
+      <kbd>[ / ]</kbd><span>Previous / next review chapter (Overview · Key moments · Checks)</span>
       <kbd>J / K</kbd><span>Next / previous key moment</span>
       <kbd>E</kbd><span>Focus evidence for this moment</span>
       <kbd>D</kbd><span>Open disposition menu</span>
       <kbd>N</kbd><span>Open next unhandled run</span>
       <kbd>T</kbd><span>Open full trace</span>
-      <kbd>C</kbd><span>Toggle the reviewer diff (two reviews of this run)</span>
-      <kbd>V</kbd><span>Compare two versions on a matched task slice</span>
-      <kbd>F</kbd><span>Fleet view: recovery episodes grouped across every run</span>
+      <kbd>C</kbd><span>Compare reviewer outputs (two reviews of this run)</span>
+      <kbd>V</kbd><span>Compare versions on a matched task slice</span>
+      <kbd>F</kbd><span>Patterns: tool failures and recovery episodes across every run</span>
       <kbd>G</kbd><span>Open the glossary of review terms</span>
       <kbd>?</kbd><span>Show this guide</span>
       <kbd>Esc</kbd><span>Close the active layer</span>
     </div>
-    <div class="modal-actions"><button class="button primary" data-close-modal>Done</button></div>
+    <div class="modal-actions">
+      <button class="button subtle" id="open-intro">What do these terms mean?</button>
+      <button class="button primary" data-close-modal>Done</button>
+    </div>
   </section>
 </div>
 
@@ -133,7 +157,7 @@
       <dt>Evidence grade</dt>
       <dd>How well a moment's facts are grounded — <em>Strong</em>, <em>Moderate</em>, or
           <em>Limited</em> — based on how complete the capture was.</dd>
-      <dt>Attribution</dt>
+      <dt>Cause (attribution)</dt>
       <dd>How far a cause is actually established: a linked event is on the evidence path,
           not proven to have changed the outcome. Only replay can claim that.</dd>
       <dt>Fact vs. interpretation</dt>

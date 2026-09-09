@@ -1,46 +1,55 @@
 "use strict";
 
-// --- review chapters (§4.4) --------------------------------------------------
+// --- review chapters (T1) -----------------------------------------------------
+//   Primary in-run navigation is Overview · Key moments · Checks (plus a Trace
+//   nav item that opens the full-trace drawer rather than swapping the main
+//   stage — see render.js). Opportunities and the Task Ability Signature stay
+//   reachable but move under a secondary "More analysis" disclosure so they no
+//   longer compete with the primary three. Strongest behaviour is folded into
+//   Key moments as a teaser + jump-to-moment, and the Eval Lesson is attached to
+//   its recommending moment card instead of being a chapter of its own.
 const CHAPTERS = [
-  ["outcome", "Outcome"], ["opportunities", "Opportunities"], ["moments", "Key moments"],
-  ["strongest", "Strongest behaviour"], ["signature", "Ability signature"],
-  ["audit", "Task & verifier audit"], ["lesson", "Eval lesson"],
+  ["overview", "Overview"], ["moments", "Key moments"], ["checks", "Checks"],
 ];
+// Secondary chapters, reachable from the "More analysis" disclosure — same
+// setChapter/chapterMeta machinery, just not in the primary tab row.
+const MORE_ANALYSIS_CHAPTERS = [["opportunities", "Opportunities"], ["signature", "Ability signature"]];
+const ALL_CHAPTER_IDS = CHAPTERS.map(c => c[0]).concat(MORE_ANALYSIS_CHAPTERS.map(c => c[0]));
+// Old chapter ids from before the T1 navigation simplification. Kept so a
+// previously shared link still opens the content it pointed at.
+const CHAPTER_ALIASES = { outcome: "overview", audit: "checks", strongest: "moments", lesson: "moments" };
+function normalizeChapter(id) { return CHAPTER_ALIASES[id] || id; }
 function strongestMoments() { return currentMoments().filter(m => m.polarity === "positive"); }
+// The single moment Overview leads with: the most decisive negative finding
+// when one exists, else the strongest positive one. Null when the review has
+// no moments at all (deterministic-only with nothing flagged).
+function mainFinding() {
+  const moments = currentMoments();
+  return moments.find(m => m.polarity !== "positive") || strongestMoments()[0] || null;
+}
 function hasCorrection() { return ((state.review && state.review.feedback) || []).some(f => f.kind === "quick_relabel"); }
 function lessonMoment() {
   // A lesson is supported only when a reviewed (model-enriched) moment recommends
-  // one; the deterministic core recommends none, so this returns null and the
-  // chapter shows the canonical §4.11 empty state.
+  // one; the deterministic core recommends none, so no moment card shows the
+  // inline Eval lesson section in that case (§4.11).
   return currentMoments().find(x => x.eval_lesson_recommended && x.enrichment_source) || null;
 }
 function persistedLesson(m) {
   const id = "lesson_" + (m && m.moment_id);
   return ((state.review && state.review.lessons) || []).find(l => l.lesson_id === id) || null;
 }
-function evalLesson() {
-  const m = lessonMoment();
-  // `lesson` is the persisted record once a human has accepted it; until then the
-  // chapter shows the proposed body projected from the moment.
-  return m ? { moment: m, lesson: persistedLesson(m) } : null;
-}
 function chapterMeta() {
   const rv = state.review, moments = currentMoments();
   return {
-    outcome: { available: true },
-    opportunities: { available: (rv.opportunity_rows || []).length > 0,
-      reason: "This run reached no opportunity window this review could measure." },
+    overview: { available: true },
     moments: { available: moments.length > 0, corrected: hasCorrection(),
       reason: rv.review_mode === "not_reviewable" ? "The captured evidence is insufficient for a trustworthy review."
         : rv.review_mode === "model_enriched" ? "No decisive moment was selected." : "No candidate moment was flagged deterministically." },
-    strongest: { available: strongestMoments().length > 0,
-      reason: "This review supported no single behaviour worth preserving." },
+    checks: { available: true },
+    opportunities: { available: (rv.opportunity_rows || []).length > 0,
+      reason: "This run reached no opportunity window this review could measure." },
     signature: { available: (rv.signature || []).length > 0,
       reason: "No ability-signature rows were derived for this run." },
-    audit: { available: (rv.audit || []).length > 0,
-      reason: "No task/verifier audit was derived for this run." },
-    lesson: { available: !!evalLesson(),
-      reason: "No Eval Lesson generated." },
   };
 }
 function setChapter(id) { state.view = "review"; state.chapter = id; state.viewed.add(id);
@@ -48,18 +57,33 @@ function setChapter(id) { state.view = "review"; state.chapter = id; state.viewe
   $("#main").scrollTo({ top: 0, behavior: "smooth" }); }
 function moveChapter(dir) {
   const ids = CHAPTERS.map(c => c[0]); let i = ids.indexOf(state.chapter);
+  // From a "More analysis" chapter (not in this primary list), both directions
+  // used to land on index 0 regardless of `dir`. Treat "not found" as sitting
+  // just before the list (so `]`/next enters at the first chapter) or just
+  // after it (so `[`/prev enters at the last one), matching the key pressed.
+  if (i < 0) i = dir > 0 ? -1 : ids.length;
   i = Math.max(0, Math.min(ids.length - 1, i + dir)); setChapter(ids[i]);
 }
 function renderChapter(main) {
   state.viewed.add(state.chapter);
-  ({ outcome: renderOutcomeChapter, opportunities: renderOpportunitiesChapter,
-     moments: renderMomentsChapter, strongest: renderStrongestChapter,
-     signature: renderSignatureChapter, audit: renderAuditChapter,
-     lesson: renderLessonChapter }[state.chapter] || renderMomentsChapter)(main);
+  ({ overview: renderOverviewChapter, opportunities: renderOpportunitiesChapter,
+     moments: renderMomentsChapter, checks: renderChecksChapter,
+     signature: renderSignatureChapter }[state.chapter] || renderMomentsChapter)(main);
 }
 function renderChapterFooter(main) {
   const ids = CHAPTERS.map(c => c[0]), i = ids.indexOf(state.chapter);
   const foot = el("div", "chapter-foot");
+  // "More analysis" chapters (Opportunities, Ability signature) sit outside the
+  // primary Overview → Key moments → Checks sequence, so they get a way back
+  // instead of a broken position in that cycle.
+  if (i < 0) {
+    const back = el("button", "button subtle", "‹ Back to Overview");
+    back.addEventListener("click", () => setChapter("overview"));
+    foot.append(back);
+    foot.append(el("span", "chapter-progress", "More analysis"));
+    main.append(foot);
+    return;
+  }
   const prev = el("button", "button subtle" + (i <= 0 ? " ghost" : ""), "‹ Previous chapter");
   if (i > 0) prev.addEventListener("click", () => moveChapter(-1)); else prev.disabled = true;
   foot.append(prev);
@@ -107,6 +131,23 @@ function renderMomentsChapter(main) {
     chapterEmpty(main, "No key moments", chapterMeta().moments.reason);
     return chapterClose(main);
   }
+  // Strongest behaviour (T1 / formerly its own chapter, §4.10): a compact
+  // teaser above the timeline so the one behaviour worth preserving stays
+  // findable without a dedicated tab — "View" just selects that moment in the
+  // sequence below, where its full Situation/Action/Consequence/Impact detail
+  // already renders like any other moment card.
+  const positives = strongestMoments();
+  if (positives.length && positives[0] !== currentMoment()) {
+    const idx = currentMoments().indexOf(positives[0]);
+    const teaser = el("div", "strongest-teaser");
+    teaser.append(el("span", "tag strength", "Strongest behaviour"));
+    teaser.append(el("span", "strongest-teaser-text", positives[0].summary));
+    const view = el("button", "button subtle", "View");
+    view.addEventListener("click", () => { if (idx >= 0) selectMoment(idx); });
+    teaser.append(view);
+    main.append(teaser);
+  }
+
   const { seqOfEvent, maxSeq } = indexEvents(f, moments);
   const card = el("div", "card");
   const tl = el("div", "timeline-wrap");
@@ -123,12 +164,12 @@ function renderMomentsChapter(main) {
   chapterClose(main);
 }
 
-// Chapter 1 — Outcome (§4.5): what passed/failed/warned/could-not-be-checked,
-// each check mapped to its contract item, plus what limits the review.
-function renderOutcomeChapter(main) {
+// Overview chapter (T1 / formerly "Outcome", §4.5): outcome, the main finding
+// when one is available, and what materially limits the review. The atomic
+// check table, contract mapping, and requirement warnings live in Checks; a
+// full walkthrough of each finding lives in Key moments.
+function renderOverviewChapter(main) {
   const rv = state.review, f = state.forensic, o = rv.outcome || {}, checks = rv.checks || [];
-  const contract = rv.contract || {}, items = contract.items || [];
-  const itemById = {}; items.forEach(it => (itemById[it.id] = it));
 
   const card = el("div", "card");
   const outcome = el("div", "outcome");
@@ -175,43 +216,28 @@ function renderOutcomeChapter(main) {
   card.append(modeNote);
   main.append(card);
 
-  // Atomic checks, each expandable to its verifier evidence + contract mapping.
-  const csec = el("div", "card card-pad");
-  csec.append(el("p", "eyebrow", "Atomic checks"));
-  csec.append(el("p", "chapter-lede", "What each verifier check observed, and which task-contract item it covers."));
-  const list = el("div", "check-list");
-  for (const c of checks) {
-    const d = el("details", "check-row"); const sum = el("summary", "check-sum");
-    sum.append(el("span", "badge " + badgeClass(c.status), (c.status || "?").toUpperCase()));
-    sum.append(el("span", "check-name", c.name));
-    sum.append(el("span", "check-id mono", c.check_id));
-    d.append(sum);
-    const body = el("div", "check-body");
-    body.append(kvLine("Expected", fmt(c.expected) || "—"));
-    body.append(kvLine("Observed", fmt(c.observed) || "—"));
-    const mapped = (c.contract_item_ids || []).map(id => (itemById[id] || {}).description || id);
-    body.append(kvLine("Covers contract", mapped.length ? mapped.join("; ") : "No mapped contract item"));
-    for (const w of (contract.warnings || []).filter(w => (w.check_ids || []).includes(c.check_id)))
-      body.append(el("div", "check-warn", "⚠ " + warnKind(w.warning_type) + " — " + w.message));
-    d.append(body); list.append(d);
+  // Main finding (T1): the one moment Overview leads with, so a reader gets a
+  // finding headline without visiting Key moments first. Full detail — action,
+  // consequence, likely impact, better action, evidence — lives on the moment
+  // card itself; this is a pointer to it, not a duplicate of it.
+  const mf = mainFinding();
+  const fsec = el("div", "card card-pad");
+  fsec.append(el("p", "eyebrow", "Main finding"));
+  if (mf) {
+    fsec.append(el("h2", "empty-title", mf.summary));
+    fsec.append(el("p", "chapter-lede",
+      (mf.polarity === "positive" ? "Strongest behaviour observed in this run. " : "")
+      + consequenceText(mf)));
+    const open = el("button", "button", "Open in Key moments →");
+    const idx = currentMoments().indexOf(mf);
+    open.addEventListener("click", () => { if (idx >= 0) state.momentIdx = idx; setChapter("moments"); });
+    fsec.append(open);
+  } else {
+    fsec.append(el("p", "chapter-lede", rv.review_mode === "not_reviewable"
+      ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
+      : "No decisive finding was selected for this run."));
   }
-  if (!checks.length) list.append(el("p", "chapter-lede", "This run recorded no atomic verifier checks."));
-  csec.append(list); main.append(csec);
-
-  // Requirement warnings surfaced by the contract builder (§4.5, §8.2): shown,
-  // never silently resolved.
-  const warns = contract.warnings || [];
-  if (warns.length) {
-    const wsec = el("div", "card card-pad");
-    wsec.append(el("p", "eyebrow", "Requirement warnings"));
-    for (const w of warns) {
-      const row = el("div", "warn-row");
-      row.append(el("div", "warn-kind", warnKind(w.warning_type)));
-      row.append(el("div", "warn-msg", w.message));
-      wsec.append(row);
-    }
-    main.append(wsec);
-  }
+  main.append(fsec);
 
   main.append(renderFinalState(rv, f));
 
@@ -365,31 +391,106 @@ function renderOpportunitiesChapter(main) {
   chapterClose(main);
 }
 
-// Chapter 4 — Strongest behaviour (§4.10): a concise preservation summary of one
-// behaviour worth keeping, when the review supports one.
-function renderStrongestChapter(main) {
-  const rv = state.review, f = state.forensic, positives = strongestMoments();
-  if (!positives.length) {
-    chapterEmpty(main, "No preserved-strength behaviour", chapterMeta().strongest.reason);
-    return chapterClose(main);
+// Checks chapter (T1): requirement results (the atomic verifier checks, each
+// mapped to its contract item, plus requirement warnings) together with the
+// task/verifier audit — both are "what does this outcome actually mean",
+// so they now share one chapter instead of Outcome and a separate Audit tab.
+function renderChecksChapter(main) {
+  const rv = state.review, f = state.forensic, checks = rv.checks || [];
+  const contract = rv.contract || {}, items = contract.items || [];
+  const itemById = {}; items.forEach(it => (itemById[it.id] = it));
+
+  const csec = el("div", "card card-pad");
+  csec.append(el("p", "eyebrow", "Requirement results"));
+  csec.append(el("p", "chapter-lede", "What each verifier check observed, and which task-contract item it covers."));
+  const list = el("div", "check-list");
+  for (const c of checks) {
+    const d = el("details", "check-row"); const sum = el("summary", "check-sum");
+    sum.append(el("span", "badge " + badgeClass(c.status), (c.status || "?").toUpperCase()));
+    sum.append(el("span", "check-name", c.name));
+    sum.append(el("span", "check-id mono", c.check_id));
+    d.append(sum);
+    const body = el("div", "check-body");
+    body.append(kvLine("Expected", fmt(c.expected) || "—"));
+    body.append(kvLine("Observed", fmt(c.observed) || "—"));
+    const mapped = (c.contract_item_ids || []).map(id => (itemById[id] || {}).description || id);
+    body.append(kvLine("Covers contract", mapped.length ? mapped.join("; ") : "No mapped contract item"));
+    for (const w of (contract.warnings || []).filter(w => (w.check_ids || []).includes(c.check_id)))
+      body.append(el("div", "check-warn", "⚠ " + warnKind(w.warning_type) + " — " + w.message));
+    d.append(body); list.append(d);
   }
-  const m = positives[0];
-  const idx = currentMoments().indexOf(m);
-  const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", "Strongest behaviour"));
-  card.append(el("h2", "empty-title", m.summary));
-  card.append(kvBlock("Opportunity", situationText(m)));
-  card.append(kvBlock("Chosen behaviour", actionText(m, f)));
-  card.append(kvBlock("Immediate result", consequenceText(m)));
-  card.append(kvBlock("Outcome supported", (rv.outcome || {}).status
-    ? "Contributed to outcome " + (rv.outcome.status) + " (" + (rv.outcome.passed ?? "?") + "/" + (rv.outcome.total ?? "?") + " checks)."
-    : "See the linked moment for the supported outcome."));
-  card.append(el("div", "preserve-note", "Preserve during a harness change: keep whatever produced this behaviour intact when the scaffold, tools, or prompts are revised."));
-  const open = el("button", "button", "Open in Key moments →");
-  open.addEventListener("click", () => { if (idx >= 0) state.momentIdx = idx; setChapter("moments"); });
-  const actions = el("div", "lesson-actions"); actions.append(open); card.append(actions);
-  main.append(card);
+  if (!checks.length) list.append(el("p", "chapter-lede", "This run recorded no atomic verifier checks."));
+  csec.append(list); main.append(csec);
+
+  // Requirement warnings surfaced by the contract builder (§4.5, §8.2): shown,
+  // never silently resolved.
+  const warns = contract.warnings || [];
+  if (warns.length) {
+    const wsec = el("div", "card card-pad");
+    wsec.append(el("p", "eyebrow", "Requirement warnings"));
+    for (const w of warns) {
+      const row = el("div", "warn-row");
+      row.append(el("div", "warn-kind", warnKind(w.warning_type)));
+      row.append(el("div", "warn-msg", w.message));
+      wsec.append(row);
+    }
+    main.append(wsec);
+  }
+
+  main.append(renderAuditSection(rv, f));
   chapterClose(main);
+}
+
+// Task & Verifier Audit (§11), as a section within Checks: one categorical,
+// evidence-backed finding per dimension qualifying what this run's result can
+// legitimately imply. Categorical values only — never scores — and a human
+// concern correction (§4.13) replaces the shown assessment while the
+// generated value stays visible.
+function auditBadge(assessment) {
+  const cls = assessment === "supported_concern" ? "neg"
+    : assessment === "possible_concern" ? "limited"
+    : assessment === "no_concern_detected" ? "pos" : "none";
+  return el("span", "stat-badge " + cls, (assessment || "?").replace(/_/g, " "));
+}
+function renderAuditSection(rv, f) {
+  const rows = rv.audit || [];
+  const card = el("div", "card card-pad");
+  card.append(el("p", "eyebrow", "Task & verifier audit"));
+  if (!rows.length) {
+    card.append(el("p", "chapter-lede", "No task/verifier audit was derived for this run."));
+    return card;
+  }
+  card.append(el("p", "chapter-lede",
+    "What this run's result can legitimately imply about the task and its verifier. "
+    + "Categorical findings with exact evidence — the audit never overrides the result."));
+  const t = el("table", "audit-table");
+  t.append(rowEls("tr", ["Dimension", "Assessment", "Finding", "Evidence"], "th"));
+  for (const r of rows) {
+    const tr = el("tr");
+    tr.append(td((r.dimension || "?").replace(/_/g, " ")));
+    const aTd = el("td");
+    aTd.append(auditBadge(r.assessment));
+    if (r.corrected) {
+      const chip = el("span", "chip", "human-adjusted");
+      chip.title = "Adjusted by " + ((r.correction || {}).actor || "a reviewer")
+        + (r.human_statement ? ": " + r.human_statement : "");
+      aTd.append(chip);
+    }
+    tr.append(aTd);
+    const fTd = el("td");
+    fTd.append(document.createTextNode(r.statement || "—"));
+    if (r.corrected) {
+      fTd.append(el("div", "final-note",
+        "generated: " + (((r.generated || {}).assessment || "?").replace(/_/g, " "))));
+      if (r.human_statement) fTd.append(el("div", "final-note", r.human_statement));
+    }
+    tr.append(fTd);
+    tr.append(evidenceTd(
+      [].concat(r.evidence_event_ids, r.evidence_check_ids, r.evidence_item_ids), f));
+    t.append(tr);
+  }
+  card.append(t);
+  return card;
 }
 
 // Chapter 5 — Task Ability Signature (§4.10): the full n=1 table, all rows, with
@@ -424,73 +525,16 @@ function renderSignatureChapter(main) {
   chapterClose(main);
 }
 
-// Chapter 6 — Task & Verifier Audit (§11): one categorical, evidence-backed
-// finding per dimension qualifying what this run's result can legitimately
-// imply. Categorical values only — never scores — and a human concern
-// correction (§4.13) replaces the shown assessment while the generated value
-// stays visible.
-function auditBadge(assessment) {
-  const cls = assessment === "supported_concern" ? "neg"
-    : assessment === "possible_concern" ? "limited"
-    : assessment === "no_concern_detected" ? "pos" : "none";
-  return el("span", "stat-badge " + cls, (assessment || "?").replace(/_/g, " "));
-}
-function renderAuditChapter(main) {
-  const rv = state.review, f = state.forensic, rows = rv.audit || [];
-  if (!rows.length) {
-    chapterEmpty(main, "No task/verifier audit", chapterMeta().audit.reason);
-    return chapterClose(main);
-  }
-  const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", "Task & verifier audit"));
-  card.append(el("p", "chapter-lede",
-    "What this run's result can legitimately imply about the task and its verifier. "
-    + "Categorical findings with exact evidence — the audit never overrides the result."));
-  const t = el("table", "audit-table");
-  t.append(rowEls("tr", ["Dimension", "Assessment", "Finding", "Evidence"], "th"));
-  for (const r of rows) {
-    const tr = el("tr");
-    tr.append(td((r.dimension || "?").replace(/_/g, " ")));
-    const aTd = el("td");
-    aTd.append(auditBadge(r.assessment));
-    if (r.corrected) {
-      const chip = el("span", "chip", "human-adjusted");
-      chip.title = "Adjusted by " + ((r.correction || {}).actor || "a reviewer")
-        + (r.human_statement ? ": " + r.human_statement : "");
-      aTd.append(chip);
-    }
-    tr.append(aTd);
-    const fTd = el("td");
-    fTd.append(document.createTextNode(r.statement || "—"));
-    if (r.corrected) {
-      fTd.append(el("div", "final-note",
-        "generated: " + (((r.generated || {}).assessment || "?").replace(/_/g, " "))));
-      if (r.human_statement) fTd.append(el("div", "final-note", r.human_statement));
-    }
-    tr.append(fTd);
-    tr.append(evidenceTd(
-      [].concat(r.evidence_event_ids, r.evidence_check_ids, r.evidence_item_ids), f));
-    t.append(tr);
-  }
-  card.append(t); main.append(card);
-  chapterClose(main);
-}
-
-// Chapter 7 — Eval Lesson (§4.11): shown only when a reviewed finding supports a
-// concrete improvement; otherwise the canonical empty state. The lesson body is
-// projected from the recommending moment; a human drives the §6.10 lifecycle and
-// (§13.2) the improvement-experiment proposal, all persisted server-side.
-function renderLessonChapter(main) {
-  const ctx = evalLesson();
-  if (!ctx) {
-    const empty = el("div", "card card-pad chapter-empty");
-    empty.append(el("p", "eyebrow", "Eval lesson"));
-    empty.append(el("h2", "empty-title", "No Eval Lesson generated."));
-    empty.append(el("p", "chapter-lede", "This deterministic review found no supported risk or accepted diagnosis."));
-    main.append(empty);
-    return chapterClose(main);
-  }
-  const m = ctx.moment, lesson = ctx.lesson;
+// Eval lesson (T1 / formerly its own chapter, §4.11): rendered inline on the
+// moment card that recommends it (see moments.js `renderLessonInline`) rather
+// than as a separate chapter — the finding is where the lesson belongs. The
+// body is projected from the recommending moment; a human drives the §6.10
+// lifecycle and (§13.2) the improvement-experiment proposal, both persisted
+// server-side. `container` is appended to, not replaced, so the caller decides
+// whether it sits inside a moment card or (as chapterClose does elsewhere)
+// closes out a full chapter.
+function renderLessonInline(container, m) {
+  const lesson = persistedLesson(m);
   const rcc = (m.root_cause_candidates || [])[0] || {};
   // Prefer the persisted (possibly edited) values; fall back to the moment's
   // projected defaults before the lesson has been accepted.
@@ -503,40 +547,35 @@ function renderLessonChapter(main) {
   const iv = body.systemic_intervention || {};
   const status = lesson ? lesson.status : "proposed";
 
-  const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", "Eval lesson"));
-  card.append(el("h2", "empty-title", body.observed_behaviour || m.summary));
-  card.append(kvBlock("Accepted behaviour", situationText(m)));
-  card.append(kvBlock("Smallest better action", body.better_local_action || "—"));
-  card.append(kvBlock("Intervention locus", iv.layer || "—"));
-  card.append(kvBlock("Intervention proposal", iv.proposal || "—"));
-  card.append(kvBlock("Where it should generalize", body.generalization_boundary || "—"));
-  card.append(kvBlock("Where it may not generalize", body.generalization_exclusion || "—"));
-  card.append(kvBlock("Possible side effects", (body.possible_side_effects || []).join(", ") || "—"));
-  card.append(kvBlock("Proposed regression slice", body.regression_slice || "—"));
+  container.append(kvBlock("Accepted behaviour", situationText(m)));
+  container.append(kvBlock("Smallest better action", body.better_local_action || "—"));
+  container.append(kvBlock("Intervention locus", iv.layer || "—"));
+  container.append(kvBlock("Intervention proposal", iv.proposal || "—"));
+  container.append(kvBlock("Where it should generalize", body.generalization_boundary || "—"));
+  container.append(kvBlock("Where it may not generalize", body.generalization_exclusion || "—"));
+  container.append(kvBlock("Possible side effects", (body.possible_side_effects || []).join(", ") || "—"));
+  container.append(kvBlock("Proposed regression slice", body.regression_slice || "—"));
 
   const approval = el("div", "kv-block");
   approval.append(el("span", "kv-k", "Approval"));
   const av = el("span", "kv-v");
   av.append(el("span", "lesson-status", "Status · " + status)); approval.append(av);
-  card.append(approval);
+  container.append(approval);
 
   const done = status === "rejected" || status === "superseded";
   const actions = el("div", "lesson-actions");
   actions.append(lessonButton("Approve for test", "primary",
     status === "proposed", () => approveLessonForTest(m)));
   actions.append(lessonButton("Edit lesson", "", !done,
-    () => renderLessonEditor(main, m, lesson)));
+    () => renderLessonEditor(container, m, lesson)));
   actions.append(lessonButton("Reject", "",
     status === "proposed" || status === "approved_for_test", () => rejectLesson(m)));
   actions.append(lessonButton("Create regression-eval proposal", "",
     status === "approved_for_test" && !(lesson && lesson.experiment_proposal),
     () => proposeExperiment(lesson)));
-  card.append(actions);
+  container.append(actions);
 
-  if (lesson && lesson.experiment_proposal) card.append(experimentProposalCard(lesson));
-  main.append(card);
-  chapterClose(main);
+  if (lesson && lesson.experiment_proposal) container.append(experimentProposalCard(lesson));
 }
 
 function lessonButton(label, extra, enabled, onClick) {
@@ -637,14 +676,20 @@ const LESSON_EDIT_FIELDS = [
   ["possible_side_effects", "Possible side effects (comma-separated)", "list"],
   ["regression_slice", "Proposed regression slice", "text"],
 ];
-async function renderLessonEditor(main, moment, lesson) {
+async function renderLessonEditor(container, moment, lesson) {
   // The editor needs a persisted lesson to version-edit; create one on first edit,
   // then reopen the editor against the refreshed state rather than bouncing the
   // reviewer back to the chapter.
   if (!lesson) {
     await lessonGuard(async () => { await ensureLesson(moment); });
+    // `lessonGuard` already called `refreshRun()` → `render()` above, which
+    // rebuilt the moment card and detached the `container` this call was
+    // given — writing into it now would be invisible. Re-open the editor
+    // against the freshly rendered container for this same moment instead.
     const fresh = persistedLesson(moment);
-    return fresh ? renderLessonEditor(main, moment, fresh) : render();
+    const live = document.querySelector(
+      '.moment-lesson-body[data-moment-id="' + CSS.escape(moment.moment_id) + '"]');
+    return (fresh && live) ? renderLessonEditor(live, moment, fresh) : render();
   }
   const iv = lesson.systemic_intervention || {};
   const seed = {
@@ -671,7 +716,7 @@ async function renderLessonEditor(main, moment, lesson) {
   const cancel = el("button", "button", "Cancel");
   cancel.addEventListener("click", render);
   actions.append(save, cancel); card.append(actions);
-  main.innerHTML = ""; main.append(card); chapterClose(main);
+  container.innerHTML = ""; container.append(card);
 }
 async function saveLessonEdits(lesson, inputs, err) {
   const edits = {};

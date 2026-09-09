@@ -4,9 +4,11 @@
 const FILTER_CHIPS = [["failed","Failed"],["needs_attention","Needs attention"],["recovered","Recovered"],["plausible_recovery","Plausible recovery"],["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"]];
 const SORT_OPTIONS = [["triage","Triage priority"],["outcome","Outcome"],["review_progress","Review progress"],["cost","Cost"],["duration","Duration"],["recently_updated","Recently updated"]];
 const TRIAGE_TIP = "Workflow convenience, not a severity or model-quality score.";
-// §4.3.5 fast/deep entry — where each run opens. "First key moment" is the fast
-// path for repeat triage; "Outcome" opens the summary chapter.
-const ENTRY_OPTIONS = [["first_moment","First key moment"],["outcome","Outcome"]];
+// §4.3.5 fast/deep entry — where each run opens. "Overview" (the default) opens
+// the summary chapter so a run reads in one pass; "First key moment" is the fast
+// path for repeat triage. The stored value stays "outcome" for the Overview
+// choice, for compatibility with existing browser preferences.
+const ENTRY_OPTIONS = [["outcome","Overview"],["first_moment","First key moment"]];
 function entryPreference() { return state.entryPref === "outcome" ? "outcome" : "first_moment"; }
 function setEntryPreference(v) {
   state.entryPref = v === "outcome" ? "outcome" : "first_moment";
@@ -96,7 +98,7 @@ function renderQueueControls() {
   const entryRow = el("label", "sort-row"); entryRow.append(el("span", null, "Open at"));
   const esel = el("select");
   for (const [val, label] of ENTRY_OPTIONS) { const o = el("option", null, label); o.value = val; if (val === state.entryPref) o.selected = true; esel.append(o); }
-  esel.title = "Where each run opens (§4.3.5). First key moment is the fast path for repeat triage; Outcome opens the summary.";
+  esel.title = "Where each run opens (§4.3.5). First key moment is the fast path for repeat triage; Overview opens the summary.";
   esel.addEventListener("change", () => setEntryPreference(esel.value));
   entryRow.append(esel); host.append(entryRow);
 }

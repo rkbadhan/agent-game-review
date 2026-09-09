@@ -67,7 +67,20 @@
   .icon-button:hover { background:rgba(255,255,255,.13); }
   .appbar-action { width:auto; padding:0 11px; font-size:11.5px; font-weight:650; white-space:nowrap; }
   .avatar { width:32px; height:32px; display:grid; place-items:center; border-radius:50%;
-    background:#e8d4c8; color:var(--navy); font-size:12px; font-weight:750; }
+    background:#e8d4c8; color:var(--navy); font-size:12px; font-weight:750; flex:none; }
+  .brand { flex:none; }
+  .brand span { white-space:nowrap; }
+  /* Narrow-screen overflow menu (shown only under the responsive rules below). */
+  .appbar-menu { display:none; position:relative; }
+  .appbar-menu > summary { list-style:none; }
+  .appbar-menu > summary::-webkit-details-marker { display:none; }
+  .appbar-menu-list { position:absolute; top:calc(100% + 6px); right:0; z-index:30;
+    display:flex; flex-direction:column; gap:2px; min-width:210px; padding:6px;
+    border:1px solid var(--line-strong); border-radius:10px; background:var(--paper-strong);
+    box-shadow:var(--shadow); }
+  .appbar-menu-list button { text-align:left; padding:9px 11px; border:0; border-radius:7px;
+    background:transparent; color:var(--ink); font-size:13px; font-weight:560; }
+  .appbar-menu-list button:hover { background:var(--paper); }
 
   /* workspace grid */
   /* Three columns, both side widths dragged by the reviewer and remembered.
@@ -148,6 +161,19 @@
     font-weight:500; line-height:1.14; letter-spacing:-.02em; }
   .run-subtitle { color:var(--muted); font-size:12px; }
   .run-subtitle .mono { font-family:var(--mono); }
+  /* Header run-stepper: the queue position, made walkable. */
+  .run-stepper { display:inline-flex; align-items:center; gap:1px; vertical-align:middle; }
+  .step-arrow { border:0; background:transparent; color:var(--muted); font-size:14px; line-height:1;
+    padding:1px 5px; border-radius:5px; }
+  .step-arrow:hover:not(:disabled) { color:var(--ink); background:var(--paper-strong); }
+  .step-arrow:disabled { color:var(--line-strong); cursor:default; }
+  .step-label { padding:0 2px; }
+  /* Persistent plain-language verdict beneath the title. */
+  .run-verdict { margin:9px 0 0; max-width:64ch; color:var(--ink-soft); font-size:13.5px; line-height:1.5; }
+  .run-verdict-key { font-weight:700; }
+  .run-verdict.fail .run-verdict-key { color:var(--rust); }
+  .run-verdict.warn .run-verdict-key { color:var(--amber); }
+  .run-verdict.pass .run-verdict-key { color:var(--moss); }
   .header-status { flex:none; display:flex; align-items:center; gap:7px; padding:8px 11px; border-radius:9px;
     color:var(--rust); background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 32%,transparent);
     font-size:11px; font-weight:750; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }
@@ -182,23 +208,66 @@
   :root[data-theme="dark"] .seg.active, .seg.active { color:var(--ink); }
   .seg-spacer { flex:1; }
 
-  /* review outline rail (§4.2 / §4.4) */
-  .review-nav { max-width:900px; margin:0 auto 18px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  .outline { flex:1; min-width:0; display:flex; gap:4px; flex-wrap:wrap; }
-  .ochip { display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border:1px solid transparent;
-    border-radius:8px; color:var(--muted); background:transparent; font-size:12px; font-weight:600; }
-  .ochip:hover { color:var(--ink); background:var(--paper-strong); }
-  .ochip .ochip-mark { width:15px; height:15px; flex:none; display:grid; place-items:center; border:1px solid var(--line-strong);
-    border-radius:5px; font-size:9px; color:var(--muted); background:var(--paper-strong); }
-  .ochip.current { color:var(--navy); background:var(--paper-strong); border-color:var(--line); box-shadow:var(--shadow-soft); }
-  :root[data-theme="dark"] .ochip.current, .ochip.current { color:var(--ink); }
-  .ochip.current .ochip-mark { color:var(--rust); border-color:var(--rust); }
+  /* review outline rail (§4.2 / §4.4) — the primary chapters read as a tab bar
+     sitting on a shared underline rail. The current chapter is marked by a rust
+     underline; a small status glyph reports viewed / corrected / unavailable
+     without looking like a form control. */
+  .review-nav { max-width:900px; margin:0 auto 18px; display:flex; align-items:flex-end;
+    gap:10px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  /* The three chapter tabs stay together on one line (grow to push the tools
+     right, never shrink or wrap mid-group); when space is tight the whole tools
+     cluster wraps below them instead of a single tab orphaning onto row two. */
+  .outline { flex:1 0 auto; display:flex; gap:1px; flex-wrap:nowrap; align-items:flex-end; }
+  .ochip { display:inline-flex; align-items:center; gap:7px; padding:9px 12px; margin-bottom:-1px;
+    border:0; border-bottom:2px solid transparent; border-radius:7px 7px 0 0; color:var(--muted);
+    background:transparent; font-size:12.5px; font-weight:600; }
+  .ochip:hover { color:var(--ink); background:color-mix(in srgb,var(--paper-strong) 55%,transparent);
+    border-bottom-color:var(--line-strong); }
+  .ochip .ochip-mark { width:auto; height:auto; flex:none; display:inline-grid; place-items:center;
+    border:0; border-radius:0; font-size:10px; color:var(--faint); background:transparent; }
+  .ochip.current { color:var(--ink); background:transparent; border-bottom-color:var(--rust); box-shadow:none; }
+  .ochip.current .ochip-mark { color:var(--rust); }
   .ochip.done { color:var(--ink-soft); }
-  .ochip.done .ochip-mark { color:#fff; background:var(--moss); border-color:var(--moss); }
-  .ochip.corrected .ochip-mark { color:var(--rust); background:var(--rust-soft); border-color:var(--rust); }
+  .ochip.done .ochip-mark { color:var(--moss); background:transparent; }
+  .ochip.corrected .ochip-mark { color:var(--rust); background:transparent; }
   .ochip.unavailable { color:var(--faint); }
-  .ochip.unavailable .ochip-mark { color:var(--faint); border-style:dashed; }
-  .review-util { display:flex; align-items:center; gap:6px; }
+  .ochip.unavailable .ochip-mark { color:var(--faint); background:transparent; }
+  .review-util { display:flex; align-items:center; gap:4px; padding-bottom:5px; }
+  /* T1: Trace nav item + "More analysis" disclosure for Opportunities/Signature */
+  .ochip.trace-chip { color:var(--muted); }
+  .more-analysis { position:relative; display:inline-flex; padding-bottom:5px; }
+  .more-analysis summary { display:inline-flex; align-items:center; gap:6px; padding:6px 11px;
+    border-radius:8px; color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; list-style:none; }
+  .more-analysis summary::-webkit-details-marker { display:none; }
+  .more-analysis summary::after { content:"▾"; font-size:9px; color:var(--faint); }
+  .more-analysis:hover summary, .more-analysis[open] summary { color:var(--ink); background:var(--paper-strong); }
+  .more-analysis-list { position:absolute; top:calc(100% + 4px); left:0; z-index:5; display:flex; flex-direction:column;
+    gap:2px; min-width:200px; padding:6px; border:1px solid var(--line-strong); border-radius:10px;
+    background:var(--paper-strong); box-shadow:var(--shadow); }
+  /* Subtle entrance so a popover fades in rather than snapping open. */
+  @keyframes menuPop { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
+  .more-analysis-list, .appbar-menu-list { animation:menuPop .12s ease-out; }
+  @media (prefers-reduced-motion: reduce) { .more-analysis-list, .appbar-menu-list { animation:none; } }
+  /* Inside the dropdown the chapters are menu rows, not rail tabs — undo the
+     underline-tab treatment so they read as an ordinary popover list. */
+  .more-analysis-list .ochip { width:100%; margin-bottom:0; border-bottom:0; border-radius:6px; padding:7px 10px; }
+  .more-analysis-list .ochip:hover { background:var(--paper); }
+  .more-analysis-list .ochip.current { background:var(--navy-soft); }
+  /* Unified Compare control: its menu rows are actions, styled as popover rows
+     to match the "More analysis" list. */
+  .compare-menu summary.active { color:var(--ink); background:var(--paper-strong); box-shadow:var(--shadow-soft); }
+  /* The tools cluster sits at the right end of the row, so its popovers
+     (More analysis, Compare) align to the right edge rather than overflowing. */
+  .review-util .more-analysis-list { left:auto; right:0; }
+  .more-analysis-list .compare-item { width:100%; text-align:left; padding:7px 10px; border:0; border-radius:6px;
+    background:transparent; color:var(--ink); font-size:12.5px; font-weight:560; white-space:nowrap; }
+  .more-analysis-list .compare-item:hover { background:var(--paper); }
+  .more-analysis-list .compare-item.current { background:var(--navy-soft); font-weight:650; }
+  .more-analysis-list .compare-item:disabled { color:var(--faint); cursor:default; }
+  .more-analysis-list .compare-item:disabled:hover { background:transparent; }
+  /* T1: reviewer-diff comparison accessed through the review selector */
+  .shell-chip.reviewer-flip { display:inline-flex; align-items:center; gap:4px; padding:2px; }
+  .flip-compare { margin-left:4px; }
 
   /* chapter framing */
   .chapter-lede { max-width:900px; margin:-4px auto 14px; color:var(--muted); font-size:12.5px; line-height:1.5; }
@@ -255,6 +324,13 @@
   .ev-link:hover { text-decoration:underline; }
   .ev-static { color:var(--faint); font:11px var(--mono); margin-right:8px; }
   .sig-n { display:inline-block; margin-left:8px; color:var(--muted); font-size:11px; }
+
+  /* T1: strongest-behaviour teaser above the Key-moments timeline */
+  .strongest-teaser { max-width:900px; margin:0 auto 14px; display:flex; align-items:center; gap:10px;
+    padding:9px 13px; border-radius:10px; background:var(--moss-soft);
+    border:1px solid color-mix(in srgb,var(--moss) 28%,transparent); }
+  .strongest-teaser-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    color:var(--ink-soft); font-size:12.5px; }
 
   /* strongest behaviour + lesson */
   .kv-block { display:grid; grid-template-columns:150px minmax(0,1fr); gap:14px; padding:11px 0; border-top:1px solid var(--line); }
@@ -328,11 +404,26 @@
   .moment-nav { margin-left:auto; display:flex; gap:6px; }
   .nav-arrow { width:28px; height:28px; border:1px solid var(--line); border-radius:7px; background:transparent; }
   .nav-arrow:hover { background:var(--navy-soft); border-color:var(--line-strong); }
-  .moment-body { padding:20px 22px 16px; }
+  .moment-body { padding:16px 22px 16px; }
   .moment-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; min-width:0; }
   .moment-heading h2 { margin:0; max-width:none; flex:1 1 auto; min-width:0; font-family:var(--serif); font-size:22px; font-weight:500;
     line-height:1.22; letter-spacing:-.02em; overflow-wrap:anywhere; }
   .moment-anchor { flex:none; padding-top:5px; color:var(--muted); font:10px var(--mono); white-space:nowrap; }
+  /* T2: collapsed moment card — finding headline, concise observed-behaviour
+     line, and evidence anchors, readable before any expand action. */
+  .moment-summary { padding:20px 22px 6px; }
+  .moment-observed { margin:0; color:var(--ink-soft); font-size:13.5px; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
+  .moment-anchors { display:flex; flex-wrap:wrap; align-items:center; gap:8px 4px; margin-top:10px; }
+  .moment-anchors-label { color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.06em; text-transform:uppercase; }
+  /* T2: the five-part breakdown, preserved exactly, behind an expand toggle */
+  .moment-detail { margin:0 22px 8px; border-top:1px solid var(--line); }
+  .moment-detail > summary { padding:10px 0; cursor:pointer; color:var(--navy); font-size:11.5px; font-weight:700;
+    letter-spacing:.03em; text-transform:uppercase; list-style:none; }
+  :root[data-theme="dark"] .moment-detail > summary { color:var(--ink); }
+  .moment-detail > summary::-webkit-details-marker { display:none; }
+  .moment-detail > summary::before { content:"▸ "; }
+  .moment-detail[open] > summary::before { content:"▾ "; }
+  .moment-detail .moment-body { padding:0 0 12px; }
   .mc-block { display:grid; grid-template-columns:120px minmax(0,1fr); gap:16px; padding:12px 0; border-top:1px solid var(--line); }
   .mc-label { padding-top:2px; color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.07em; text-transform:uppercase; }
   .mc-label span { display:block; margin-top:4px; color:var(--faint); font-size:8.5px; font-weight:500; letter-spacing:.03em; text-transform:none; }
@@ -343,6 +434,14 @@
   .mc-block.interp { background:var(--violet-soft); } .mc-block.interp .mc-label, .mc-block.interp .mc-text { color:var(--violet); }
   .mc-block.hypo { background:var(--moss-soft); } .mc-block.hypo .mc-label, .mc-block.hypo .mc-text { color:var(--moss); }
   .mc-block.absent .mc-text { color:var(--muted); font-style:italic; }
+  /* T1: Eval lesson attached to its recommending moment card, collapsed by default */
+  .moment-lesson { margin:0 22px 16px; padding-top:14px; border-top:1px solid var(--line); }
+  .moment-lesson > summary { cursor:pointer; color:var(--amber); font-size:11px; font-weight:700;
+    letter-spacing:.04em; text-transform:uppercase; list-style:none; }
+  .moment-lesson > summary::-webkit-details-marker { display:none; }
+  .moment-lesson > summary::before { content:"▸ "; }
+  .moment-lesson[open] > summary::before { content:"▾ "; }
+  .moment-lesson-body { margin-top:10px; }
   .moment-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; padding:12px 18px;
     border-top:1px solid var(--line); background:var(--paper-strong); }
   .mfb { display:flex; flex-wrap:wrap; gap:6px; width:100%; margin-bottom:2px; }
@@ -400,13 +499,47 @@
   .evidence-label > span.evidence-type { overflow-wrap:normal; }
   .evidence-type { padding:2px 5px; border-radius:4px; color:var(--muted); background:var(--canvas-deep); font:8px var(--mono); text-transform:uppercase; }
   .evidence-detail { margin:0; color:var(--ink-soft); font:10.5px/1.5 var(--mono); word-break:break-word; }
-  .evidence-cap { margin-top:5px; color:var(--muted); font-size:9.5px; overflow-wrap:anywhere; word-break:break-word; }
   .source-link { width:100%; margin-top:7px; padding:6px 0 0; border:0; color:var(--navy); background:transparent;
     text-align:left; font-size:10px; font-weight:650; }
   :root[data-theme="dark"] .source-link, .source-link { color:var(--rust); }
   .source-link:hover { text-decoration:underline; }
   .judgment-note { padding:11px; border-radius:9px; color:var(--violet); background:var(--violet-soft); font-size:10.5px; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
   .panel-dim { padding:24px 16px; color:var(--muted); font-size:12px; }
+
+  /* T3: evidence panel shows actual source content, not just metadata */
+  .evidence-anchor-tabs { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:9px; }
+  .evidence-source .content-line { margin-bottom:5px; font:11px/1.55 var(--mono); color:var(--ink-soft); word-break:break-word; }
+  .evidence-source .content-line:last-child { margin-bottom:0; }
+  .evidence-source .kv { color:var(--muted); }
+  .content-excerpt mark { padding:0 2px; border-radius:3px; background:var(--amber-soft); color:var(--ink); }
+  :root[data-theme="dark"] .content-excerpt mark { color:var(--ink); }
+  .content-flag { display:inline-block; margin-top:3px; margin-right:8px; color:var(--muted); font-size:9.5px; font-style:italic; }
+  .content-expand { border:0; padding:0; background:transparent; color:var(--navy); font-size:9.5px; font-weight:650; cursor:pointer; }
+  :root[data-theme="dark"] .content-expand { color:var(--rust); }
+  .content-expand:hover { text-decoration:underline; }
+  .content-state { display:inline-flex; margin-bottom:6px; padding:1px 7px; border-radius:5px; font-size:9.5px; font-weight:700;
+    letter-spacing:.04em; text-transform:uppercase; }
+  .content-state.unavailable { color:var(--faint); background:var(--canvas-deep); border:1px dashed var(--line-strong); }
+  .content-state.partial { color:var(--amber); background:var(--amber-soft); }
+  .evidence-span-note { margin:8px 0 0; color:var(--muted); font-size:10px; font-style:italic; line-height:1.4; }
+  .evidence-neighbors { margin-top:9px; }
+  .evidence-neighbors summary { cursor:pointer; color:var(--muted); font-size:10px; font-weight:650; list-style:none; }
+  .evidence-neighbors summary::-webkit-details-marker { display:none; }
+  .evidence-neighbors summary::before { content:"▸ "; }
+  .evidence-neighbors[open] summary::before { content:"▾ "; }
+  .evidence-neighbor-list { margin-top:6px; display:flex; flex-direction:column; gap:2px; }
+  .evidence-neighbor-row { padding:5px 7px; border:1px solid var(--line); border-radius:6px; background:transparent;
+    color:var(--ink-soft); text-align:left; font-size:10.5px; }
+  .evidence-neighbor-row:hover { background:var(--navy-soft); border-color:var(--line-strong); }
+  .evidence-check .check-status-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .evidence-check .kv-line { grid-template-columns:80px minmax(0,1fr); font-size:11px; }
+  .evidence-provenance { padding:10px 5px 4px; }
+  .evidence-provenance summary { cursor:pointer; color:var(--muted); font-size:9px; font-weight:760; letter-spacing:.1em; text-transform:uppercase; list-style:none; }
+  .evidence-provenance summary::-webkit-details-marker { display:none; }
+  .evidence-provenance summary::before { content:"▸ "; }
+  .evidence-provenance[open] summary::before { content:"▾ "; }
+  .provenance-body { margin-top:8px; }
+  .provenance-body .kv-line { grid-template-columns:120px minmax(0,1fr); font-size:10.5px; }
 
   /* Review / Source generic tables */
   .section { max-width:900px; margin:16px auto; }
@@ -494,6 +627,12 @@
      opaque background is required — sticky content must not show whatever
      scrolls underneath it. */
   .vs-table th { position:sticky; top:60px; z-index:1; background:var(--paper); }
+  /* Inside .table-scroll the header must NOT use the 60px app-bar offset: an
+     `overflow-x:auto` box also becomes a vertical scroll container, so the
+     sticky header resolves against .table-scroll (not the page) and top:60px
+     pushes it 60px down into the table, occluding the first row. Pin it to the
+     top of its own scroller instead. */
+  .table-scroll .vs-table th { top:0; }
   /* Item 21: the sibling divergence point — the row the whole view exists to find. */
   .sib-divergence-point { margin:12px 0; padding:12px; border-radius:9px;
     background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 30%,transparent); }
@@ -505,8 +644,12 @@
   /* AGR-04 (review 82cc113): the fleet table's per-group resolution
      breakdown — confirmed/plausible/unrecovered as distinct labeled parts
      sharing one cell, instead of one collapsed unrecovered percentage. */
-  .vs-resolution { display:flex; flex-direction:column; gap:2px; font-size:10.5px; }
-  .vs-resolution-part { white-space:nowrap; }
+  /* Keep this a normal table cell (not display:flex) so it inherits the table's
+     vertical-align:middle and lines up with the single-line cells beside it; the
+     parts stack as blocks. */
+  .vs-resolution { font-size:10.5px; }
+  .vs-resolution-part { display:block; white-space:nowrap; }
+  .vs-resolution-part + .vs-resolution-part { margin-top:2px; }
   .vs-resolution-part.confirmed { color:var(--moss); }
   .vs-resolution-part.plausible { color:var(--amber); }
   .vs-resolution-part.unrecovered { color:var(--rust); }
@@ -627,8 +770,11 @@
     /* The evidence panel becomes an overlay, so its track and handle go away. */
     .workspace { grid-template-columns:var(--queue-w,296px) 5px minmax(420px,1fr); }
     #evidence-resizer { display:none; }
-    .evidence-panel { position:fixed; top:60px; right:0; bottom:0; z-index:12; width:358px;
-      transform:translateX(calc(100% - 34px)); box-shadow:-8px 0 24px rgba(15,24,30,.14); transition:transform .2s; }
+    /* Closed, the panel sits fully off-screen and only its vertical "Evidence"
+       tab handle (positioned 34px to its left) peeks in — so the reading column
+       is not covered by stubs of the panel's text. */
+    .evidence-panel { position:fixed; top:60px; right:0; bottom:0; z-index:12; width:min(358px,92vw);
+      transform:translateX(100%); box-shadow:-8px 0 24px rgba(15,24,30,.14); transition:transform .2s; }
     .evidence-panel.open { transform:translateX(0); }
     .evidence-tab { position:absolute; top:110px; left:-34px; width:34px; padding:10px 4px; writing-mode:vertical-rl;
       transform:rotate(180deg); border:1px solid var(--line); border-right:0; border-radius:8px 0 0 8px;
@@ -636,6 +782,18 @@
     :root[data-theme="dark"] .evidence-tab { color:var(--ink); }
   }
   @media (min-width:1181px) { .evidence-tab { display:none; } }
+  /* Appbar: the breadcrumb trail is the first thing to go when space tightens —
+     the run title already leads the main column, so the crumbs are redundant. */
+  @media (max-width:980px) { .crumbs { display:none; } }
+  /* Below this width the labelled global-nav buttons will not fit beside the
+     brand, so they collapse into the ⋯ overflow menu (their handlers are reused
+     via the proxy items). This keeps the appbar a single 60px row. */
+  @media (max-width:820px) {
+    .appbar { gap:10px; padding:0 12px; }
+    .appbar-action, #help-button, #theme-toggle { display:none; }
+    .appbar-menu { display:inline-flex; }
+  }
+  @media (max-width:400px) { .brand span { display:none; } }
   @media (max-width:820px) {
     /* Both panels are overlays on narrow screens; nothing left to resize. */
     .workspace { grid-template-columns:1fr; }

@@ -65,16 +65,13 @@ def _launch(pw):
 
 
 def _page(browser, **kwargs):
-    """A fresh page with the §4.19 first-session overlay pre-dismissed.
+    """A fresh browser page.
 
-    Every ``browser.new_page()`` is an isolated context with empty storage, so the
-    onboarding overlay would otherwise open on every test and block the workspace.
-    Tests that are not about onboarding start straight in the app; the dedicated
-    ``test_first_session_guidance_and_glossary`` uses a raw page to see it appear.
+    T1: the §4.19 orientation overlay no longer opens automatically on first
+    use, so every page already starts straight in the app — nothing to
+    pre-dismiss.
     """
-    page = browser.new_page(**kwargs)
-    page.add_init_script("window.localStorage.setItem('agr-seen-intro','1')")
-    return page
+    return browser.new_page(**kwargs)
 
 
 @contextlib.contextmanager
@@ -180,7 +177,7 @@ def test_version_comparison_surface(versions_server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(versions_server)
-        page.wait_for_selector(".moment-card")
+        page.wait_for_selector(".run-header")
 
         # The comparison is a surface of its own, reachable from the app bar.
         page.click("#versions-button")
@@ -235,7 +232,7 @@ def test_version_comparison_surface(versions_server):
         drill.query_selector("summary").click()
         assert "matched run pair" in drill.query_selector("summary").inner_text()
         drill.query_selector_all(".vs-pair button")[0].click()
-        other.wait_for_selector(".moment-card, .chapter-empty")
+        other.wait_for_selector(".run-header")
         assert _query(other.url)["run"]
 
         browser.close()
@@ -252,14 +249,24 @@ def test_workspace_and_full_trace(server):
 
         page.click('.run[data-run-id="chess_best_move__seed42"]')
 
+        # A run now opens on Overview (the synthesis) so it reads in one pass;
+        # step into Key moments to exercise the guided moment view below.
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+
         # Guided workspace: unified timeline (§4.8) with 3 lanes + moment markers,
         # and the five-block moment card (§4.7.1).
         page.wait_for_selector(".timeline-wrap")
         assert len(page.query_selector_all(".lane-row")) == 3  # phase / progress / moments
         assert page.query_selector(".moment-mark") is not None
         page.wait_for_selector(".moment-card")
+        # T2: the collapsed card is concise; the five-part breakdown lives behind
+        # the "Full breakdown" expand toggle.
+        page.click(".moment-detail summary")
         card = page.query_selector(".moment-card").inner_text().lower()
-        for block in ("situation", "observed consequence", "better action"):
+        # T2: a deterministic moment collapses "Likely impact" and "Better
+        # action" into one "AI interpretation" absent block instead of two.
+        for block in ("situation", "observed consequence", "ai interpretation"):
             assert block in card
 
         # §4.2 shell: the header states the review mode and the harness version,
@@ -272,15 +279,18 @@ def test_workspace_and_full_trace(server):
         # plain language, and evidence is grouped by claim.
         panel = page.query_selector("#evidence-panel").inner_text()
         assert "Strong" in panel and "Linked to outcome" in panel
-        assert "situation & action" in panel.lower()
+        assert "what the agent did" in panel.lower()
 
-        # The review outline (§4.2/§4.4) lists all seven chapters, with Key moments
-        # the default entry and marked current.
-        assert len(page.query_selector_all(".outline .ochip")) == 7
+        # The review tabs (T1/§4.2/§4.4) are exactly the three primary chapters;
+        # Trace, Source, More analysis and Compare live in the tools cluster on
+        # the right. Key moments is the one selected above and is marked current.
+        assert [c.inner_text().strip() for c in page.query_selector_all(".outline > .ochip .ochip-label")] == \
+            ["Overview", "Key moments", "Checks"]
         assert "Key moments" in page.query_selector(".ochip.current").inner_text()
+        assert page.query_selector('.review-util .trace-chip') is not None
 
         # Open the full-trace slide-over (§4.12): synchronized forensic panels.
-        page.click('.review-util button:has-text("Full trace")')
+        page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
         assert len(page.query_selector_all("#trace-body .caps .cap")) == 10
         assert len(page.query_selector_all("#trace-body .fsteps .step")) == 9
@@ -295,9 +305,10 @@ def test_workspace_and_full_trace(server):
         assert page.query_selector("#trace-body .pane.lit").get_attribute("data-panel") == "tool_io"
         page.keyboard.press("Escape")  # close the drawer
 
-        # Outcome chapter (§4.5): a disabled detector is listed under review limits.
-        page.click('.ochip:has-text("Outcome")')
-        page.wait_for_selector(".check-list")
+        # Overview chapter (T1/§4.5): outcome, main finding, and — further down —
+        # a disabled detector listed under review limits.
+        page.click('.outline > .ochip:has-text("Overview")')
+        page.wait_for_selector(".outcome")
         # AGR-05: the compaction detector is a registered placeholder — it shows
         # the honest "not implemented" chip, not a capability-gated skip.
         assert any("not implemented" in c.inner_text()
@@ -311,23 +322,32 @@ def test_workspace_and_full_trace(server):
         assert "shell exited 0" in block                       # last process exit
         assert "Artifact capture: checkpoint_only" in block    # what bounds it
 
-        # Task Opportunities chapter (§4.6): the verify-before-submission window is
-        # measured, rendered as a distinct status badge rather than a blank cell.
-        page.click('.ochip:has-text("Opportunities")')
+        # Checks chapter (T1): the atomic-check table moved here from Overview.
+        page.click('.outline > .ochip:has-text("Checks")')
+        page.wait_for_selector(".check-list")
+
+        # Task Opportunities (§4.6) and Ability Signature (§4.10) now live under
+        # "More analysis" instead of occupying a primary tab.
+        page.click(".more-analysis summary")
+        page.click('.more-analysis-list .ochip:has-text("Opportunities")')
         page.wait_for_selector(".opp-table")
         assert page.query_selector(".opp-table .stat-badge.measured") is not None
 
-        # Ability Signature chapter (§4.10): a no-opportunity row stays distinct
-        # from the measured rows.
-        page.click('.ochip:has-text("Ability signature")')
+        # A no-opportunity row stays distinct from the measured rows. Selecting
+        # Opportunities left the disclosure open on the next render (it
+        # reflects the current chapter), so it need not be reopened by hand.
+        if not page.is_visible(".more-analysis-list"):
+            page.click(".more-analysis summary")
+        page.click('.more-analysis-list .ochip:has-text("Ability signature")')
         page.wait_for_selector(".sig-table")
         assert "No opportunity occurred" in page.query_selector(".sig-table").inner_text()
 
-        # Eval Lesson chapter (§4.11): a deterministic review shows the canonical
-        # empty state, never generated filler.
-        page.click('.ochip:has-text("Eval lesson")')
-        page.wait_for_selector(".chapter-empty")
-        assert "No Eval Lesson generated" in page.query_selector(".chapter-empty").inner_text()
+        # Eval Lesson (T1/§4.11) is attached to its recommending moment instead of
+        # a chapter of its own; a deterministic review recommends none, so no
+        # moment card shows the inline "Eval lesson available" disclosure.
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+        assert page.query_selector(".moment-lesson") is None
 
         # Source view (utility, not a chapter) reports the verified hash.
         page.click('.review-util button:has-text("Source")')
@@ -363,8 +383,11 @@ def test_triage_inbox_disposition_and_feedback(server):
         page.wait_for_selector(".run")
         assert page.query_selector('.run[data-run-id="chess_best_move__seed42"]') is not None
 
-        # Open a run; the five-block card and its actions render.
+        # Open a run and step into Key moments; the five-block card and its
+        # actions render (a run now opens on Overview by default).
         page.click('.run[data-run-id="chess_best_move__seed42"]')
+        page.wait_for_selector(".trace-chip")
+        page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card .moment-actions")
 
         # Tier-1 quick feedback records "Agreed".
@@ -397,61 +420,86 @@ def _wait_chip(page, text):
 
 
 def test_entry_preference_chooses_where_a_run_opens(server):
-    """§4.3.5 fast/deep entry: the default fast path opens a run on the first key
-    moment; switching the workspace preference to Outcome opens the summary instead,
-    and the choice is remembered per browser."""
+    """§4.3.5 fast/deep entry: by default a run opens on the Overview summary so it
+    reads in one pass; switching the workspace preference to "First key moment"
+    opens the guided moment view instead, and the choice is remembered per
+    browser."""
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
         page.wait_for_selector(".run")
 
-        # Default fast path: opening a run lands on Key moments.
+        # Default: opening a run lands on Overview.
+        page.click('.run[data-run-id="chess_best_move__seed42"]')
+        _wait_chip(page, "Overview")
+        assert "Overview" in page.query_selector(".ochip.current").inner_text()
+
+        # Switch the preference to the fast path; the next run opens on Key moments.
+        # The stored value is "first_moment" for that choice.
+        page.select_option('.sort-row:has-text("Open at") select', "first_moment")
+        page.click('.run[data-run-id="greeting_report__seed7"]')
+        _wait_chip(page, "Key moments")
+        assert "Key moments" in page.query_selector(".ochip.current").inner_text()
+
+        # The preference is persisted, so a fresh page in the same browser keeps it.
+        assert page.evaluate("() => localStorage.getItem('agr-entry-pref')") == "first_moment"
+        page.reload()
+        page.wait_for_selector(".run")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
         _wait_chip(page, "Key moments")
         assert "Key moments" in page.query_selector(".ochip.current").inner_text()
 
-        # Switch the preference to Outcome; the next run opens on the Outcome chapter.
-        page.select_option('.sort-row:has-text("Open at") select', "outcome")
-        page.click('.run[data-run-id="greeting_report__seed7"]')
-        _wait_chip(page, "Outcome")
-        assert "Outcome" in page.query_selector(".ochip.current").inner_text()
+        browser.close()
 
-        # The preference is persisted, so a fresh page in the same browser keeps it.
-        assert page.evaluate("() => localStorage.getItem('agr-entry-pref')") == "outcome"
-        page.reload()
-        page.wait_for_selector(".run")
-        page.click('.run[data-run-id="chess_best_move__seed42"]')
-        _wait_chip(page, "Outcome")
-        assert "Outcome" in page.query_selector(".ochip.current").inner_text()
+
+def test_header_run_stepper_walks_the_queue(server):
+    """The header queue position is a stepper: it walks the sweep run-by-run
+    without returning to the queue list. The store holds two runs, so from the
+    first the previous arrow is disabled and the next arrow advances."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.wait_for_selector(".run-header")
+
+        assert "of 2" in page.query_selector(".run-stepper .step-label").inner_text().lower()
+        first = page.query_selector(".run-header h1").inner_text()
+        arrows = page.query_selector_all(".run-stepper .step-arrow")
+        assert arrows[0].is_disabled()          # previous, at the first run
+        assert not arrows[1].is_disabled()      # next
+        arrows[1].click()
+        page.wait_for_function(
+            "t => (document.querySelector('.run-header h1')?.innerText ?? '') !== t", arg=first)
+        assert page.query_selector(".run-header h1").inner_text() != first
 
         browser.close()
 
 
 def test_first_session_guidance_and_glossary(server):
-    """§4.19: the first session shows a dismissible overlay explaining the four core
-    ideas; it is shown once per browser; and a compact glossary is reachable from
-    the app bar on every surface and is built from the controlled vocabulary."""
+    """T1/§4.19: first use opens straight into the review, with no blocking
+    terminology modal; the same orientation overlay stays reachable on demand
+    from Help, and a compact glossary is reachable from the app bar on every
+    surface, built from the controlled vocabulary."""
     with sync_playwright() as pw:
         browser = _launch(pw)
-        # A raw page (no seeded flag) so the first-session overlay actually appears.
+        # A raw page (empty storage) — the overlay must still not appear.
         page = browser.new_page()
         page.goto(server)
+        page.wait_for_selector(".run")
+        assert page.query_selector("#intro-modal.open") is None
 
-        # The overlay explains review mode, evidence grade, attribution, and the
-        # fact/interpretation split — the four ideas the spec names.
+        # The overlay is reachable on demand from Help, and explains review
+        # mode, evidence grade, attribution, and the fact/interpretation split.
+        page.click("#help-button")
+        page.wait_for_selector("#help-modal.open")
+        page.click("#open-intro")
         page.wait_for_selector("#intro-modal.open")
         intro = page.query_selector("#intro-modal").inner_text().lower()
         for idea in ("review mode", "evidence grade", "attribution", "interpretation"):
             assert idea in intro
-
-        # Dismissing it records the choice, so it does not return on reload.
         page.click("#intro-dismiss")
         page.wait_for_selector("#intro-modal.open", state="hidden")
-        assert page.evaluate("() => localStorage.getItem('agr-seen-intro')") == "1"
-        page.reload()
-        page.wait_for_selector(".run")
-        assert page.query_selector("#intro-modal.open") is None
 
         # The glossary is reachable from the app bar and defines terms in plain
         # language, grouped by kind — the same labels the badges carry.
@@ -464,8 +512,9 @@ def test_first_session_guidance_and_glossary(server):
         # It is reachable while the Full Trace surface is open, too (§4.19).
         page.keyboard.press("Escape")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
-        page.wait_for_selector(".moment-card")
-        page.click('.review-util button:has-text("Full trace")')
+        # Trace is reachable from any chapter; a run now opens on Overview.
+        page.wait_for_selector(".trace-chip")
+        page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
         page.keyboard.press("g")
         page.wait_for_selector("#glossary-modal.open")
@@ -486,6 +535,8 @@ def test_tier3_correction_and_instrumentation(server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
+        page.wait_for_selector(".trace-chip")
+        page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card")
 
         # Tier 2 stays one click; the confirmation offers the escalation.
@@ -539,15 +590,21 @@ def test_review_position_is_shareable_in_the_url(server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
-        page.wait_for_selector(".moment-card")
+        page.wait_for_selector(".run-header")
 
-        # The default landing position is already addressable.
+        # The default landing (Overview) is addressable; stepping into Key
+        # moments adds the selected-moment position to the URL.
+        assert _query(page.url)["chapter"] == ["overview"]
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
         q = _query(page.url)
         assert q["run"] == [CHESS] and q["chapter"] == ["moments"] and q["moment"]
         moment_id = q["moment"][0]
 
-        # Chapter navigation and queue filters both move into the URL.
-        page.click('.ochip:has-text("Opportunities")')
+        # Chapter navigation and queue filters both move into the URL. Opportunities
+        # now lives under "More analysis" (T1) but keeps its own chapter id.
+        page.click(".more-analysis summary")
+        page.click('.more-analysis-list .ochip:has-text("Opportunities")')
         page.wait_for_selector(".opp-table")
         assert _query(page.url)["chapter"] == ["opportunities"]
         assert "moment" not in _query(page.url)  # not a moment chapter
@@ -556,9 +613,9 @@ def test_review_position_is_shareable_in_the_url(server):
         assert _query(page.url)["filter"] == ["failed"]
 
         # A selected trace step is the shareable evidence position.
-        page.click('.ochip:has-text("Key moments")')
+        page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card")
-        page.click('.review-util button:has-text("Full trace")')
+        page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
         page.click('#trace-body .step[data-step-id="s7"]')
         shared = page.url
@@ -570,7 +627,7 @@ def test_review_position_is_shareable_in_the_url(server):
         # the drawer still open, which must not leave a stale step in the URL.
         page.click('.fchip:has-text("Failed")')  # clear the filter
         page.wait_for_function("() => !location.search.includes('filter=')")
-        page.click('.review-util button:has-text("Full trace")')
+        page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
         page.keyboard.press("n")  # next unhandled run
         page.wait_for_selector("#trace-drawer:not(.open)", state="attached")
@@ -590,7 +647,7 @@ def test_review_position_is_shareable_in_the_url(server):
         # than stranding the reviewer on an empty workspace.
         stray = _page(browser)
         stray.goto(server + "/?run=not_a_run__seed1&chapter=outcome")
-        stray.wait_for_selector(".moment-card")
+        stray.wait_for_selector(".run-header")
         assert _query(stray.url)["run"] == [CHESS]
 
         browser.close()
@@ -603,10 +660,12 @@ def test_compare_surface_names_the_sides_it_is_comparing(compare_server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(compare_server)
-        page.wait_for_selector(".moment-card")
+        page.wait_for_selector(".run-header")
 
-        # Two reviews exist, so Compare is enabled and defaults to baseline → model.
-        page.click('.review-util button:has-text("Compare")')
+        # Two reviews exist, so comparing them is reachable through the unified
+        # Compare control (T1/§4.16) and defaults to baseline → model.
+        page.click('.compare-menu summary')
+        page.click('.compare-item:has-text("Between reviewers")')
         page.wait_for_selector(".compare-list")
         q = _query(page.url)
         assert q["view"] == ["compare"] and q["left"] == ["deterministic"] and q["right"] == ["model:test"]
@@ -716,19 +775,24 @@ def lesson_server(tmp_path):
 
 
 def test_eval_lesson_lifecycle_and_experiment(lesson_server):
-    """§4.11 / §13.2: an accepted moment becomes an approved lesson and then a
-    human-approved improvement experiment, all through the chapter's buttons."""
+    """§4.11 / §13.2 (T1: attached to its moment, not a chapter of its own): an
+    accepted moment becomes an approved lesson and then a human-approved
+    improvement experiment, all through the moment card's inline section."""
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
         page.goto(lesson_server)
+        page.wait_for_selector(".trace-chip")
+        page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card")
 
-        page.click('.ochip:has-text("Eval lesson")')
-        page.wait_for_selector(".lesson-actions")
-        # The body is projected from the recommending moment, status proposed.
+        # The recommending moment shows the inline "Eval lesson available"
+        # disclosure; expanding it reveals the lesson body, projected from that
+        # moment, status proposed.
+        page.click(".moment-lesson summary")
+        page.wait_for_selector(".moment-lesson-body .lesson-actions")
         assert "proposed" in page.query_selector(".lesson-status").inner_text()
-        assert "submission gate" in page.query_selector(".card-pad").inner_text()
+        assert "submission gate" in page.query_selector(".moment-lesson-body").inner_text()
 
         # Approve for test → status advances and persists.
         page.click('.lesson-actions button:has-text("Approve for test")')
@@ -774,7 +838,7 @@ def test_not_reviewable_capture_says_why(not_reviewable_server):
         page.goto(not_reviewable_server)
         page.wait_for_selector(".run")
         page.click(".run")
-        page.click('.ochip:has-text("Outcome")')
+        page.click('.outline > .ochip:has-text("Overview")')
         page.wait_for_selector(".review-mode-note.not-reviewable")
         note = page.query_selector(".review-mode-note.not-reviewable").inner_text()
         assert "Not reviewable" in note
@@ -787,7 +851,7 @@ def test_fresh_unconfirmed_import_opens_every_chapter(server):
     human-confirmed, and that is the normal entry path for a real import — so
     every review chapter must open on it without a page error.
 
-    Regression gate: the Outcome chapter once referenced an undeclared variable
+    Regression gate: the Overview chapter once referenced an undeclared variable
     while rendering the provisional watermark, throwing ``ReferenceError`` on
     exactly this path. The synthetic demo auto-confirms its contracts, which is
     why the demo smoke check never saw it. The gate fails on any collected
@@ -808,16 +872,29 @@ def test_fresh_unconfirmed_import_opens_every_chapter(server):
         page.wait_for_selector(".watermark")
         assert "not human-confirmed" in page.query_selector(".watermark").inner_text()
 
-        # Walk every available chapter; the Outcome chapter carries the
-        # provisional row in "What limits the review". Labels are collected
-        # before navigating: each click re-renders the rail, which would detach
-        # element handles gathered up front.
-        page.click('.ochip:has-text("Outcome")')
+        # Walk every available chapter; the Overview chapter carries the
+        # provisional row in "What limits the review". Primary chapters (T1)
+        # first, then the two under "More analysis".
+        page.click('.outline > .ochip:has-text("Overview")')
         page.wait_for_selector('.limit-item .chip:has-text("provisional")')
-        labels = [c.inner_text() for c in page.query_selector_all(".ochip .ochip-label")
-                  if "unavailable" not in (c.evaluate("n => n.parentElement.className"))]
-        for label in labels:
-            page.click(f'.ochip:has-text("{label}")')
+        primary_labels = [c.inner_text() for c in
+                           page.query_selector_all(".outline > .ochip:not(.trace-chip) .ochip-label")]
+        for label in primary_labels:
+            page.click(f'.outline > .ochip:has-text("{label}")')
+            page.wait_for_function(
+                "() => { const c = document.querySelector('.ochip.current .ochip-label');"
+                " return c && c.textContent === %r; }" % label)
+
+        page.click(".more-analysis summary")
+        more_labels = [c.inner_text() for c in
+                        page.query_selector_all(".more-analysis-list .ochip:not(.unavailable) .ochip-label")]
+        for label in more_labels:
+            # Selecting one of these chapters leaves the disclosure open on the
+            # next render (it reflects the current chapter); only open it by
+            # hand when it is not already showing its list.
+            if not page.is_visible(".more-analysis-list"):
+                page.click(".more-analysis summary")
+            page.click(f'.more-analysis-list .ochip:has-text("{label}")')
             page.wait_for_function(
                 "() => { const c = document.querySelector('.ochip.current .ochip-label');"
                 " return c && c.textContent === %r; }" % label)
@@ -858,7 +935,7 @@ def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tm
             page.goto(extra)
             page.wait_for_selector(".run")
             page.click('.run[data-run-id="undetermined__seed9"]')
-            page.click('.ochip:has-text("Outcome")')
+            page.click('.outline > .ochip:has-text("Overview")')
             page.wait_for_selector(".outcome h2")
             headline = page.query_selector(".outcome h2").inner_text()
             assert "undetermined" in headline.lower()

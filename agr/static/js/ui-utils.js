@@ -4,7 +4,10 @@
 $("#theme-toggle").addEventListener("click", () => {
   const cur = document.documentElement.getAttribute("data-theme");
   const dark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  const next = dark ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  // Remember the choice so it survives a reload (applied early in index.html).
+  try { localStorage.setItem("agr-theme", next); } catch (e) {}
 });
 
 // --- toast -------------------------------------------------------------------

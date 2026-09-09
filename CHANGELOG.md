@@ -125,6 +125,60 @@ several acceptance details the first pass left unfinished.
   plain "measured". Added `usage_partial_count`/`usage_partial_episode_count`
   and folded them into `usage_availability` at both levels.
 
+### Changed (SPA intuitiveness pass)
+
+- **Plain-language evidence panel.** The right-hand panel's headings and the
+  causal-strength card read in plain words now, with the precise term kept on
+  hover and in the glossary: "Situation & action — source" → "What the agent
+  did", "Consequence & outcome" → "What resulted", "Interpretation boundary" →
+  "Fact vs. interpretation", "Provenance" → "Where this came from", and the
+  "Attribution" trust card → "Cause" (the glossary and orientation overlay now
+  read "Cause … (attribution)" so the controlled term stays discoverable).
+- **The header run position is a stepper.** "Run 1 of 12" in the run header is
+  now walkable: `‹`/`›` step through the current queue run-by-run without going
+  back to the queue list (the arrows disable at the ends). It complements the
+  bottom bar's "Next unhandled", which skips already-handled runs.
+- **One coherent run view-bar.** The run's navigation used to mix chapter tabs,
+  a Trace tab, a "More analysis" dropdown, and a right-floating Source button on
+  one rail with no grouping. It now reads as two clear zones on one bar: the
+  three review chapters as tabs on the left (Overview · Key moments · Checks),
+  and every other way to view the run — Trace · Source · More analysis · Compare
+  — gathered into one tools cluster on the right. The tabs now mean "the review";
+  the tools sit together.
+- **One "Compare" control.** The three separate, similarly-named comparison
+  entry points — "Compare with a passing run" (in the tab row), "Compare
+  reviewer outputs" (a reviewer-selector chip), and "Compare versions" (the app
+  bar) — are gathered into a single `Compare` menu beside the chapter tabs:
+  Against a passing run · Between reviewers · Across versions. Comparison is now
+  one idea in one place. Each destination and its keyboard shortcut are
+  unchanged; the reviewer chips still switch which snapshot is served.
+- **A run reads in one pass.** A run now opens on the Overview summary by
+  default (was: the first key moment), so a first-time reader lands on the
+  synthesis — what happened, the main finding, the final state — instead of
+  dropping into moment 1. The fast repeat-triage path is still one switch away
+  under "Open at → First key moment", and that choice is remembered.
+- **Persistent plain-language verdict.** A one-line verdict now sits directly
+  under the run title on every chapter — e.g. "Failed — 1 of 1 checks failed:
+  C1 (Binary exists at /app/bin)." It mirrors the Overview "What happened"
+  logic and only restates validated check facts (no invented impact or intent).
+- **Primary chapter navigation reads as a tab bar.** Overview / Key moments /
+  Checks / Trace now sit on a shared underline rail with the active chapter
+  marked by an underline; the per-chapter status square was replaced by a small
+  status glyph (viewed / corrected / unavailable) so the strip no longer looks
+  like a row of checkboxes. Structure and class names are unchanged.
+- **Responsive appbar.** On narrow screens the labelled global-nav buttons
+  (Runs · Patterns · Compare versions · Glossary · Help · Theme) collapse into a
+  single "⋯" overflow menu instead of overflowing and clipping; the brand text
+  no longer wraps and the breadcrumb trail is dropped first. The header stays a
+  single 60px row so the panel overlays keep their offset.
+- **Evidence panel peek.** When closed on narrow screens the panel now slides
+  fully off-screen, leaving only its vertical "Evidence" tab handle — the
+  reading column is no longer covered by stubs of the panel's text.
+- **Theme choice persists.** The light/dark toggle is remembered in
+  `localStorage` and reapplied before first paint, so a reload no longer resets
+  it (and no theme flash on load).
+- Added a favicon (inline SVG), removing the console 404 on every page load.
+
 ### Known gaps carried forward
 
 - **AGR-15** — no real `.gold.json` labels exist yet; annotation is a
