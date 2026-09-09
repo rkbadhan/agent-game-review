@@ -14,13 +14,14 @@ from agr.pipeline import analyze
 from agr.store import Store
 
 
-def _doc(run_id, task_id, steps, *, passed, sweep_id=None, configuration_id=None):
+def _doc(run_id, task_id, steps, *, passed, sweep_id=None, configuration_id=None,
+         model="m", agent="a", harness_version="h"):
     run = {
         "logical_run_id": run_id,
         "task_id": task_id,
-        "model": "m",
-        "agent": "a",
-        "harness_version": "h",
+        "model": model,
+        "agent": agent,
+        "harness_version": harness_version,
     }
     if sweep_id:
         run["sweep_id"] = sweep_id
@@ -52,22 +53,26 @@ def _shared_prefix():
     ]
 
 
-def _failing_run_doc(run_id="fail-run", sweep_id=None, configuration_id=None):
+def _failing_run_doc(run_id="fail-run", sweep_id=None, configuration_id=None,
+                      model="m", agent="a", harness_version="h"):
     steps = _shared_prefix() + [
         {"step_id": "s6", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python solve.py"},
         {"step_id": "s7", "kind": "tool_result", "actor": "tool", "tool": "shell", "content": "AssertionError", "exit_code": 1},
         {"step_id": "s8", "kind": "final_submission", "actor": "main_agent", "content": "done"},
     ]
-    return _doc(run_id, "fix-bug", steps, passed=False, sweep_id=sweep_id, configuration_id=configuration_id)
+    return _doc(run_id, "fix-bug", steps, passed=False, sweep_id=sweep_id, configuration_id=configuration_id,
+                model=model, agent=agent, harness_version=harness_version)
 
 
-def _passing_run_doc(run_id="pass-run", sweep_id=None, configuration_id=None):
+def _passing_run_doc(run_id="pass-run", sweep_id=None, configuration_id=None,
+                      model="m", agent="a", harness_version="h"):
     steps = _shared_prefix() + [
         {"step_id": "s6", "kind": "tool_call", "actor": "main_agent", "tool": "shell", "content": "python fix.py"},
         {"step_id": "s7", "kind": "tool_result", "actor": "tool", "tool": "shell", "content": "3 passed", "exit_code": 0},
         {"step_id": "s8", "kind": "final_submission", "actor": "main_agent", "content": "done"},
     ]
-    return _doc(run_id, "fix-bug", steps, passed=True, sweep_id=sweep_id, configuration_id=configuration_id)
+    return _doc(run_id, "fix-bug", steps, passed=True, sweep_id=sweep_id, configuration_id=configuration_id,
+                model=model, agent=agent, harness_version=harness_version)
 
 
 def _unrelated_task_doc(run_id="other-task"):
@@ -150,13 +155,34 @@ def test_no_sibling_when_target_has_no_configuration_but_candidate_does(tmp_path
 def test_sibling_found_when_neither_target_nor_candidate_declare_configuration(tmp_path):
     """The common real-data case (e.g. Harbor imports, which never stamp
     configuration_id) must keep working: two runs that BOTH declare no
-    configuration_id are treated as an exact match (missing == missing),
-    not as mutually incomparable."""
+    configuration_id, but DO share the same agent/model/harness_version
+    (a derived identity), remain comparable — missing configuration_id is
+    not by itself proof of equivalence (AGR-12)."""
     store = Store(str(tmp_path / "store"))
     analyze(_failing_run_doc(), store)
     analyze(_passing_run_doc(), store)
     sib = divergence.find_passing_sibling(store, "fail-run")
     assert sib == "pass-run"
+
+
+def test_no_sibling_when_agents_differ_and_neither_declares_configuration(tmp_path):
+    """AGR-12 (2026-09-08 review): the real nginx-corpus reproduction — a
+    Terminus-2 failure and a mini-swe-agent pass, neither declaring a
+    configuration_id, were auto-selected as comparable siblings because
+    ``None == None``. Two unknown configuration identities must not
+    establish the same configuration when the runs are not even the same
+    agent/model/harness. A genuinely comparable pass under the SAME agent,
+    model, and harness_version must remain eligible even without a declared
+    configuration_id."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(model="terminus-2@2.0.0", agent="terminus-2", harness_version="h1"), store)
+    analyze(_passing_run_doc(run_id="pass-different-agent",
+                             model="mini-swe-agent@2.4.6", agent="mini-swe-agent", harness_version="h1"), store)
+    assert divergence.find_passing_sibling(store, "fail-run") is None
+
+    analyze(_passing_run_doc(run_id="pass-same-agent",
+                             model="terminus-2@2.0.0", agent="terminus-2", harness_version="h1"), store)
+    assert divergence.find_passing_sibling(store, "fail-run") == "pass-same-agent"
 
 
 def test_no_sibling_when_only_a_different_configuration_passed(tmp_path):

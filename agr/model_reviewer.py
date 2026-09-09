@@ -30,7 +30,7 @@ import time
 from typing import Optional
 
 from . import version
-from .model_packet import build_packet, resolve_expansion
+from .model_packet import _PACKET_BUDGET_CHARS, build_packet, resolve_expansion
 from .redaction import redact_value
 from .reviewer import (
     Candidate,
@@ -310,14 +310,36 @@ class _LazyModelReviewer:
     def _complete(self, system: str, user_json: str) -> dict:  # pragma: no cover - provider I/O
         raise NotImplementedError
 
-    def _call(self, system: str, user: dict, kind: str) -> dict:
-        """One provider round: redact the outbound payload, measure, parse."""
+    def _call(self, system: str, user: dict, kind: str,
+              budget_chars: int = _PACKET_BUDGET_CHARS) -> dict:
+        """One provider round: redact the outbound payload, enforce the
+        budget against the ACTUAL request, then parse.
+
+        AGR-11: this is the one boundary every round passes through — the
+        initial call, the expansion round, and revision — so it is where the
+        budget guarantee actually has to live. A pre-check computed on the
+        bare packet (before revision fields like ``candidate_structured_facts``
+        and ``validation_errors`` are added, or before the system prompt is
+        counted) cannot see what those additions push the request to; this
+        check measures ``system`` plus the real redacted, serialized ``user``
+        JSON that is about to be sent, so nothing added after the packet was
+        built can slip past it.
+        """
         # AGR-06: the ENTIRE outbound payload is redacted by traversal — the
         # packet, revision payloads, and expansion evidence alike. F1 follow-up:
         # the traversal redaction map is preserved in the per-round telemetry
         # record instead of being discarded.
         user, red_map = redact_value(user)
         user_json = json.dumps(user)
+        request_size_chars = len(system) + len(user_json)
+        if request_size_chars > budget_chars:
+            self._record(kind=f"{kind}_skipped", reason="packet_budget_exceeded",
+                         request_size_chars=request_size_chars, budget_chars=budget_chars,
+                         budget_overrun_chars=request_size_chars - budget_chars)
+            raise PacketBudgetExceededError(
+                f"{kind} request ({request_size_chars} chars: system {len(system)} + "
+                f"user {len(user_json)}) exceeds the budget ({budget_chars} chars) by "
+                f"{request_size_chars - budget_chars} chars; the provider was not called")
         t0 = time.monotonic()
         try:
             payload = self._complete(system, user_json)
@@ -350,7 +372,9 @@ class _LazyModelReviewer:
                 f"effective budget ({redaction.get('effective_budget_chars')} chars) by "
                 f"{redaction.get('budget_overrun_chars')} chars even at the excerpt floor; "
                 "the provider was not called")
-        payload = self._call(SYSTEM_PROMPT, {"packet": packet}, kind="propose")
+        budget_chars = redaction.get("budget_chars", _PACKET_BUDGET_CHARS)
+        payload = self._call(SYSTEM_PROMPT, {"packet": packet}, kind="propose",
+                             budget_chars=budget_chars)
         # AGR-06: one bounded expansion round. The reviewer may ask for the
         # full text of specific digest events instead of proposing; the
         # request is resolved against captured evidence, redacted, and sent
@@ -382,7 +406,8 @@ class _LazyModelReviewer:
                     f"effective budget ({effective_budget} chars) by "
                     f"{expanded_size - effective_budget} chars; the provider was not called "
                     "for the expansion round")
-            payload = self._call(SYSTEM_PROMPT, expanded_user, kind="propose_expanded")
+            payload = self._call(SYSTEM_PROMPT, expanded_user, kind="propose_expanded",
+                                 budget_chars=budget_chars)
         return _proposals_from_payload(payload, ctx, self._source)
 
     def revise(self, candidate: Candidate, errors: list[dict],
@@ -414,7 +439,18 @@ class _LazyModelReviewer:
                                "for this candidate_id, or {\"moments\": []} to withdraw it.",
             },
         }
-        payload = self._call(SYSTEM_PROMPT, user, kind="revise")
+        # AGR-11: the pre-check above only measured the bare packet — the
+        # revision fields just added (candidate_structured_facts,
+        # validation_errors) can themselves push the actual request over
+        # budget. _call()'s own check is the authoritative one covering the
+        # full assembled request; like the pre-check above, exceeding it
+        # degrades to "no correction available" (None) rather than raising,
+        # so one over-budget candidate never aborts the whole review.
+        try:
+            payload = self._call(SYSTEM_PROMPT, user, kind="revise",
+                                 budget_chars=redaction.get("budget_chars", _PACKET_BUDGET_CHARS))
+        except PacketBudgetExceededError:
+            return None
         proposals = _proposals_from_payload(payload, ctx, self._source)
         return proposals[0].candidate if proposals else None
 

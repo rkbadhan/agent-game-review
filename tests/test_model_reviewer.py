@@ -621,3 +621,33 @@ def test_expanded_request_never_exceeds_budget_even_when_the_initial_packet_did(
     assert len(rev.sent) == 1
     assert rev.telemetry[-1]["kind"] == "propose_expanded_skipped"
     assert rev.telemetry[-1]["reason"] == "packet_budget_exceeded"
+
+
+def test_revise_request_never_exceeds_budget_even_when_the_bare_packet_did_not():
+    """AGR-11 (2026-09-08 review): revise()'s pre-check only measures the bare
+    packet before its own 'revise' fields (candidate_id, validation_errors,
+    candidate_structured_facts, instruction) are added. A packet that
+    comfortably fits the budget on its own can still, once those fields are
+    added, produce a real outbound request well past the declared budget —
+    the reproduction found a 49,083-char packet plus revision fields and the
+    system prompt totalling 70,483 chars against a 60,000-char budget, sent
+    with no budget error raised. The shared _call() boundary must catch this
+    too, not just the bare-packet pre-check."""
+    from agr import model_reviewer as mr
+
+    rev = _FakeProvider([])
+    ev = DerivedEvent(event_id="evt_sub", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": "small"})
+    cand = _cand("cand_1")
+    ctx = _ctx([cand], events=[ev])
+
+    _, redaction = mr.build_packet(ctx)
+    assert redaction["budget_met"] is True  # the bare packet comfortably fits
+
+    huge_errors = [{"reason": "x" * 70_000}]
+    result = rev.revise(cand, huge_errors, ctx)
+    assert result is None
+    assert rev.sent == []  # the provider stub was never called
+    assert rev.telemetry[-1]["kind"] == "revise_skipped"
+    assert rev.telemetry[-1]["reason"] == "packet_budget_exceeded"
