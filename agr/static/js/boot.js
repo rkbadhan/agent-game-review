@@ -7,9 +7,9 @@
 async function boot() {
   const want = readUrl();
   await loadInbox();
-  // §4.19 — the first Review session gets the short, dismissible orientation
-  // overlay; afterwards the same content lives in the Glossary.
-  maybeShowIntro();
+  // T1: first use opens straight into the review — no blocking terminology
+  // modal. The same orientation content stays reachable on demand from Help
+  // ("What do these terms mean?") and from Glossary.
   track("sweep_opened", { sweep_id: (state.sweep || {}).sweep_id,
     count: (state.sweep || {}).total_runs });
   const first = state.queue && state.queue.run_ids && state.queue.run_ids[0];

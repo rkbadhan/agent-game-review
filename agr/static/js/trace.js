@@ -57,11 +57,87 @@ function selectStep(stepId) {
     else { pb.classList.remove("mono"); pb.append(el("span", "dim", "—")); }
   }
 }
-function renderPanelContent(step) {
-  const c = step.content || {}; const frag = document.createDocumentFragment();
-  const order = ["direction","tool","path","artifact_path","exit_code","content","data","summary"]; const seen = new Set();
-  for (const key of order) { if (c[key] == null) continue; seen.add(key); const line = el("div"); line.append(el("span", "kv", key + ": "), document.createTextNode(String(c[key]))); frag.append(line); }
-  for (const [key, val] of Object.entries(c)) { if (seen.has(key) || val == null) continue; const line = el("div"); line.append(el("span", "kv", key + ": "), document.createTextNode(String(val))); frag.append(line); }
-  if (!frag.childNodes.length) frag.append(el("span", "dim", "(no captured content)")); return frag;
+function renderPanelContent(step) { return renderStepContent(step); }
+
+// --- T3: shared step-content rendering (full trace + evidence panel) --------
+// One formatter for "what did this source step actually contain" so the
+// evidence panel and the full-trace drawer never describe the same event
+// differently. `opts.highlightTerms` marks an exact supporting span when one
+// of the moment's fact values (expected/observed) appears verbatim in the
+// text — never a fuzzy or partial match, so a highlight is never shown for a
+// coincidental overlap.
+const EXCERPT_LIMIT = 600;
+function renderStepContent(step, opts) {
+  opts = opts || {};
+  const c = (step && step.content) || {};
+  const av = (step && step.availability) || {};
+  const frag = document.createDocumentFragment();
+  if (av.state === "unavailable") {
+    frag.append(el("div", "content-state unavailable", "Not captured"));
+    frag.append(el("p", "dim", "This evidence type (" + (av.capability || "capability") + ") is unavailable for this run's capture."));
+    return frag;
+  }
+  const keys = Object.keys(c);
+  if (!keys.length) {
+    frag.append(el("div", "content-state unavailable", "Not captured"));
+    frag.append(el("p", "dim", "This step recorded no content for its capture level."));
+    return frag;
+  }
+  if (av.state === "partial") frag.append(el("div", "content-state partial", "Partial capture"));
+  const order = ["direction", "tool", "path", "artifact_path", "exit_code", "content", "data", "summary"];
+  const seen = new Set();
+  const textKeys = new Set(["content", "data", "summary"]);
+  for (const key of order.concat(keys.filter(k => !order.includes(k)))) {
+    if (c[key] == null || seen.has(key)) continue;
+    seen.add(key);
+    const line = el("div", "content-line");
+    line.append(el("span", "kv", key + ": "));
+    if (textKeys.has(key)) line.append(renderExcerpt(String(c[key]), opts.highlightTerms));
+    else line.append(document.createTextNode(String(c[key])));
+    frag.append(line);
+  }
+  return frag;
+}
+// A text excerpt: truncated (for display only, never altering the underlying
+// value) past EXCERPT_LIMIT with an explicit "show full text" expansion, and
+// an exact supporting span highlighted via <mark> when one is found.
+function renderExcerpt(text, highlightTerms) {
+  const wrap = el("span", "content-excerpt");
+  const over = text.length > EXCERPT_LIMIT;
+  const short = over ? text.slice(0, EXCERPT_LIMIT) : text;
+  const body = el("span");
+  body.append(highlightSpan(short, highlightTerms));
+  wrap.append(body);
+  if (over) {
+    wrap.append(el("span", "content-flag truncated", "truncated for display · " + text.length + " chars"));
+    const toggle = el("button", "content-expand", "Show full text");
+    toggle.addEventListener("click", () => {
+      body.textContent = "";
+      body.append(highlightSpan(text, highlightTerms));
+      toggle.remove();
+      wrap.querySelector(".content-flag").textContent = "shown in full · " + text.length + " chars";
+    });
+    wrap.append(toggle);
+  }
+  return wrap;
+}
+// Highlights the single longest exact term from `terms` that occurs verbatim
+// in `text`. No match → the plain text, unmarked — a coincidental partial
+// overlap is never presented as a located supporting span. A minimum length
+// is required: a short value like "0" or "ok" occurs constantly by chance in
+// unrelated text, and marking that as "the" supporting span would be exactly
+// the false confidence this feature exists to avoid.
+const MIN_HIGHLIGHT_TERM_LENGTH = 4;
+function highlightSpan(text, terms) {
+  const frag = document.createDocumentFragment();
+  const hit = (terms || []).map(String)
+    .filter(t => t.length >= MIN_HIGHLIGHT_TERM_LENGTH && text.includes(t))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!hit) { frag.append(document.createTextNode(text)); return frag; }
+  const idx = text.indexOf(hit);
+  frag.append(document.createTextNode(text.slice(0, idx)));
+  frag.append(el("mark", null, hit));
+  frag.append(document.createTextNode(text.slice(idx + hit.length)));
+  return frag;
 }
 

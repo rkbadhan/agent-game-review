@@ -7,6 +7,7 @@
 async function selectRun(runId, restore) {
   state.runId = runId; state.momentIdx = 0; state.dispOpen = false;
   state.view = "review"; state.chapter = "moments"; state.viewed = new Set();
+  state.expandedMoments = new Set(); state.expandedLessons = new Set(); state.evidenceFocus = null;
   // AGR-07 UX: the reviewer flip resets on run change — the default view is
   // the most-enriched review of the run being opened.
   state.reviewerKey = null;
@@ -18,8 +19,15 @@ async function selectRun(runId, restore) {
     api(reviewUrl(runId, state.reviewerKey)),
   ]);
   // Landing chapter: a shared link's position (§4.1) wins; otherwise the §4.3.5
-  // workspace preference decides between Outcome and the first key moment.
-  let restoreChapter = restore && CHAPTERS.some(c => c[0] === restore.chapter) ? restore.chapter : null;
+  // workspace preference decides between Overview and the first key moment.
+  // `normalizeChapter` translates a chapter id from before the T1 navigation
+  // simplification (e.g. `outcome`, `audit`) so an old shared link still opens
+  // the content it pointed at.
+  let restoreChapter = null;
+  if (restore && restore.chapter) {
+    const norm = normalizeChapter(restore.chapter);
+    if (ALL_CHAPTER_IDS.includes(norm)) restoreChapter = norm;
+  }
   if (!restoreChapter && restore && restore.moment) restoreChapter = "moments";
   const fastPath = applyEntryPreference(restoreChapter);
   if (restore) {
@@ -45,14 +53,14 @@ async function selectRun(runId, restore) {
 function applyEntryPreference(explicitChapter) {
   const rv = state.review || {};
   if (explicitChapter) { state.chapter = explicitChapter; return false; }
-  // Not-reviewable routing (§4.15): no moment is selectable, so open at Outcome.
-  if (rv.review_mode === "not_reviewable") { state.chapter = "outcome"; return false; }
-  if (entryPreference() === "outcome") { state.chapter = "outcome"; return false; }
+  // Not-reviewable routing (§4.15): no moment is selectable, so open at Overview.
+  if (rv.review_mode === "not_reviewable") { state.chapter = "overview"; return false; }
+  if (entryPreference() === "outcome") { state.chapter = "overview"; return false; }
   // Fast path: open the first key moment when one exists; otherwise fall back to
-  // Outcome and say why, exactly as §4.3.5 requires.
+  // Overview and say why, exactly as §4.3.5 requires.
   if (currentMoments().length) { state.chapter = "moments"; state.momentIdx = 0; return true; }
-  state.chapter = "outcome";
-  toast("No key moment was selected for this run — opening at Outcome.");
+  state.chapter = "overview";
+  toast("No key moment was selected for this run — opening at Overview.");
   return false;
 }
 async function refreshRun() {

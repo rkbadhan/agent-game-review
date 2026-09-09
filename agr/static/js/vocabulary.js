@@ -54,7 +54,7 @@ function vocab(kind, value) { const m = (LABELS[kind] || {})[value]; return m ? 
 const GLOSSARY_GROUPS = [
   ["review_mode", "Review mode"],
   ["evidence", "Evidence grade"],
-  ["attribution", "Attribution — how far a cause is established"],
+  ["attribution", "Cause — how far a cause is established (attribution)"],
   ["opportunity_status", "Ability opportunity"],
   ["contract_status", "Contract item state"],
   ["disposition", "Disposition"],
@@ -77,9 +77,9 @@ function buildGlossary() {
 }
 function openGlossary() { buildGlossary(); openModal("#glossary-modal"); }
 
-// --- §4.19 first-session guidance --------------------------------------------
-// The first Review session shows a short, dismissible overlay explaining review
-// mode, evidence grade, attribution, and the fact/interpretation split. It is
-// shown once per browser; the glossary carries the same content afterwards.
-function maybeShowIntro() { if (!localStorage.getItem("agr-seen-intro")) openModal("#intro-modal"); }
-function dismissIntro() { localStorage.setItem("agr-seen-intro", "1"); closeModals(); }
+// --- §4.19 orientation overlay ------------------------------------------------
+// A short overlay explaining review mode, evidence grade, attribution, and the
+// fact/interpretation split. T1: it no longer blocks first use — it opens only
+// on demand, from Help's "What do these terms mean?" — and the glossary
+// carries the same content afterwards.
+function dismissIntro() { closeModals(); }
