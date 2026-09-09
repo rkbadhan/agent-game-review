@@ -25,26 +25,62 @@ from .schema import DerivedEvent
 from .store import Store
 
 
-def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
-    """A PASSING run on the SAME task as ``run_id``, requiring an EXACT
-    configuration_id match FIRST (AGR-12) — a divergence report assumes both
-    runs attempted the same thing; a run under a different configuration (a
-    different prompt, tool set, or harness version) is not that, however
-    tempting a coincidentally-passing run on the same task_id looks.
+def _derived_configuration_identity(run: dict) -> Optional[tuple]:
+    """A fallback configuration identity from comparison-relevant metadata,
+    used ONLY when the source declares no ``configuration_id`` (AGR-12).
 
-    "Missing configuration_id" is its own value here, not a wildcard: a
-    target that declared none only matches a candidate that ALSO declared
-    none (both sides genuinely unknown, e.g. two Harbor imports from a
-    source that never stamps configuration_id — a common real case that
-    must keep working). A target with no configuration_id must NEVER be
-    paired with a candidate that DOES declare one — that candidate's
-    configuration is a known, specific thing the target's is not shown to
-    match, so presenting it as comparable would be exactly the guess this
-    filter exists to rule out. Within whatever pool the exact match leaves,
-    prefer one that also shares its sweep_id (an intentionally paired run).
+    Agent name alone cannot establish matching prompts, models, settings,
+    tools, and task/environment versions, so the identity requires ``agent``,
+    ``model``, AND ``harness_version`` to ALL be present and equal — a
+    partial identity (any field missing) is not auditable and yields no
+    identity at all, so it can never be treated as matching anything.
+    """
+    agent, model, harness = run.get("agent"), run.get("model"), run.get("harness_version")
+    if agent and model and harness:
+        return (agent, model, harness)
+    return None
+
+
+def _same_configuration(target: dict, candidate: dict) -> bool:
+    """Whether ``candidate`` attempted the SAME configuration as ``target``
+    (AGR-12) — a divergence report assumes both runs attempted the same
+    thing; a run under a different configuration (a different prompt, tool
+    set, or harness version) is not that, however tempting a coincidentally-
+    passing run on the same task_id looks.
+
+    "Missing configuration_id" is its own value here, not a wildcard: it is
+    never treated as "equal by absence" (the same rule ``agr.versions``
+    already applies to unresolved match keys). When EITHER side declares a
+    configuration_id, only an exact, non-missing match on both sides counts —
+    a target with no configuration_id must NEVER be paired with a candidate
+    that DOES declare one, since that candidate's configuration is a known,
+    specific thing the target's is not shown to match.
+
+    When BOTH sides declare no configuration_id (e.g. two Harbor imports from
+    a source that never stamps it — a common real case that must keep
+    working), fall back to a derived identity from agent/model/harness_version
+    metadata instead of admitting the pair unconditionally: two unknown
+    configuration identities do not, by themselves, establish the same
+    configuration (the real nginx-corpus case this closes: a Terminus-2
+    failure has no business being compared against a mini-swe-agent pass just
+    because neither declared a configuration_id).
+    """
+    t_cfg, c_cfg = target.get("configuration_id"), candidate.get("configuration_id")
+    if t_cfg is not None or c_cfg is not None:
+        return t_cfg is not None and c_cfg is not None and t_cfg == c_cfg
+    t_identity = _derived_configuration_identity(target)
+    return t_identity is not None and t_identity == _derived_configuration_identity(candidate)
+
+
+def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
+    """A PASSING run on the SAME task AND the same configuration as
+    ``run_id`` (AGR-12; see ``_same_configuration``). Within whatever pool
+    that leaves, prefer one that also shares its sweep_id (an intentionally
+    paired run).
 
     Returns ``None`` when ``run_id`` is not in the store, has no task_id, or
-    no passing sibling exists — never a guess at "the closest other run".
+    no comparable passing sibling exists — never a guess at "the closest
+    other run".
     """
     runs = read.list_runs(store)
     target = next((r for r in runs if r["run_id"] == run_id), None)
@@ -59,7 +95,7 @@ def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
     ]
     if not candidates:
         return None
-    pool = [r for r in candidates if r.get("configuration_id") == target.get("configuration_id")]
+    pool = [r for r in candidates if _same_configuration(target, r)]
     if not pool:
         return None
     same_sweep = [r for r in pool if target.get("sweep_id") and r.get("sweep_id") == target.get("sweep_id")]
