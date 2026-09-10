@@ -119,7 +119,6 @@ def list_configurations(store: Store) -> list[dict]:
         key = tuple(rs.get(f) for f in CONFIG_FIELDS)
         entry = groups.setdefault(key, {
             "configuration": {f: rs.get(f) for f in CONFIG_FIELDS if rs.get(f) is not None},
-            "label": _config_label(rs),
             "run_count": 0,
             "task_ids": set(),
             # Every axis value seen in this group, so a caller can tell which axes
@@ -144,8 +143,21 @@ def list_configurations(store: Store) -> list[dict]:
         # A value only describes the group when the whole group agrees on it.
         entry["axes"] = {field: (next(iter(seen)) if len(seen) == 1 else None)
                          for field, seen in values.items()}
-        entry["selector"] = _narrowest_selector(entry["configuration"])
         out.append(entry)
+    # Selector/label are derived AFTER every group exists: whether the highest-
+    # priority CONFIG_FIELD (sweep_id) alone identifies a group depends on
+    # whether some OTHER group in this same store happens to share it — two
+    # configurations with no sweep_id/configuration_id declared, differing
+    # only in model, would otherwise both fall back to the same bare
+    # harness_version and be indistinguishable (same label, same selector,
+    # each one matching every run from both groups).
+    configurations = [e["configuration"] for e in out]
+    for i, entry in enumerate(out):
+        fields = _distinguishing_fields(entry["configuration"],
+                                        configurations[:i] + configurations[i + 1:])
+        entry["selector"] = {f: entry["configuration"][f] for f in fields}
+        entry["label"] = (" · ".join(str(entry["configuration"][f]) for f in fields)
+                          if fields else "unidentified configuration")
     out.sort(key=lambda e: e["label"])
     return out
 
@@ -182,12 +194,28 @@ def _config_label(rs: dict) -> str:
     return "unidentified configuration"
 
 
-def _narrowest_selector(configuration: dict) -> dict:
-    """The most specific single-field selector that identifies a configuration."""
-    for field in CONFIG_FIELDS:
-        if configuration.get(field) is not None:
-            return {field: configuration[field]}
-    return {}
+def _distinguishing_fields(configuration: dict, others: list[dict]) -> list[str]:
+    """The shortest CONFIG_FIELDS prefix (priority order) that identifies
+    ``configuration`` uniquely among ``others`` — the fields a selector or
+    label must carry so two configurations never collide.
+
+    A single field (``sweep_id`` alone, say) is enough only when no other
+    configuration in the store shares that same value; otherwise the next
+    field is folded in until the projection stops colliding, or every
+    present field is included. Picking the first non-``None`` field with no
+    regard for the rest of the store (the previous behaviour) let two
+    configurations that both leave sweep_id/configuration_id unset, and
+    happen to share a harness_version, become indistinguishable — same
+    label, same selector, each one silently matching every run from BOTH
+    configurations instead of just its own.
+    """
+    present = [f for f in CONFIG_FIELDS if configuration.get(f) is not None]
+    for i in range(1, len(present) + 1):
+        prefix = present[:i]
+        projected = tuple(configuration[f] for f in prefix)
+        if not any(tuple(o.get(f) for f in prefix) == projected for o in others):
+            return prefix
+    return present
 
 
 # --- match keys --------------------------------------------------------------

@@ -44,7 +44,11 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
     result: null, pending: false, savedId: null },
   // Item 30/32: the fleet view over recovery episodes across every run — a
   // surface of its own, like Compare versions, not tied to a selected run.
-  fleet: { groupBy: "tool,error_signature", episodes: null, pending: false, usageSummary: null } };
+  // U3: `loadToken` guards a grouping change the same way run.js's does for a
+  // run switch — an episodes fetch started for a groupBy the reader has since
+  // changed away from must not land on top of the newer choice.
+  fleet: { groupBy: "tool,error_signature", episodes: null, pending: false,
+    error: null, loadToken: 0, usageSummary: null } };
 
 // --- §4.1 shareable review location -----------------------------------------
 //   The exact review position lives in the query string, so a reviewer can share

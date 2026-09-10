@@ -352,6 +352,33 @@ def test_list_configurations_offers_a_reproducible_selector(tmp_path):
     assert configs["sweep_141"]["task_count"] == len(TASK_FIXTURES)
 
 
+def test_list_configurations_disambiguates_configs_sharing_their_top_field(tmp_path):
+    """Two configurations with no sweep_id/configuration_id declared, sharing
+    the same harness_version and differing only in model, must not collapse
+    into one indistinguishable entry (same label, same selector) — each
+    selector must retrieve exactly its own runs, not the union of both."""
+    store = Store(str(tmp_path / "store"))
+    left_fields = {"harness_version": "harbor-1.8", "model": "model-a", **demo.SHARED_KEYS}
+    right_fields = {"harness_version": "harbor-1.8", "model": "model-b", **demo.SHARED_KEYS}
+    for name in TASK_FIXTURES[:3]:
+        analyze(_variant(_load(name), suffix="__left", run_fields=left_fields), store)
+    for name in TASK_FIXTURES[:2]:
+        analyze(_variant(_load(name), suffix="__right", run_fields=right_fields), store)
+
+    configs = {c["label"]: c for c in versions.list_configurations(store)}
+    assert len(configs) == 2
+    left = configs["harbor-1.8 · model-a"]
+    right = configs["harbor-1.8 · model-b"]
+    assert left["selector"] != right["selector"]
+    assert left["run_count"] == 3
+    assert right["run_count"] == 2
+
+    from agr import read
+    runs = [read.get_review(store, s["run_id"]) for s in read.list_runs(store)]
+    assert len(versions._select(runs, left["selector"])) == 3
+    assert len(versions._select(runs, right["selector"])) == 2
+
+
 # --- the demo slice ----------------------------------------------------------
 
 

@@ -11,6 +11,20 @@ async function selectRun(runId, restore) {
   // selection has since started and this response must be discarded rather
   // than overwrite what the reader has already moved on to.
   const token = ++state.loadToken;
+  // F4: snapshot the run currently on screen so a failed load can put it back
+  // exactly as it was. Without this, a failure left state.runId pointing at
+  // the run that failed to load while state.review/state.forensic (and every
+  // other field below) stayed on the previous run — annotations read
+  // state.runId, so they re-enabled (via `loading`) and submitted against the
+  // wrong run while a different run's review sat on screen.
+  const prev = {
+    runId: state.runId, review: state.review, forensic: state.forensic,
+    momentIdx: state.momentIdx, dispOpen: state.dispOpen, view: state.view,
+    chapter: state.chapter, viewed: state.viewed,
+    expandedMoments: state.expandedMoments, expandedLessons: state.expandedLessons,
+    evidenceFocus: state.evidenceFocus, reviewerKey: state.reviewerKey,
+    compare: state.compare,
+  };
   state.loading = true;
   state.runId = runId; state.momentIdx = 0; state.dispOpen = false;
   state.view = "review"; state.chapter = "moments"; state.viewed = new Set();
@@ -32,7 +46,14 @@ async function selectRun(runId, restore) {
       api(reviewUrl(runId, state.reviewerKey)),
     ]);
   } catch (e) {
-    if (token === state.loadToken) { state.loading = false; render(); }
+    if (token === state.loadToken) {
+      // Put the previous run back so state.runId matches state.review again —
+      // writes stay gated to whatever is actually on screen.
+      Object.assign(state, prev);
+      state.loading = false;
+      render();
+      toast("Could not load that run — showing the previous one again.");
+    }
     throw e;
   }
   if (token !== state.loadToken) return;  // superseded by a newer selection

@@ -420,6 +420,53 @@ def test_browser_back_restores_workspace_and_run_destinations(server):
         browser.close()
 
 
+def test_browser_back_to_runs_refreshes_the_table_under_restored_filters(server):
+    """U1/U2 regression: readUrl() restores state.filters/state.sort from the
+    URL a Back press lands on, but the Runs table itself was still painted
+    from whatever state.queue held from the last loadInbox() call — so a
+    filter changed from the investigation sidebar (while a run was open,
+    which only replaceState's that run's OWN history entry) used to keep
+    showing that newer, filtered queue underneath the older, just-restored
+    'no filter' chip state once Back returned to an earlier unfiltered Runs
+    page."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.wait_for_selector(".run-header")
+
+        # An unfiltered Runs page goes on the history stack first.
+        page.click("#runs-button")
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url).get("filter") is None
+        unfiltered_count = len(page.query_selector_all(".runs-row"))
+        assert unfiltered_count == 2
+
+        # Open a run (a new history entry), then change a filter from the
+        # investigation sidebar — this updates state.queue and replaceState's
+        # the RUN's own URL; the earlier Runs entry above keeps its old,
+        # filter-less query string.
+        run_id = page.query_selector(".runs-row").get_attribute("data-run-id")
+        page.click(f'.runs-row[data-run-id="{run_id}"]')
+        page.wait_for_selector(".run-header")
+        # Both fixture runs have a failing check (overall outcome FAILED), so
+        # "Passed" is guaranteed to actually shrink the queue (to 0) rather
+        # than coincidentally leaving it at 2 either way.
+        page.click('#queue-controls .fchip:has-text("Passed")')
+        page.wait_for_function("() => location.search.includes('filter=passed')")
+
+        # Back returns to the unfiltered Runs entry: the URL and the filter
+        # chip must agree with the table actually shown.
+        page.go_back()
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url).get("filter") is None
+        assert page.query_selector('.runs-controls-row .fchip:has-text("Passed")') \
+            .get_attribute("aria-pressed") == "false"
+        page.wait_for_function("() => document.querySelectorAll('.runs-row').length === 2")
+
+        browser.close()
+
+
 def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_server):
     """U3: a Patterns group's evidence links open the exact run and event, and
     a reviewer can inspect representative episodes and argument shapes inline
@@ -454,6 +501,72 @@ def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_s
         episodes_drill.query_selector(".vs-pair button").click()
         page.wait_for_selector("#trace-drawer.open")
         assert _query(page.url)["run"]
+
+        browser.close()
+
+
+def test_patterns_regrouping_mid_load_lands_on_the_latest_choice(patterns_server):
+    """U3 regression: switching the Patterns group-by while the PREVIOUS
+    grouping's fetch is still in flight used to leave the screen stuck on
+    "Loading fleet episodes…" if that in-flight fetch's response landed after
+    the switch (nothing re-rendered the now-current, unrelated in-flight
+    request's completion into the visible DOM) — or, worse, paint the OLD
+    grouping's data under the NEW grouping's selected chip. Delaying the
+    first request and letting the second resolve immediately forces exactly
+    that out-of-order landing; the surface must still end up showing the
+    LAST grouping clicked, matching data and chip together.
+
+    The delay is injected by wrapping window.fetch in the page itself (a
+    setTimeout-based, non-blocking delay) rather than via Playwright's
+    Python-side route interception: a blocking time.sleep() in a sync route
+    handler runs on Playwright's own driver thread and serializes the two
+    Python-side page.click() calls instead of letting them race, which
+    defeats the point of the test.
+    """
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.add_init_script("""
+          window.__fleetDelay = false;
+          const origFetch = window.fetch.bind(window);
+          window.fetch = (url, opts) => {
+            if (window.__fleetDelay && typeof url === "string" && /group_by=tool(?!%2C|,)/.test(url)) {
+              return new Promise(resolve => setTimeout(() => resolve(origFetch(url, opts)), 600));
+            }
+            return origFetch(url, opts);
+          };
+        """)
+        page.goto(patterns_server)
+        page.wait_for_selector(".run-header")
+
+        page.click("#fleet-button")
+        page.wait_for_selector(".vs-table")  # initial "Tool + error" load settles
+
+        # "Tool only" is requested first but answered last (artificially
+        # delayed); "Error only" is requested second but answered first —
+        # the exact out-of-order landing the fix must handle.
+        page.evaluate("() => { window.__fleetDelay = true; }")
+        page.click('.vs-keys .fchip:has-text("Tool only")')
+        page.click('.vs-keys .fchip:has-text("Error only")')
+
+        # A stuck screen (the bug) never re-renders the table at all, so this
+        # times out rather than passing vacuously.
+        page.wait_for_selector("#main .vs-table", timeout=5000)
+        assert page.query_selector('.vs-keys .fchip:has-text("Error only")') \
+            .get_attribute("aria-pressed") == "true"
+        assert page.query_selector('.vs-keys .fchip:has-text("Tool only")') \
+            .get_attribute("aria-pressed") == "false"
+        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector("td")
+        assert "Edit" not in group_cell.inner_text()
+
+        # The delayed "Tool only" response must not land afterward and flip
+        # any of this back — give it time to arrive, then re-check.
+        page.wait_for_timeout(800)
+        assert page.query_selector('.vs-keys .fchip:has-text("Error only")') \
+            .get_attribute("aria-pressed") == "true"
+        assert page.query_selector("#main .vs-table")
+        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector("td")
+        assert "Edit" not in group_cell.inner_text()
 
         browser.close()
 
