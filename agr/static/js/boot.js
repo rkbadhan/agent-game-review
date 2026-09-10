@@ -13,6 +13,16 @@ async function dispatchLocation(want, isBoot) {
   if (want.view === "runs") {
     state.view = "runs";
     if (want.q != null) state.runsSearch = want.q;
+    // U1/U2: the caller already called readUrl() before dispatching here, so
+    // state.filters/state.sort reflect THIS url — but state.queue was fetched
+    // under whatever filters were active the last time loadInbox() ran, which
+    // can be newer ones (e.g. a filter changed from the sidebar while a run
+    // was open). Landing back on an earlier Runs page via Back/Forward must
+    // not keep showing that newer queue under the just-restored, older filter
+    // chips. Boot's own loadInbox() call already used these exact filters
+    // (readUrl() runs before it too), so only a later dispatch — a popstate,
+    // or a run failing to load and falling back here — needs the refetch.
+    if (!isBoot) await loadInbox();
     render();
     return;
   }

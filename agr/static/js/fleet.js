@@ -29,9 +29,23 @@ function renderFleetSurface(main) {
 
 async function loadFleetEpisodes() {
   const fl = state.fleet;
-  fl.pending = true;
-  try { fl.episodes = await api("/fleet/episodes?group_by=" + encodeURIComponent(fl.groupBy)); }
-  finally { fl.pending = false; }
+  // U3: capture the token AND the groupBy this fetch is actually for. Two
+  // grouping changes in quick succession both land here; only the token
+  // bumped by the SECOND call is still current when its response arrives, so
+  // the first one's `await` resolving later must not overwrite fl.episodes
+  // with data for a grouping the reader has already switched away from.
+  const token = ++fl.loadToken;
+  const groupBy = fl.groupBy;
+  fl.pending = true; fl.error = null;
+  try {
+    const episodes = await api("/fleet/episodes?group_by=" + encodeURIComponent(groupBy));
+    if (token !== fl.loadToken) return;  // superseded by a newer grouping change
+    fl.episodes = episodes;
+  } catch (e) {
+    if (token === fl.loadToken) fl.error = e.message || "failed to load";
+  } finally {
+    if (token === fl.loadToken) fl.pending = false;
+  }
 }
 
 // U3: item 31's argument-shape distribution, always keyed by (tool,
@@ -98,7 +112,15 @@ function renderFleetGroupByCard(fl) {
     chip.setAttribute("aria-pressed", on ? "true" : "false");
     chip.addEventListener("click", () => {
       if (fl.groupBy === val) return;
-      fl.groupBy = val; fl.episodes = null; render();
+      fl.groupBy = val; fl.episodes = null; fl.error = null;
+      // U3: start the fetch for the NEW grouping right here rather than
+      // leaving renderFleet to notice fl.episodes is null — if an earlier
+      // grouping's fetch is still in flight, waiting for "the pending fetch"
+      // to finish would resolve with THAT grouping's data, not this one's.
+      // loadFleetEpisodes()'s token bump supersedes any earlier in-flight
+      // call, whichever settles first or last.
+      loadFleetEpisodes().then(render);
+      render();
     });
     keys.append(chip);
   }
@@ -112,15 +134,23 @@ async function renderFleet(main) {
   main.append(wrap);
   wrap.append(renderFleetGroupByCard(fl));
 
-  if (!fl.episodes && !fl.pending) {
-    const loading = el("div", "subline", "Loading fleet episodes…");
-    wrap.append(loading);
-    try { await loadFleetEpisodes(); }
-    catch (e) { loading.textContent = "Failed: " + e.message; loading.className = "empty"; return; }
-    loading.remove();
-  }
   if (fl.pending) { wrap.append(el("div", "subline", "Loading fleet episodes…")); return; }
-  if (!fl.episodes || !fl.episodes.length) {
+  if (fl.error) { wrap.append(el("div", "empty", "Failed: " + fl.error)); return; }
+  if (!fl.episodes) {
+    wrap.append(el("div", "subline", "Loading fleet episodes…"));
+    await loadFleetEpisodes();
+    // U3: re-render from the top instead of continuing to build into `wrap`.
+    // A grouping change while this was in flight may have started ANOTHER
+    // fetch that finished first (or since started one still pending) — by
+    // the time this await resolves, `wrap` can already be detached from
+    // #main (a later render() call replaces it), so painting into it would
+    // update a screen nobody sees while the visible one stays stuck on
+    // "Loading…". A fresh render() reads fl.pending/fl.episodes/fl.error as
+    // they stand right now and always reconciles the visible screen with it.
+    render();
+    return;
+  }
+  if (!fl.episodes.length) {
     wrap.append(el("div", "empty",
       "No recovery episodes in this store yet — a run needs at least one qualifying "
       + "tool failure for Patterns to have anything to group."));

@@ -47,19 +47,35 @@ _SECRET_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     # keys in one text are redacted individually rather than as one span.
     #
     # Second alternative: a TRUNCATED key that never got its footer (a capture
-    # cut off mid-transfer) — the header immediately followed by one or more
-    # base64-shaped body lines (20+ contiguous base64-alphabet characters,
-    # i.e. no whitespace breaking them into words) running to end-of-string.
-    # Requiring body content that actually looks like key bytes — not just
-    # "anything after BEGIN" — keeps a bare mention of the header in prose (a
-    # doc explaining the PEM format, a log line echoing it with no key ever
-    # having been present) from being swallowed to end-of-string: ordinary
-    # sentences have spaces breaking them into short words, so they cannot
-    # satisfy the 20+-char unbroken run this branch requires.
+    # cut off mid-transfer) — the header immediately followed by a
+    # base64-shaped run (20+ contiguous base64-alphabet characters, i.e. no
+    # whitespace breaking it into words) proving this is real key material and
+    # not a bare mention of the header in prose (a doc explaining the PEM
+    # format, a log line echoing it with no key ever having been present):
+    # ordinary sentences have spaces breaking them into short words, so they
+    # cannot satisfy the 20+-char unbroken run this branch requires.
+    #
+    # Once that shape is confirmed, everything else in the text is swept to
+    # end-of-string (``[\s\S]*\Z``) rather than requiring every remaining line
+    # to individually be 20+ chars ending exactly where the capture stopped.
+    # A truncated capture is rarely alone at the tail of its string: upstream
+    # truncation appends its own marker (e.g. ``" …[truncated]"`` /
+    # ``"\n[truncated]"``) after cutting the body, and the cut itself can land
+    # mid-line, leaving a final line shorter than 20 chars. Both used to make
+    # this alternative fail to match at all — under-redacting is the one
+    # failure mode this module cannot afford, so once the header+body shape is
+    # confirmed the rest of the string is discarded wholesale.
+    #
+    # The separator after the header also accepts a literal ``\n`` escape
+    # (backslash + "n", not a real newline) alongside a real line break: a key
+    # captured inside structured tool input travels through ``json.dumps``
+    # before redaction runs, which serializes its embedded newlines as that
+    # two-character escape — a real newline never appears in the text redact()
+    # actually sees for that case.
     ("private_key", re.compile(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
         r"|"
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/=]{20,}\r?\n?)+\Z"
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\r?\n|\\n)[A-Za-z0-9+/=]{20,}[\s\S]*\Z"
     )),
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}")),
     ("openai_key", re.compile(r"sk-[A-Za-z0-9]{20,}")),

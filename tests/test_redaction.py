@@ -149,3 +149,55 @@ def test_key_header_mentioned_inline_with_no_newline_is_not_over_redacted():
     r = redaction.redact(text)
     assert "git-secrets" in r.text
     assert "accidentally committed keys" in r.text
+
+
+# --- F2 follow-up: truncation happening upstream of redact() must not leave a
+# gap for the captured key body to survive into a model payload -------------
+
+
+def test_truncated_private_key_followed_by_truncation_marker_is_fully_redacted():
+    """Upstream truncation (e.g. a capped verifier log, or structured_input's
+    own bound) appends its own marker AFTER cutting the key body — the
+    truncated-key branch must still fire even though the match can no longer
+    run cleanly to end-of-string without also consuming that marker."""
+    truncated = ("-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                 + _SYNTHETIC_KEY_BODY_FRAGMENTS[0] + "\n[truncated]")
+    text = f"verifier log: {truncated}"
+    r = redaction.redact(text)
+    assert "-----BEGIN OPENSSH PRIVATE KEY-----" not in r.text
+    assert _SYNTHETIC_KEY_BODY_FRAGMENTS[0] not in r.text
+    assert "[REDACTED:private_key]" in r.text
+    assert "verifier log:" in r.text
+
+
+def test_truncated_private_key_cut_on_short_final_line_is_fully_redacted():
+    """A capture can be cut mid-line, leaving a final line shorter than the
+    20-char body-line threshold — that short remainder must not survive just
+    because it alone can't prove key-shape (the header + first full line
+    already did)."""
+    truncated = ("-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                 + _SYNTHETIC_KEY_BODY_FRAGMENTS[0] + "\nshortbit")
+    text = f"log tail: {truncated}"
+    r = redaction.redact(text)
+    assert "-----BEGIN OPENSSH PRIVATE KEY-----" not in r.text
+    assert _SYNTHETIC_KEY_BODY_FRAGMENTS[0] not in r.text
+    assert "shortbit" not in r.text
+    assert "[REDACTED:private_key]" in r.text
+
+
+def test_private_key_with_json_escaped_newlines_is_fully_redacted():
+    """Structured tool input is JSON-serialized before redaction runs
+    (agr._util.structured_input), which escapes embedded newlines to the
+    two-character ``\\n`` sequence. A full key with its END marker present
+    survives that unaffected (the header/footer scan doesn't care how the
+    body is broken into lines) — the real gap is a TRUNCATED key with no END
+    marker, where the body-shape check must recognize a literal ``\\n``
+    escape as a line separator, not just a real newline character."""
+    truncated = {"content": "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                 + _SYNTHETIC_KEY_BODY_FRAGMENTS[0]}
+    payload = json.dumps(truncated, ensure_ascii=False)
+    assert "\\n" in payload  # sanity: json.dumps really did escape the newline
+    r = redaction.redact(payload)
+    assert "-----BEGIN OPENSSH PRIVATE KEY-----" not in r.text
+    assert _SYNTHETIC_KEY_BODY_FRAGMENTS[0] not in r.text
+    assert "[REDACTED:private_key]" in r.text
