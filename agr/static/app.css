@@ -100,6 +100,27 @@
   .resizer:focus-visible { outline:3px solid color-mix(in srgb, var(--navy) 34%, transparent); }
   .review-space { min-width:0; overflow:auto; padding:22px clamp(18px,3vw,40px) 56px; scroll-behavior:smooth; }
 
+  /* U1: global workspaces (Runs / Patterns / Compare versions) vs. a run's
+     investigation shell. Investigating a run keeps the three-pane layout above
+     (queue + main + evidence) untouched; a workspace destination collapses it
+     to one full-width column and drops the queue sidebar, its resizer, the
+     evidence panel, its resizer, and the mobile queue toggle — there is no
+     run-evidence panel to keep open when nothing is being investigated. Higher
+     specificity than the plain `.workspace` rule (and its media-query
+     variants) above, so it wins at every viewport width without `!important`. */
+  body.workspace-mode .workspace { grid-template-columns:minmax(0,1fr); }
+  body.workspace-mode .queue, body.workspace-mode .evidence-panel,
+  body.workspace-mode #queue-resizer, body.workspace-mode #evidence-resizer,
+  body.workspace-mode .mobile-toggle, body.workspace-mode .evidence-tab { display:none; }
+  /* The run-review chapters keep a ~900px reading column (prose reads best
+     narrow); a workspace instead uses the width just reclaimed from the two
+     side panels — a table earns its keep at that width in a way a paragraph
+     does not. */
+  #main.wide .review-nav, #main.wide .card, #main.wide .section,
+  #main.wide .vs-head, #main.wide .vs-interp, #main.wide .watermark,
+  #main.wide .shell-meta, #main.wide .notice, #main.wide .segmented,
+  #main.wide .runs-controls-row { max-width:1400px; }
+
   .eyebrow { margin:0 0 5px; color:var(--muted); font-size:10px; font-weight:750;
     letter-spacing:.13em; text-transform:uppercase; }
 
@@ -154,11 +175,33 @@
   .review-state.progress { color:var(--amber); } .review-state.progress .state-mark { background:var(--amber-soft); border-color:var(--amber); }
   .empty { color:var(--muted); padding:26px 14px; text-align:center; font-size:12px; }
 
+  /* U2: the full-width Runs table */
+  .runs-controls-row { max-width:900px; margin:0 auto 16px; display:flex; flex-wrap:wrap;
+    align-items:center; gap:12px 16px; }
+  .runs-search { flex:1 0 220px; max-width:340px; padding:7px 11px; border:1px solid var(--line);
+    border-radius:8px; background:var(--paper-strong); color:var(--ink); font-size:12.5px; }
+  .runs-controls-row .filters { flex:1 1 auto; }
+  .runs-controls-row .sort-row { margin-top:0; }
+  .runs-table-card { max-width:none; }
+  .runs-row { cursor:pointer; }
+  .runs-row:hover { background:color-mix(in srgb,var(--paper-strong) 65%,transparent); }
+  .runs-row.active { background:var(--navy-soft); }
+  .runs-row:focus-visible { outline:2px solid var(--navy); outline-offset:-2px; }
+  .runs-task { font-weight:650; }
+  .runs-run-id { color:var(--muted); font-size:10.5px; margin-top:1px; }
+  .runs-finding { max-width:38ch; }
+  .runs-finding-neg { color:var(--ink); }
+  .runs-finding-pos { color:var(--moss); }
+
   /* run header + segmented control */
   .run-header { display:flex; align-items:flex-start; justify-content:space-between; gap:20px;
     margin:0 auto 16px; max-width:900px; }
-  .run-header h1 { margin:2px 0 5px; max-width:660px; font-family:var(--serif); font-size:clamp(24px,2.6vw,32px);
-    font-weight:500; line-height:1.14; letter-spacing:-.02em; }
+  /* U4: the run identifier reads as a label, not the page's headline — the
+     Main finding title below (.main-finding-title) is deliberately the larger,
+     bolder element on the page, so a reader's eye lands on the finding rather
+     than the task id. */
+  .run-header h1 { margin:2px 0 5px; max-width:660px; font-family:var(--serif); font-size:clamp(16px,1.4vw,19px);
+    font-weight:600; line-height:1.2; letter-spacing:-.01em; color:var(--ink-soft); }
   .run-subtitle { color:var(--muted); font-size:12px; }
   .run-subtitle .mono { font-family:var(--mono); }
   /* Header run-stepper: the queue position, made walkable. */
@@ -348,6 +391,13 @@
   .card { max-width:900px; margin:0 auto 16px; border:1px solid var(--line); border-radius:14px;
     background:var(--paper); box-shadow:var(--shadow-soft); }
   .card-pad { padding:18px 20px; }
+  /* U4: Overview's "Main finding" headline is the most visually prominent text
+     in the run-review shell — bigger and bolder than the run-header h1 above,
+     and toned by polarity (a concern in rust, the strongest positive in moss)
+     the same way .run-verdict already is. */
+  .main-finding-title { margin:2px 0 8px; font:700 clamp(21px,2.2vw,27px) var(--serif); line-height:1.22; letter-spacing:-.015em; }
+  .main-finding-title.fail { color:var(--rust); }
+  .main-finding-title.pass { color:var(--moss); }
 
   /* outcome summary */
   .outcome { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr); gap:20px;

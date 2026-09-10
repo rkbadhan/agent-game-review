@@ -20,6 +20,10 @@ function renderBottomBar(main) {
   const dispBtn = el("button", "button");
   const dispLabel = wf.review_progress === "handled" && wf.disposition ? vocab("disposition", wf.disposition).label + " ✓" : "Set disposition";
   dispBtn.append(document.createTextNode(dispLabel)); dispBtn.append(el("span", "shortcut", "D"));
+  // F4: disposition writes to state.runId at click time (writeWorkflow below)
+  // — disabled while a newer run/reviewer selection is still loading, same
+  // reasoning as the moment-level annotation actions in moments.js.
+  if (state.loading) { dispBtn.disabled = true; dispBtn.title = "Loading the selected run — try again once it finishes."; }
   dispBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleDisposition(); });
   const menu = el("div", "disp-menu" + (state.dispOpen ? " open" : "")); menu.id = "disp-menu";
   for (const [val, label] of DISPOSITIONS) {

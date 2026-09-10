@@ -410,6 +410,16 @@ def _duration(run: dict) -> Optional[float]:
     return read._duration_seconds(run.get("run") or {})
 
 
+def _token_total(usage: Optional[dict]) -> Optional[float]:
+    """Sum a captured usage dict (input/output/cache token counts, …) to one
+    comparable number. ``None``/empty means usage was never captured — kept
+    distinct from a run that genuinely used 0 tokens (never happens, but the
+    same "absent is not zero" rule applies as everywhere else in this file)."""
+    if not usage:
+        return None
+    return sum(v for v in usage.values() if isinstance(v, (int, float)))
+
+
 # --- metric assembly ---------------------------------------------------------
 
 
@@ -540,7 +550,7 @@ def _cost_metrics(pairs: list[dict]) -> list[dict]:
     for metric_id, label, getter in (
         ("duration_s", "Run duration (s)", _duration),
         ("cost", "Cost", lambda r: (r.get("run") or {}).get("cost")),
-        ("tokens", "Tokens", lambda r: (r.get("run") or {}).get("tokens")),
+        ("tokens", "Tokens", lambda r: _token_total((r.get("run") or {}).get("tokens"))),
     ):
         base = [getter(p["_baseline"]) for p in pairs]
         cand = [getter(p["_candidate"]) for p in pairs]

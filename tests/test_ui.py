@@ -170,6 +170,54 @@ def versions_server(tmp_path):
         yield base
 
 
+def _write_claude_session(path, lines):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(json.dumps(line) for line in lines))
+
+
+def _claude_edit_failure_session(path, session_id, file_path, extra_input=None):
+    """A Claude Code session with one unrecovered, retained-argument Edit
+    failure — the same shape test_argument_shapes.py uses. Ingesting two of
+    these under a distinct ``file_path`` (and one with an extra key) gives the
+    Patterns view a real recovery episode group AND a matching item-31
+    argument-shape distribution (two distinct shapes) to drill into."""
+    tool_input = {"file_path": file_path, "old_string": "foo", "new_string": "bar"}
+    if extra_input:
+        tool_input.update(extra_input)
+    lines = [
+        {"type": "user", "sessionId": session_id,
+         "message": {"role": "user", "content": "Fix the bug."}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "m",
+         "content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": tool_input}]}},
+        {"type": "user", "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": "String to replace not found in file.", "is_error": True}]}},
+    ]
+    _write_claude_session(path, lines)
+
+
+@pytest.fixture
+def patterns_server(tmp_path):
+    """A store with a repeated (Edit, "String...not found...") failure across
+    two runs — one recovery-episode group (item 30) with two distinct
+    retained-argument shapes (item 31) behind it, so the Patterns view has a
+    real group to drill into on both axes."""
+    from agr.ingest_claude import convert  # noqa: PLC0415
+
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    a = session_dir / "a.jsonl"
+    b = session_dir / "b.jsonl"
+    _claude_edit_failure_session(a, "sess-a", "/app/calc.py")
+    _claude_edit_failure_session(b, "sess-b", "/app/other.py", extra_input={"replace_all": True})
+
+    store = Store(str(tmp_path / "store"))
+    for i, path in enumerate([a, b]):
+        analyze(convert(str(path), task_id=f"edit-fail-{i}").doc, store)
+    with _serving(str(tmp_path / "store")) as base:
+        yield base
+
+
 def test_version_comparison_surface(versions_server):
     """§4.16: construct a matched slice, read the result, share it, and trace a row
     back to the runs behind it."""
@@ -234,6 +282,203 @@ def test_version_comparison_surface(versions_server):
         drill.query_selector_all(".vs-pair button")[0].click()
         other.wait_for_selector(".run-header")
         assert _query(other.url)["run"]
+
+        browser.close()
+
+
+def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server):
+    """U1/U2: the Runs workspace is a destination of its own — full width, no
+    persistent evidence panel — with a table carrying the required columns,
+    working search/filter/sort, and a round trip through a run that preserves
+    all three plus scroll position."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.wait_for_selector(".run-header")  # boot still auto-opens the first run
+
+        page.click("#runs-button")
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url)["view"] == ["runs"]
+        # U1: no persistent run-evidence panel or queue sidebar on this surface.
+        assert not page.is_visible(".queue")
+        assert not page.is_visible(".evidence-panel")
+        assert page.evaluate("() => document.body.classList.contains('workspace-mode')")
+
+        # U2 columns.
+        headers = [h.inner_text().upper() for h in page.query_selector_all(".runs-table th")]
+        assert headers == ["RUN", "OUTCOME", "MAIN FINDING", "REVIEW STATUS", "DURATION", "COST"]
+        rows = page.query_selector_all(".runs-row")
+        assert len(rows) == 2
+
+        # Search matches task name and run id.
+        page.fill(".runs-search", "chess")
+        page.wait_for_function("() => document.querySelectorAll('.runs-row').length === 1")
+        assert "chess" in page.query_selector(".runs-row").inner_text().lower()
+        assert _query(page.url).get("q") == ["chess"]
+
+        # Filters are explicit for outcome (failed/passed/undetermined) and
+        # review status (unreviewed/in_progress/handled), not just a sort order.
+        chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip")}
+        assert {"Failed", "Passed", "Undetermined", "Unreviewed", "In progress", "Handled"} <= chip_labels
+        page.fill(".runs-search", "")
+        page.click('.runs-controls-row .fchip:has-text("Failed")')
+        page.wait_for_function("() => location.search.includes('filter=failed')")
+        failed_rows = page.query_selector_all(".runs-row")
+        assert len(failed_rows) >= 1
+        for r in failed_rows:
+            assert "FAILED" in r.inner_text().upper() or "ERROR" in r.inner_text().upper()
+
+        # Sorting is reachable from this surface too (shared with the sidebar).
+        page.select_option('.runs-controls-row .sort-row select', "cost")
+        page.wait_for_function("() => location.search.includes('sort=cost')")
+
+        # Scroll the table, open a run, and return: search box and sort persist
+        # in the URL and the reopened workspace's controls.
+        run_id = page.query_selector(".runs-row").get_attribute("data-run-id")
+        page.evaluate("() => document.querySelector('#main').scrollTo(0, 40)")
+        page.click(f'.runs-row[data-run-id="{run_id}"]')
+        page.wait_for_selector(".run-header")
+        assert _query(page.url)["run"] == [run_id]
+
+        page.click("#runs-button")
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url)["filter"] == ["failed"]
+        assert _query(page.url)["sort"] == ["cost"]
+        assert page.query_selector('.runs-controls-row .fchip:has-text("Failed")').get_attribute("aria-pressed") == "true"
+        assert page.eval_on_selector('.runs-controls-row .sort-row select', "el => el.value") == "cost"
+
+        browser.close()
+
+
+def test_boot_landing_on_a_run_does_not_push_a_spurious_history_entry(server):
+    """U1 regression: `loadInbox()` syncs the URL on its own before boot has
+    resolved a destination, which used to seed the history-push baseline from
+    the wrong (transient, run-less) state — so auto-opening the first run at
+    boot pushed an extra entry, and the first Back press landed back on the
+    Runs workspace instead of actually leaving the app. `history.length`
+    itself isn't a reliable signal here (a fresh page's `about:blank` counts
+    toward it too, independent of the app), so this instruments
+    `history.pushState` directly: boot must never call it, only
+    `replaceState`."""
+    def count_history_calls(page):
+        page.add_init_script("""
+          window.__pushCalls = 0;
+          const origPush = history.pushState.bind(history);
+          history.pushState = function(...args) { window.__pushCalls++; return origPush(...args); };
+        """)
+
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        count_history_calls(page)
+        page.goto(server)
+        page.wait_for_selector(".run-header")
+        assert page.evaluate("() => window.__pushCalls") == 0
+
+        # Same for a shared link straight to a run — dispatchLocation's other
+        # boot-time path.
+        run_id = _query(page.url)["run"][0]
+        direct = _page(browser)
+        count_history_calls(direct)
+        direct.goto(server + f"/?run={run_id}")
+        direct.wait_for_selector(".run-header")
+        assert direct.evaluate("() => window.__pushCalls") == 0
+
+        browser.close()
+
+
+def test_browser_back_restores_workspace_and_run_destinations(server):
+    """U1: Browser Back/Forward moves between the app's actual destinations —
+    a run's investigation shell, the Runs workspace, and Patterns — not just
+    within one of them."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.wait_for_selector(".run-header")
+        first_run = _query(page.url)["run"][0]
+
+        page.click("#runs-button")
+        page.wait_for_selector(".runs-table-card")
+        page.click("#fleet-button")
+        page.wait_for_selector(".review-nav")
+        assert _query(page.url)["view"] == ["fleet"]
+
+        page.go_back()
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url)["view"] == ["runs"]
+
+        page.go_back()
+        page.wait_for_selector(".run-header")
+        assert _query(page.url)["run"] == [first_run]
+
+        page.go_forward()
+        page.wait_for_selector(".runs-table-card")
+        assert _query(page.url)["view"] == ["runs"]
+
+        browser.close()
+
+
+def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_server):
+    """U3: a Patterns group's evidence links open the exact run and event, and
+    a reviewer can inspect representative episodes and argument shapes inline
+    without leaving the surface."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(patterns_server)
+        page.wait_for_selector(".run-header")
+
+        page.click("#fleet-button")
+        page.wait_for_selector(".vs-table")
+        assert not page.is_visible(".queue")
+        assert not page.is_visible(".evidence-panel")
+
+        headers = [h.inner_text().upper() for h in page.query_selector_all(".vs-table th")]
+        assert "EPISODES" in headers and "ARGUMENT SHAPES" in headers
+
+        row = page.query_selector(".vs-table tbody tr") or page.query_selector_all(".vs-table tr")[1]
+        drills = row.query_selector_all("details.vs-drill")
+        episodes_drill, shapes_drill = drills[0], drills[1]
+
+        episodes_drill.query_selector("summary").click()
+        assert "representative episode" in episodes_drill.inner_text().lower()
+
+        shapes_drill.query_selector("summary").click()
+        shapes_text = shapes_drill.inner_text()
+        assert "file_path:str" in shapes_text
+        assert "shape(s) among 2 failing call(s)" in shapes_text
+
+        # Evidence link opens the exact run and event.
+        episodes_drill.query_selector(".vs-pair button").click()
+        page.wait_for_selector("#trace-drawer.open")
+        assert _query(page.url)["run"]
+
+        browser.close()
+
+
+def test_overview_main_finding_is_the_most_prominent_element_and_opens_evidence(server):
+    """U4: the main finding reads as the dominant element on the page — bigger
+    than the run identifier in the header above it — and "View evidence" is a
+    one-click path from the initial view into its supporting evidence, not a
+    second manual step after "Open in Key moments"."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.wait_for_selector(".outcome")  # boot lands on Overview by default
+
+        title = page.query_selector(".main-finding-title")
+        assert title is not None
+        finding_size = page.evaluate("el => parseFloat(getComputedStyle(el).fontSize)", title)
+        header_size = page.eval_on_selector(".run-header h1", "el => parseFloat(getComputedStyle(el).fontSize)")
+        assert finding_size > header_size
+
+        page.click('button:has-text("View evidence")')
+        page.wait_for_selector(".moment-card")
+        assert "Key moments" in page.query_selector(".ochip.current").inner_text()
+        assert page.query_selector("#evidence-panel .trust-strip") is not None
 
         browser.close()
 
@@ -403,6 +648,152 @@ def test_triage_inbox_disposition_and_feedback(server):
         assert "Corrected" in page.query_selector(
             '.run[data-run-id="chess_best_move__seed42"] .review-state').inner_text()
 
+        browser.close()
+
+
+def test_rapid_run_switch_never_lets_a_stale_response_win(server):
+    """F4: selecting chess then, before its response lands, greeting must
+    always end up showing greeting's identity/review — never a mix where a
+    stale (later-arriving) chess response overwrites the already-newer
+    greeting selection just because it happened to resolve last."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+
+        page.goto(server)
+        page.wait_for_selector(".run")
+        # Delay chess's own API responses so they resolve well AFTER
+        # greeting's — the out-of-order race this bug is about. Done entirely
+        # in-page (wrapping window.api), not via Playwright route
+        # interception: a blocking delay in a Python route handler blocks the
+        # sync API's own dispatcher thread too (it shares one driver
+        # connection with page.click() etc.), so it cannot produce a genuine
+        # race between two rapid clicks — this can.
+        page.evaluate("""() => {
+          const real = window.api;
+          window.api = function(path) {
+            if (path.includes('chess_best_move')) {
+              return new Promise((resolve, reject) => {
+                setTimeout(() => { real(path).then(resolve, reject); }, 800);
+              });
+            }
+            return real(path);
+          };
+        }""")
+        page.click('.run[data-run-id="chess_best_move__seed42"]')
+        page.click('.run[data-run-id="greeting_report__seed7"]')
+
+        # Greeting has no delay, so it lands first and settles the view.
+        page.wait_for_function(
+            "() => document.querySelector('#crumb-task')?.textContent === 'greeting-report'",
+            timeout=5000)
+
+        # Give the deliberately-delayed, now-stale chess response time to
+        # arrive; if the staleness guard did not work it would clobber the view.
+        time.sleep(1.2)
+
+        assert page.query_selector("#crumb-task").inner_text() == "greeting-report"
+        assert page.query_selector('.run[data-run-id="greeting_report__seed7"].active') is not None
+        mono = page.query_selector(".run-subtitle .mono")
+        assert mono.inner_text() == "greeting_report__seed7"
+
+        assert errors == []
+        browser.close()
+
+
+def test_annotation_actions_disabled_while_a_newer_selection_is_loading(server):
+    """F4: once chess is fully loaded and its moment actions are live,
+    starting a (delayed) switch to greeting must disable those still-visible
+    chess actions immediately — a click during the pending window would
+    otherwise write a chess moment_id against whatever run/reviewer lands."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+
+        page.goto(server)
+        page.wait_for_selector(".run")
+        page.click('.run[data-run-id="chess_best_move__seed42"]')
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card .moment-actions")
+        agree = page.query_selector('.moment-actions button:has-text("Agree")')
+        assert not agree.is_disabled()
+
+        page.evaluate("""() => {
+          const real = window.api;
+          window.api = function(path) {
+            if (path.includes('greeting_report')) {
+              return new Promise((resolve, reject) => {
+                setTimeout(() => { real(path).then(resolve, reject); }, 800);
+              });
+            }
+            return real(path);
+          };
+        }""")
+        page.click('.run[data-run-id="greeting_report__seed7"]')
+        # While greeting's (delayed) response is in flight, the actions still
+        # on screen (chess's, since the view has not been replaced yet) must
+        # be disabled — not just visually stale but non-interactive.
+        page.wait_for_function(
+            "() => { const b = [...document.querySelectorAll('.moment-actions button')]"
+            ".find(x => x.textContent.includes('Agree')); return !!b && b.disabled; }",
+            timeout=2000)
+
+        # The switch still completes correctly once greeting's response lands.
+        page.wait_for_function(
+            "() => document.querySelector('#crumb-task')?.textContent === 'greeting-report'",
+            timeout=5000)
+
+        assert errors == []
+        browser.close()
+
+
+def test_disposition_shortcut_honors_the_same_loading_guard_as_its_button(server):
+    """Review of PR #64: the 'd' keyboard shortcut calls toggleDisposition()
+    directly, bypassing the disabled state the bottom-bar button itself gets
+    while a newer run/reviewer selection is loading — pressing d during that
+    window must not open the menu either."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+
+        page.goto(server)
+        page.wait_for_selector(".run")
+        page.click('.run[data-run-id="chess_best_move__seed42"]')
+        page.wait_for_selector(".bottom-bar button:has-text('Set disposition')")
+
+        page.evaluate("""() => {
+          const real = window.api;
+          window.api = function(path) {
+            if (path.includes('greeting_report')) {
+              return new Promise((resolve, reject) => {
+                setTimeout(() => { real(path).then(resolve, reject); }, 800);
+              });
+            }
+            return real(path);
+          };
+        }""")
+        page.click('.run[data-run-id="greeting_report__seed7"]')
+        # While greeting's response is still in flight, the button is
+        # disabled — confirm the guard is actually armed for this window...
+        page.wait_for_function(
+            "() => { const b = [...document.querySelectorAll('.bottom-bar button')]"
+            ".find(x => x.textContent.includes('Set disposition')); return !!b && b.disabled; }",
+            timeout=2000)
+        # ...then the shortcut, not the button, must respect it too.
+        page.keyboard.press("d")
+        page.wait_for_timeout(150)
+        assert page.query_selector("#disp-menu.open") is None
+
+        page.wait_for_function(
+            "() => document.querySelector('#crumb-task')?.textContent === 'greeting-report'",
+            timeout=5000)
+        assert errors == []
         browser.close()
 
 
@@ -947,6 +1338,129 @@ def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tm
             headline = page.query_selector(".outcome h2").inner_text()
             assert "no verifier checks" in headline.lower()
             assert "passed" not in headline.lower()
+
+            assert errors == []
+            browser.close()
+
+
+def test_missing_outcome_never_defaults_to_passed(tmp_path):
+    """Review of PR #64: outcomeNarrative (ui-utils.js) must not fall through
+    to the PASSED narrative when rv.outcome is missing or carries a status it
+    does not recognize — that would silently re-introduce "reads as pass when
+    not proven" for exactly the class of bug F3 exists to prevent. Simulates
+    a corrupted/pre-migration outcome.json directly (real checks still exist,
+    so this is not the already-covered UNVERIFIED/no-checks case)."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "chess_best_move.atif.json")
+    capture_id = store.latest_capture_id(CHESS)
+    store.write_derived(CHESS, capture_id, "outcome.json", {})  # no "status" key at all
+
+    with _serving(root) as extra:
+        with sync_playwright() as pw:
+            browser = _launch(pw)
+            page = _page(browser)
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+
+            page.goto(extra)
+            page.wait_for_selector(".run")
+            page.click(f'.run[data-run-id="{CHESS}"]')
+            page.wait_for_selector(".run-verdict")
+
+            verdict = page.query_selector(".run-verdict").inner_text()
+            assert "passed" not in verdict.lower()
+
+            page.click('.outline > .ochip:has-text("Overview")')
+            page.wait_for_selector(".outcome h2")
+            headline = page.query_selector(".outcome h2").inner_text()
+            assert "passed" not in headline.lower()
+
+            assert errors == []
+            browser.close()
+
+
+def test_superseded_check_never_makes_a_reconciled_pass_read_as_failed(tmp_path):
+    """F3: header, Overview, run list, and Checks must all read the backend's
+    reconciled outcome, not re-derive their own from raw check.status. C3 here
+    originally failed, then a later same-scope check (C3b) passed — reconcile_
+    checks() marks C3 superseded_by C3b, so it is excluded from rv.outcome
+    (which is PASSED). Before the fix, the header verdict and Overview
+    headline independently filtered on raw c.status === "failed" and so
+    counted the superseded C3 anyway, showing "Failed —" while the header
+    pill (which already read rv.outcome.status) said PASSED on the same
+    screen — a direct contradiction this test pins shut."""
+    import copy
+
+    with open(os.path.join(FIXTURES, "chess_best_move.atif.json"), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["run"]["logical_run_id"] = "superseded_pass__seed11"
+    checks = doc["verifier"]["checks"]
+    c3 = next(c for c in checks if c["check_id"] == "C3")
+    c3["scope"] = "winning_moves"
+    c3["sequence"] = 1
+    c3b = copy.deepcopy(c3)
+    c3b["check_id"] = "C3b"
+    c3b["status"] = "passed"
+    c3b["expected"] = ["g2e4", "e2e4"]
+    c3b["observed"] = ["g2e4", "e2e4"]
+    c3b["sequence"] = 2
+    checks.append(c3b)
+
+    root = str(tmp_path / "store")
+    store = Store(root)
+    analyze(doc, store)
+    rv = read.get_review(store, "superseded_pass__seed11")
+    assert rv["outcome"]["status"] == "PASSED"  # backend already reconciles correctly
+    by_id = {c["check_id"]: c for c in rv["checks"]}
+    assert by_id["C3"]["superseded_by"] == "C3b"
+    assert by_id["C3"]["status"] == "failed"          # historical status preserved
+    assert by_id["C3"]["effective_status"] is None    # excluded from the rollup
+
+    with _serving(root) as extra:
+        with sync_playwright() as pw:
+            browser = _launch(pw)
+            page = _page(browser)
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+
+            page.goto(extra)
+            page.wait_for_selector(".run")
+
+            # Run list: already reads rv.outcome.status server-side.
+            row = page.query_selector('.run[data-run-id="superseded_pass__seed11"] .run-status')
+            assert "PASSED" in row.inner_text()
+
+            page.click('.run[data-run-id="superseded_pass__seed11"]')
+            page.wait_for_selector(".run-verdict")
+
+            # Header pill and header verdict line must agree.
+            pill = page.query_selector(".header-status").inner_text()
+            assert "PASSED" in pill.upper()
+            verdict = page.query_selector(".run-verdict").inner_text()
+            assert verdict.lower().startswith("passed")
+            assert "failed" not in verdict.lower()
+
+            # Overview headline must agree with the header, not re-derive its own.
+            page.click('.outline > .ochip:has-text("Overview")')
+            page.wait_for_selector(".outcome h2")
+            headline = page.query_selector(".outcome h2").inner_text()
+            assert headline.lower().startswith("passed")
+            assert "failed" not in headline.lower()
+
+            # Checks tab: the superseded check is visibly tagged, not shown as
+            # an indistinguishable live FAILED row. ("C3" is an exact match —
+            # match_ids() below excludes "C3b", a substring collision.)
+            page.click('.outline > .ochip:has-text("Checks")')
+            page.wait_for_selector(".check-row")
+            rows = page.query_selector_all(".check-row")
+            c3_row = next(r for r in rows
+                         if r.query_selector(".check-id").inner_text() == "C3")
+            c3b_row = next(r for r in rows
+                          if r.query_selector(".check-id").inner_text() == "C3b")
+            assert "SUPERSEDED" in c3_row.inner_text()
+            assert "SUPERSEDED" not in c3b_row.inner_text()
+            assert "PASSED" in c3b_row.inner_text()
 
             assert errors == []
             browser.close()

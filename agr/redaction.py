@@ -39,12 +39,33 @@ from . import version
 # recorded in the redaction map and shown in the marker. Ordered most-specific
 # first so a token isn't misclassified as a generic high-entropy blob.
 _SECRET_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+    # The full PEM block, header through footer — matched and removed FIRST so
+    # no narrower pattern below can pick off a coincidental match inside the
+    # base64 body and leave a fragment of real key material sitting next to a
+    # spurious marker. ``[\s\S]*?`` (not ``.``) so the body's newlines are
+    # covered without needing DOTALL, and the match is non-greedy so multiple
+    # keys in one text are redacted individually rather than as one span.
+    #
+    # Second alternative: a TRUNCATED key that never got its footer (a capture
+    # cut off mid-transfer) — the header immediately followed by one or more
+    # base64-shaped body lines (20+ contiguous base64-alphabet characters,
+    # i.e. no whitespace breaking them into words) running to end-of-string.
+    # Requiring body content that actually looks like key bytes — not just
+    # "anything after BEGIN" — keeps a bare mention of the header in prose (a
+    # doc explaining the PEM format, a log line echoing it with no key ever
+    # having been present) from being swallowed to end-of-string: ordinary
+    # sentences have spaces breaking them into short words, so they cannot
+    # satisfy the 20+-char unbroken run this branch requires.
+    ("private_key", re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+        r"|"
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/=]{20,}\r?\n?)+\Z"
+    )),
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}")),
     ("openai_key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
     ("github_token", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}")),
     ("aws_key", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("bearer_token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{16,}")),
-    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
 ]
 

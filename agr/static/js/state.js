@@ -2,6 +2,14 @@
 
 // --- state -------------------------------------------------------------------
 const state = { runId: null, view: "review", chapter: "moments", forensic: null, review: null,
+  // F4: bumped on every run or reviewer selection so an out-of-order response
+  // to an EARLIER selection can tell it is stale (its captured token no
+  // longer matches state.loadToken) and discard itself instead of overwriting
+  // what the reader is now looking at. `loading` is true from the moment a
+  // selection starts until its (non-stale) response is applied — annotation
+  // actions read it to stay disabled while the data underneath them could
+  // still belong to a run/reviewer other than the one being written to.
+  loadToken: 0, loading: false,
   momentIdx: 0, showAllContract: false, pendingStep: null, viewed: new Set(),
   // T2: which moment cards a reader expanded to the full five-part detail, by
   // moment_id — survives a re-render (e.g. after Agree) but not a run change.
@@ -16,6 +24,11 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
   // newly selected finding shows its own source without extra clicks.
   evidenceFocus: null,
   sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "RK", dispOpen: false,
+  // U2 Runs workspace: the search box's live text, and the reading position on
+  // that surface — restored when a run is opened and then left again ("Back to
+  // review" / the "Runs" nav button), rather than dropping the reader back at
+  // the top of a freshly rendered table.
+  runsSearch: "", runsScroll: 0,
   compare: null, sibling: null, traceOpen: false, traceStep: null,
   // §4.3.5 fast/deep entry preference — where each run opens, remembered per
   // browser like the panel widths. Default is Overview: a first-time reader
@@ -40,15 +53,44 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
 //     ?run=chess_best_move__seed42&chapter=moments&moment=mom_003&trace=1
 //      &evidence=s7&view=compare&left=deterministic&right=model:a&filter=failed&sort=triage
 //
-//   Every navigation rewrites it with history.replaceState — the URL tracks the
-//   app rather than capturing the Back button, which keeps leaving the app the
-//   way it does today. Reading it back happens once, at boot, in `boot()`.
+//   Every navigation rewrites the query string; most of them (a chapter switch,
+//   a filter toggle, a moment or evidence selection) use history.replaceState so
+//   the Back button is not spammed with one entry per click. U1 asks for more
+//   than that, though: Back/Forward must also move between the app's actual
+//   *destinations* — Runs, Patterns, Compare versions, and a given run's
+//   investigation shell. `_commitUrl` below tells the two apart by comparing
+//   the "major" destination key across renders: only a CHANGE in destination
+//   pushes a new history entry; everything else inside the same destination
+//   still replaces. A `popstate` (state.__inPopstate, set by boot.js's
+//   listener) always replaces — the browser already moved history for us, so
+//   committing must not push on top of that.
+let _lastMajorKey;
+function _majorDestinationKey() {
+  if (state.view === "versions") return "versions:" + (state.versions.savedId || "");
+  if (state.view === "fleet" || state.view === "runs") return state.view;
+  return state.runId ? "run:" + state.runId : "runs";
+}
+function _commitUrl(query) {
+  const url = query ? location.pathname + "?" + query : location.pathname;
+  const key = _majorDestinationKey();
+  if (state.__inPopstate || state.__booting || _lastMajorKey === undefined || key === _lastMajorKey) history.replaceState(null, "", url);
+  else history.pushState(null, "", url);
+  _lastMajorKey = key;
+}
 function syncUrl() {
   const p = new URLSearchParams();
+  if (state.view === "runs") {
+    p.set("view", "runs");
+    if (state.runsSearch) p.set("q", state.runsSearch);
+    for (const f of state.filters) p.append("filter", f);
+    if (state.sort !== "triage") p.set("sort", state.sort);
+    _commitUrl(p.toString());
+    return;
+  }
   if (state.view === "fleet") {
     p.set("view", "fleet");
     if (state.fleet.groupBy !== "tool,error_signature") p.set("group_by", state.fleet.groupBy);
-    history.replaceState(null, "", location.pathname + "?" + p.toString());
+    _commitUrl(p.toString());
     return;
   }
   if (state.view === "versions") {
@@ -58,7 +100,7 @@ function syncUrl() {
     const v = state.versions;
     if (v.savedId) p.set("comparison", v.savedId);
     else if (v.result) { p.set("baseline", v.baseline); p.set("candidate", v.candidate); p.set("axis", v.axis); }
-    history.replaceState(null, "", location.pathname + "?" + p.toString());
+    _commitUrl(p.toString());
     return;
   }
   if (state.runId) p.set("run", state.runId);
@@ -78,24 +120,29 @@ function syncUrl() {
   }
   for (const f of state.filters) p.append("filter", f);
   if (state.sort !== "triage") p.set("sort", state.sort);
-  const q = p.toString();
-  history.replaceState(null, "", q ? location.pathname + "?" + q : location.pathname);
+  _commitUrl(p.toString());
 }
 // The queue-view half of the URL is applied before the first fetch, so a shared
 // link reproduces the same queue; unknown values are dropped rather than sent on
 // to the API. The run-level half is applied in `selectRun` once the review loads.
+//
+// U1: this now runs a second time per session, on every `popstate` (see
+// boot.js), not just once at boot — so it fully REPLACES state.sort/filters/
+// search from the URL rather than only adding to them. A one-time additive
+// parse would leak filters forward across a Back navigation that dropped them.
 function readUrl() {
   const p = new URLSearchParams(location.search);
   const sort = p.get("sort");
-  if (SORT_OPTIONS.some(([v]) => v === sort)) state.sort = sort;
-  for (const f of p.getAll("filter")) if (FILTER_CHIPS.some(([k]) => k === f)) state.filters.add(f);
+  state.sort = SORT_OPTIONS.some(([v]) => v === sort) ? sort : "triage";
+  state.filters = new Set(p.getAll("filter").filter(f => FILTER_CHIPS.some(([k]) => k === f)));
+  state.runsSearch = p.get("q") || "";
   const left = p.get("left"), right = p.get("right");
-  if (left && right) state.compare = { left, right };
+  state.compare = (left && right) ? { left, right } : null;
   const v = state.versions;
   if (p.get("axis")) v.axis = p.get("axis");
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
   return { run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
-    left, right, comparison: p.get("comparison"), groupBy: p.get("group_by") };
+    left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

@@ -16,9 +16,49 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from typing import Any, Optional
 from urllib.parse import quote, unquote
+
+
+class InvalidRunId(ValueError):
+    """A run_id is unsafe to use as a store path component (spec §5.1)."""
+
+
+# One segment: alnum/underscore/dot/hyphen only, starting and ending on
+# alnum-or-underscore so a segment can never be exactly "." or ".." nor carry
+# a trailing dot that some filesystems treat specially. No colon (blocks
+# Windows drive letters like "C:" and NTFS alternate-data-stream syntax
+# "name:stream") and no backslash (blocked separately, below) anywhere.
+_RUN_ID_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*[A-Za-z0-9_]$|^[A-Za-z0-9_]$")
+
+
+def validate_run_id(run_id: str) -> str:
+    """Reject any run_id that could let an import escape the store.
+
+    Legitimate run ids are namespaced with "/" (e.g. a Harbor task name
+    embedded as ``harbor__terminal-bench/crack-7z-hash__<uuid>``), so "/" is
+    allowed as a directory separator — but every segment it produces must be
+    a plain name: never empty, never exactly "." or "..", and drawn only from
+    a conservative charset. This blocks absolute paths, "../" traversal, and
+    platform-specific escapes (Windows drive letters, UNC/backslash paths,
+    NTFS alternate-data-stream names) while preserving normal namespacing.
+    """
+    if not isinstance(run_id, str) or not run_id:
+        raise InvalidRunId(f"invalid run_id {run_id!r}: must be a non-empty string")
+    if "\x00" in run_id:
+        raise InvalidRunId(f"invalid run_id {run_id!r}: contains a NUL byte")
+    if "\\" in run_id:
+        raise InvalidRunId(f"invalid run_id {run_id!r}: backslashes are not allowed")
+    if run_id.startswith("/") or run_id.startswith("~"):
+        raise InvalidRunId(f"invalid run_id {run_id!r}: absolute paths are not allowed")
+    for segment in run_id.split("/"):
+        if segment in ("", ".", ".."):
+            raise InvalidRunId(f"invalid run_id {run_id!r}: empty or traversal segment {segment!r}")
+        if not _RUN_ID_SEGMENT_RE.match(segment):
+            raise InvalidRunId(f"invalid run_id {run_id!r}: disallowed characters in segment {segment!r}")
+    return run_id
 
 
 def canonical_bytes(doc: Any) -> bytes:
@@ -43,6 +83,7 @@ class Store:
     # --- paths ---------------------------------------------------------------
 
     def _run_dir(self, run_id: str) -> str:
+        validate_run_id(run_id)
         return os.path.join(self.root, "runs", run_id)
 
     def _capture_dir(self, run_id: str, capture_id: str) -> str:

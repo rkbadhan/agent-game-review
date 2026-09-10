@@ -175,25 +175,16 @@ function renderOverviewChapter(main) {
   const outcome = el("div", "outcome");
   const oc = el("div");
   oc.append(el("p", "eyebrow", "What happened"));
-  const failed = checks.filter(c => c.status === "failed");
-  const undetermined = checks.filter(c => ["unknown", "skipped", "error"].includes(c.status));
-  // F1 follow-up: explicit outcome semantics — a run with no checks was never
-  // verified, and checks that ended unknown/skipped/error recorded no verdict,
-  // so neither can be headed "All checks passed."
-  if (!checks.length) {
-    oc.append(el("h2", null, "No verifier checks were recorded."));
-    oc.append(el("p", null, "This run is UNVERIFIED — the capture carries no atomic check evidence, so nothing here should be read as a pass."));
-  } else if (failed.length) {
-    oc.append(el("h2", null, failed.length + " check(s) failed"));
-    oc.append(el("p", null, "Failed: " + failed.map(c => c.check_id + " — " + c.name).join("; ")));
-  } else if (undetermined.length) {
-    oc.append(el("h2", null, "Check outcomes undetermined."));
-    oc.append(el("p", null, "No check failed, but " + undetermined.map(c => c.check_id + " (" + c.status + ")").join(", ")
-      + " recorded no verdict — the run is UNDETERMINED, not passed."));
-  } else {
-    oc.append(el("h2", null, "All checks passed."));
-    oc.append(el("p", null, "No deterministic warnings were detected."));
-  }
+  // F3: reads the SAME reconciled narrative as the header verdict
+  // (outcomeNarrative, ui-utils.js) instead of re-deriving one from raw
+  // check.status — that duplication was how a superseded/stale check or
+  // unknown requirement coverage could read "All checks passed." here while
+  // the header (or the outcome pill right below) correctly said otherwise.
+  const narrative = outcomeNarrative(rv) || {
+    tone: "warn", headline: "Unverified —",
+    detail: "no atomic check evidence was captured, so nothing here should be read as a pass.",
+  };
+  oc.append(el("h2", null, narrative.headline + " " + narrative.detail));
   outcome.append(oc);
   const rq = el("div", "req-summary");
   rq.append(el("div", "req-count " + statusClass(o.status), (o.passed ?? "?") + "/" + (o.total ?? "?")));
@@ -224,14 +215,29 @@ function renderOverviewChapter(main) {
   const fsec = el("div", "card card-pad");
   fsec.append(el("p", "eyebrow", "Main finding"));
   if (mf) {
-    fsec.append(el("h2", "empty-title", mf.summary));
+    // U4: this is the single most prominent element on the page (see
+    // .main-finding-title) — a reader's eye should land here, not on the task
+    // identifier in the header above.
+    fsec.append(el("h2", "main-finding-title " + (mf.polarity === "positive" ? "pass" : "fail"), mf.summary));
     fsec.append(el("p", "chapter-lede",
       (mf.polarity === "positive" ? "Strongest behaviour observed in this run. " : "")
       + consequenceText(mf)));
-    const open = el("button", "button", "Open in Key moments →");
+    const actions = el("div", "chapter-foot");
     const idx = currentMoments().indexOf(mf);
+    const open = el("button", "button", "Open in Key moments →");
     open.addEventListener("click", () => { if (idx >= 0) state.momentIdx = idx; setChapter("moments"); });
-    fsec.append(open);
+    actions.append(open);
+    // U4: "how to inspect its evidence" from the initial view — one click, not
+    // "open the moment, then separately open its evidence."
+    const viewEvidence = el("button", "button subtle", "View evidence →");
+    viewEvidence.addEventListener("click", () => {
+      if (idx >= 0) state.momentIdx = idx;
+      state.view = "review"; state.chapter = "moments"; state.viewed.add("moments");
+      render();
+      focusEvidence();
+    });
+    actions.append(viewEvidence);
+    fsec.append(actions);
   } else {
     fsec.append(el("p", "chapter-lede", rv.review_mode === "not_reviewable"
       ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
@@ -396,21 +402,49 @@ function renderOpportunitiesChapter(main) {
 // task/verifier audit — both are "what does this outcome actually mean",
 // so they now share one chapter instead of Outcome and a separate Audit tab.
 function renderChecksChapter(main) {
-  const rv = state.review, f = state.forensic, checks = rv.checks || [];
+  const rv = state.review, f = state.forensic, checks = rv.checks || [], o = rv.outcome || {};
   const contract = rv.contract || {}, items = contract.items || [];
   const itemById = {}; items.forEach(it => (itemById[it.id] = it));
 
   const csec = el("div", "card card-pad");
   csec.append(el("p", "eyebrow", "Requirement results"));
   csec.append(el("p", "chapter-lede", "What each verifier check observed, and which task-contract item it covers."));
+  // F3: name the reconciliation up front — how many of the rows below no
+  // longer count toward rv.outcome.status, and why — instead of leaving the
+  // reader to notice the per-row SUPERSEDED/STALE tags on their own.
+  const supersededCount = (o.superseded_checks || []).length;
+  const staleCount = (o.stale_checks || []).length;
+  if (supersededCount || staleCount) {
+    const bits = [];
+    if (supersededCount) bits.push(supersededCount + " superseded by a later check");
+    if (staleCount) bits.push(staleCount + " stale (invalidated by a later action)");
+    csec.append(el("p", "check-warn", "⚠ " + bits.join("; ") + " — excluded from the current outcome below."));
+  }
   const list = el("div", "check-list");
   for (const c of checks) {
+    // F3: a check the backend already excluded from (superseded_by) or
+    // demoted in (stale_reason) the reconciled verdict must never LOOK like a
+    // live, currently-counted check — the badge follows effective_status
+    // (what actually fed rv.outcome), with an explicit tag naming why it
+    // differs from the raw historical status shown alongside it.
     const d = el("details", "check-row"); const sum = el("summary", "check-sum");
-    sum.append(el("span", "badge " + badgeClass(c.status), (c.status || "?").toUpperCase()));
+    const live = c.effective_status !== undefined ? c.effective_status : c.status;
+    sum.append(el("span", "badge " + badgeClass(live), (live || "excluded").toUpperCase()));
+    if (c.superseded_by)
+      sum.append(el("span", "badge warn", "SUPERSEDED"));
+    else if (c.stale_reason)
+      sum.append(el("span", "badge warn", "STALE"));
     sum.append(el("span", "check-name", c.name));
     sum.append(el("span", "check-id mono", c.check_id));
     d.append(sum);
     const body = el("div", "check-body");
+    if (c.superseded_by)
+      body.append(el("div", "check-warn", "⚠ superseded by " + c.superseded_by
+        + " — this observation (historical status: " + (c.status || "?").toUpperCase()
+        + ") no longer counts toward the run's outcome."));
+    else if (c.stale_reason)
+      body.append(el("div", "check-warn", "⚠ stale — " + c.stale_reason
+        + "; this " + (c.status || "?").toUpperCase() + " no longer counts as a current pass."));
     body.append(kvLine("Expected", fmt(c.expected) || "—"));
     body.append(kvLine("Observed", fmt(c.observed) || "—"));
     const mapped = (c.contract_item_ids || []).map(id => (itemById[id] || {}).description || id);

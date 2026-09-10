@@ -1,41 +1,58 @@
 "use strict";
 
-// A one-line, plain-language verdict for the run header. Mirrors the Overview
-// "What happened" logic so the two never disagree, and — like Overview — it only
-// restates validated check facts (never invents impact or intent). Returns
-// { tone, headline, detail } or null when there is nothing faithful to say.
-function verdictSummary(rv) {
-  if (!rv) return null;
-  const checks = rv.checks || [];
-  const failed = checks.filter(c => c.status === "failed");
-  const undetermined = checks.filter(c => ["unknown", "skipped", "error"].includes(c.status));
-  if (rv.review_mode === "not_reviewable")
-    return { tone: "warn", headline: "Not reviewable —",
-      detail: "the captured evidence is insufficient for a trustworthy review." };
-  if (!checks.length)
-    return { tone: "warn", headline: "Unverified —",
-      detail: "no atomic check evidence was captured, so nothing here should be read as a pass." };
-  if (failed.length)
-    return { tone: "fail", headline: "Failed —",
-      detail: failed.length + " of " + checks.length + " checks failed: "
-        + failed.map(c => c.check_id + " (" + c.name + ")").join("; ") + "." };
-  if (undetermined.length)
-    return { tone: "warn", headline: "Undetermined —",
-      detail: "no check failed, but " + undetermined.map(c => c.check_id + " (" + c.status + ")").join(", ")
-        + " recorded no verdict." };
-  return { tone: "pass", headline: "Passed —",
-    detail: "all " + checks.length + " requirement " + (checks.length === 1 ? "check" : "checks") + " evidenced." };
-}
+// A one-line, plain-language verdict for the run header. Delegates to
+// outcomeNarrative (ui-utils.js) — the single place that reads the backend's
+// reconciled rv.outcome.status — so the header can never disagree with
+// Overview's "What happened" headline, which reads the same function.
 
 // --- render root -------------------------------------------------------------
+// U1: which top-level surfaces are global workspaces (Runs / Patterns /
+// Compare versions) rather than a run's investigation shell. Workspaces get
+// the full content width and no persistent evidence panel; opening a run
+// switches into the investigation shell below.
+function isWorkspaceView(view) { return view === "runs" || view === "fleet" || view === "versions"; }
+
 function render() {
   const main = $("#main"); main.textContent = "";
-  // The version comparison and the fleet view are surfaces, not run views:
-  // each renders with no run selected, so both are dispatched before the
-  // "pick a run" guard.
+  // A review view with no SELECTED run (e.g. a stray fallback) has nothing to
+  // investigate, so it resolves to the Runs workspace before the layout mode
+  // below is decided — never a bare "review" mode with an empty three-pane
+  // shell. Deliberately keyed on runId, not on `state.review` being loaded
+  // yet: selectRun (run.js) now renders immediately, before its fetch
+  // resolves, so state.runId is set but state.review is still the old value
+  // (or null, on a run's first-ever selection) for that one transient
+  // render. Redirecting on `!state.review` would flip state.view to "runs"
+  // right there and never flip it back once the fetch lands — the loaded
+  // run would render as the Runs workspace instead of its own review. The
+  // "!state.review" case below (a run selected but not yet loaded) is exactly
+  // that transient window, and renders its own "Loading…" placeholder.
+  if (state.view === "review" && !state.runId) state.view = "runs";
+  const workspace = isWorkspaceView(state.view);
+  document.body.classList.toggle("workspace-mode", workspace);
+  main.classList.toggle("wide", workspace);
+  // The investigation sidebar's filter chips/run list live outside #main (so
+  // they survive #main being wiped below) and are otherwise refreshed lazily
+  // by loadInbox() — reconciling them here on every render, regardless of how
+  // this view was reached, is what keeps a workspace's OWN filter chips
+  // (rendered by runs.js, inside #main) from ever coexisting in the DOM with
+  // the sidebar's — two same-class controls open to the same click would be
+  // ambiguous for both a human and a test's selector.
+  if (workspace) {
+    $("#queue-controls").textContent = ""; $("#run-list").textContent = "";
+    $("#crumb-task").textContent = state.view === "runs" ? "Runs"
+      : state.view === "fleet" ? "Patterns" : "Compare versions";
+  }
+  else { renderQueueControls(); renderRunList(); }
+  // The runs table, version comparison, and fleet view are surfaces, not run
+  // views: each renders with no run selected, so all three are dispatched
+  // before the "pick a run" guard.
+  if (state.view === "runs") { renderRunsSurface(main); syncUrl(); return; }
   if (state.view === "versions") { renderVersionsSurface(main); syncUrl(); return; }
   if (state.view === "fleet") { renderFleetSurface(main); syncUrl(); return; }
-  if (!state.review) { main.append(el("div", "empty", "Select a run to begin.")); syncUrl(); return; }
+  if (!state.review) {
+    main.append(el("div", "empty", state.runId && state.loading ? "Loading…" : "Select a run to begin."));
+    syncUrl(); return;
+  }
   const rv = state.review, run = rv.run || {};
   $("#crumb-task").textContent = run.task_id || state.runId;
 
@@ -81,7 +98,7 @@ function render() {
   // Persistent one-line verdict (plain language) directly under the title, so
   // the run's result reads in one glance from any chapter — not only Overview.
   // Restated from validated check facts; no interpretation is added here.
-  const vsum = verdictSummary(rv);
+  const vsum = outcomeNarrative(rv);
   if (vsum) {
     const v = el("p", "run-verdict " + vsum.tone);
     v.append(el("span", "run-verdict-key", vsum.headline), document.createTextNode(" " + vsum.detail));
@@ -238,7 +255,22 @@ function renderShellMeta(rv) {
         state.reviewerKey = key === "deterministic" && avail.includes(active) ? key : (key === active ? null : key);
         state.momentIdx = 0;
         toast("Serving " + label + " review…");
-        state.review = await api(reviewUrl(state.runId, state.reviewerKey));
+        // F4: shares selectRun's staleness guard — a reviewer switch races
+        // the same state.review a run switch does, so it uses the same
+        // token and disables writes the same way while its fetch is in flight.
+        const token = ++state.loadToken, runId = state.runId, reviewerKey = state.reviewerKey;
+        state.loading = true;
+        render();
+        let review;
+        try {
+          review = await api(reviewUrl(runId, reviewerKey));
+        } catch (e) {
+          if (token === state.loadToken) { state.loading = false; render(); }
+          throw e;
+        }
+        if (token !== state.loadToken) return;  // superseded by a newer selection
+        state.review = review;
+        state.loading = false;
         render();
       });
       flip.append(tab);

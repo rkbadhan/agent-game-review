@@ -30,8 +30,14 @@ from . import read
 from .store import Store
 
 # §4.3.2 — the primary visible filter chips, each a predicate over a run card.
+# U2: "passed", "undetermined", "in_progress", and "handled" round the outcome
+# and review-status axes out explicitly (previously outcome had no PASSED
+# filter and review status only distinguished "unreviewed" from everything
+# else) rather than leaving them reachable only through a sort order.
 FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
     "failed": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "ERROR"),
+    "passed": lambda r: (r["outcome"].get("status") or "").upper() == "PASSED",
+    "undetermined": lambda r: (r["outcome"].get("status") or "").upper() in ("UNDETERMINED", "UNVERIFIED"),
     "needs_attention": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "WARNING", "ERROR"),
     "recovered": lambda r: bool(r.get("recovered")),
     # AGR-04: a plausible (not confirmed) resolution is its own visible
@@ -39,6 +45,8 @@ FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
     "plausible_recovery": lambda r: bool(r.get("recovery_plausible")),
     "verifier_concern": lambda r: bool(r.get("verifier_concern")),
     "unreviewed": lambda r: r["workflow"].get("review_progress") == "unreviewed",
+    "in_progress": lambda r: r["workflow"].get("review_progress") == "in_progress",
+    "handled": lambda r: r["workflow"].get("review_progress") == "handled",
 }
 
 # §4.3.2 — supported sort controls. Every key maps to a sort function; the default
@@ -85,9 +93,16 @@ def _sort_key(sort: str) -> Callable[[dict], Any]:
     if sort == "review_progress":
         return lambda r: (_PROGRESS_RANK.get(r["workflow"].get("review_progress"), 9), r["run_id"])
     if sort == "cost":
-        return lambda r: (-(_num(r.get("cost"))), r["run_id"])
+        # F5/U2: a run whose cost was never captured must sort as unavailable,
+        # not as tied with a genuinely free ($0) run — that would make an
+        # uncaptured cost silently rank as the cheapest. Known costs (highest
+        # first) always sort before every unknown-cost run.
+        return lambda r: (r.get("cost") is None, -(_num(r.get("cost"))), r["run_id"])
     if sort == "duration":
-        return lambda r: (-(_num(r.get("duration_s"))), r["run_id"])
+        # Same "absent is not zero" guard as cost, just above: an uncaptured
+        # duration must not tie with (and thus rank alongside) a genuine
+        # 0-second run.
+        return lambda r: (r.get("duration_s") is None, -(_num(r.get("duration_s"))), r["run_id"])
     if sort == "recently_updated":
         return lambda r: (r["workflow"].get("updated_at") or r.get("ingested_at") or "", r["run_id"])
     # default: triage priority, then outcome severity, then id (stable, visible).

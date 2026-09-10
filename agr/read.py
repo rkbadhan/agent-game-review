@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from . import lessons, version, workflow
 from .schema import WATERMARKED_STATUSES
-from .store import Store, source_hash
+from .store import InvalidRunId, Store, source_hash
 
 
 class RunNotFound(Exception):
@@ -676,7 +676,16 @@ def list_runs(store: Store) -> list[dict]:
             if rel == ".":
                 continue
             run_id = rel.replace(os.sep, "/")
-            if store.latest_capture_id(run_id) is not None:
+            try:
+                capture_id = store.latest_capture_id(run_id)
+            except InvalidRunId:
+                # F1 follow-up (review of PR #64): a directory left over from
+                # before the path-safety charset existed (e.g. a colon in an
+                # old logical_run_id) is not a listable run, but it must not
+                # abort the WHOLE listing — skip it and keep walking, in case
+                # something valid is nested underneath.
+                continue
+            if capture_id is not None:
                 found.append(run_id)
                 dirnames[:] = []
         return sorted(found)
@@ -711,6 +720,18 @@ def list_runs(store: Store) -> list[dict]:
         recovered = recovery_counts["confirmed"] > 0 or any(
             m.get("kind") == "recovery" and m.get("polarity") == "positive" for m in moments)
         wf = workflow.read_workflow(store, run_id)
+        # U2 Runs table: the same "one decisive finding" the Overview chapter
+        # leads with (mirrors the browser's mainFinding()) — the first
+        # non-positive (negative/neutral) moment in selection order, or the
+        # first positive one when none was found, so a triage reader gets a
+        # finding headline without opening the run. None when the review has
+        # no moments at all. "Strongest positive" in mainFinding()'s own
+        # comment is exactly this fallback, not a separate strength ranking:
+        # its strongestMoments()[0] is `moments.filter(positive)[0]`, i.e. the
+        # first positive moment in the same selection-ordered list — the two
+        # implementations are the same computation, not an approximation of it.
+        main_finding_moment = next((m for m in moments if m.get("polarity") != "positive"), None) or next(
+            (m for m in moments if m.get("polarity") == "positive"), None)
         summaries.append({
             "run_id": run_id,
             "task_id": rs.get("task_id"),
@@ -744,6 +765,8 @@ def list_runs(store: Store) -> list[dict]:
                 "total": outcome.get("total"),
             },
             "review_mode": _review_mode(review_moments, entry.get("capture_completeness")),
+            "main_finding": (main_finding_moment or {}).get("summary"),
+            "main_finding_polarity": (main_finding_moment or {}).get("polarity"),
             "counts": {
                 "concern": concern,
                 "strength": strength,

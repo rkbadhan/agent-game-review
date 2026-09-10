@@ -1,7 +1,12 @@
 "use strict";
 
 // --- runs inbox --------------------------------------------------------------
-const FILTER_CHIPS = [["failed","Failed"],["needs_attention","Needs attention"],["recovered","Recovered"],["plausible_recovery","Plausible recovery"],["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"]];
+// U2: outcome (failed/passed/undetermined) and review status (unreviewed/
+// in_progress/handled) are both explicit axes now, not just reachable via a
+// sort order — mirrors agr/queue.py's FILTER_CHIPS one-for-one.
+const FILTER_CHIPS = [["failed","Failed"],["passed","Passed"],["undetermined","Undetermined"],
+  ["needs_attention","Needs attention"],["recovered","Recovered"],["plausible_recovery","Plausible recovery"],
+  ["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"],["in_progress","In progress"],["handled","Handled"]];
 const SORT_OPTIONS = [["triage","Triage priority"],["outcome","Outcome"],["review_progress","Review progress"],["cost","Cost"],["duration","Duration"],["recently_updated","Recently updated"]];
 const TRIAGE_TIP = "Workflow convenience, not a severity or model-quality score.";
 // §4.3.5 fast/deep entry — where each run opens. "Overview" (the default) opens
@@ -72,8 +77,10 @@ function renderSweep() {
   bar.style.width = (s.triage_eligible ? (s.handled/s.triage_eligible*100) : 0) + "%"; track.append(bar);
   handled.append(track); host.append(handled);
 }
-function renderQueueControls() {
-  const host = $("#queue-controls"); host.textContent = "";
+// Shared by the investigation sidebar's controls below and the U2 full-width
+// Runs table (runs.js) — one filter/sort definition so the two surfaces can
+// never silently disagree about what a chip or sort option means.
+function buildFilterChipsRow(onChange) {
   const chips = el("div", "filters");
   for (const [key, label] of FILTER_CHIPS) {
     const on = state.filters.has(key);
@@ -82,17 +89,26 @@ function renderQueueControls() {
     c.dataset.filter = key;
     c.addEventListener("click", () => { on ? state.filters.delete(key) : state.filters.add(key);
       track("queue_filter_changed", { kind: key, filters: [...state.filters] });
-      loadInbox().catch(showInboxError); });
+      onChange(); });
     chips.append(c);
   }
-  host.append(chips);
+  return chips;
+}
+function buildSortRow(onChange) {
   const sortRow = el("label", "sort-row"); sortRow.append(el("span", null, "Sort"));
   const sel = el("select");
   for (const [val, label] of SORT_OPTIONS) { const o = el("option", null, label); o.value = val; if (val === state.sort) o.selected = true; sel.append(o); }
   sel.title = state.sort === "triage" ? TRIAGE_TIP : "";
   sel.addEventListener("change", () => { state.sort = sel.value;
-    track("queue_sort_changed", { sort: state.sort }); loadInbox().catch(showInboxError); });
-  sortRow.append(sel); host.append(sortRow);
+    track("queue_sort_changed", { sort: state.sort }); onChange(); });
+  sortRow.append(sel);
+  return sortRow;
+}
+function renderQueueControls() {
+  const host = $("#queue-controls"); host.textContent = "";
+  const refresh = () => loadInbox().catch(showInboxError);
+  host.append(buildFilterChipsRow(refresh));
+  host.append(buildSortRow(refresh));
   // §4.3.5 workspace preference: where a run opens. Changing it never reorders the
   // queue, so it only rebinds state — no inbox reload.
   const entryRow = el("label", "sort-row"); entryRow.append(el("span", null, "Open at"));

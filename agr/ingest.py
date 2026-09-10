@@ -16,7 +16,7 @@ from . import version
 from .adapter import apply_capability_defaults
 from .events import KIND_TO_EVENT
 from .schema import CAPABILITY_LEVELS, CAPTURE_COMPLETENESS, CapabilityProfile, RunSource
-from .store import Store, capture_id_for, source_hash
+from .store import InvalidRunId, Store, capture_id_for, source_hash, validate_run_id
 
 
 class IngestError(ValueError):
@@ -44,6 +44,10 @@ def _validate(doc: dict) -> None:
     run = doc.get("run")
     if not isinstance(run, dict) or not run.get("logical_run_id"):
         raise IngestError("missing run.logical_run_id")
+    try:
+        validate_run_id(run["logical_run_id"])
+    except InvalidRunId as exc:
+        raise IngestError(str(exc)) from exc
     if not run.get("task_id"):
         raise IngestError("missing run.task_id")
     steps = doc.get("steps")
@@ -143,6 +147,11 @@ def ingest(doc: dict, store: Store, adapter_version: str | None = None) -> Inges
         configuration_id=run.get("configuration_id"),
         environment_image_digest=run.get("environment_image_digest"),
         task_parameters=run.get("task_parameters"),
+        # F5: the adapter's captured cost/usage (e.g. Claude's
+        # total_cost_usd/usage) travels through unchanged; absent in the
+        # source, it stays None rather than becoming a misleading 0.
+        cost=run.get("total_cost_usd"),
+        tokens=run.get("usage"),
     )
     capabilities = _capability_profile(doc, run_id, capture_id)
 

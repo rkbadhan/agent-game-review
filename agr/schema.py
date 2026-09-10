@@ -183,6 +183,15 @@ class RunSource:
     configuration_id: Optional[str] = None
     environment_image_digest: Optional[str] = None
     task_parameters: Optional[dict] = None
+    # Captured agent execution cost/usage (§4.3.3), e.g. Claude's
+    # ``total_cost_usd``/``usage``. ``None`` means the source never captured
+    # it — never fabricated as 0, which would be indistinguishable from a
+    # genuinely free run and would sort as the cheapest. Distinct from the
+    # model reviewer's OWN per-round cost (agr/model_reviewer.py telemetry,
+    # written to review_telemetry.json): that is AGR's review spend, not the
+    # agent-under-test's, and the two are never added together.
+    cost: Optional[float] = None
+    tokens: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return _clean(asdict(self))

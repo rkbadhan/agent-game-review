@@ -227,11 +227,24 @@ function renderMomentActions(moment) {
   const mk = (label, cls, fn, title, sc) => { const b = el("button", "button " + cls);
     b.append(document.createTextNode(label)); if (sc) b.append(el("span", "shortcut", sc));
     if (title) b.title = title; b.addEventListener("click", () => fn(b)); return b; };
+  // F4: while the selected run (or reviewer) is still loading, the moment
+  // cards on screen still belong to the PREVIOUS selection — writing a
+  // mutation now would submit for state.runId/state.reviewerKey (already the
+  // new selection) using a moment_id that belongs to the old one. Disable
+  // every action that writes until the in-flight load settles; "View
+  // evidence" is pure navigation over already-displayed data, so it stays
+  // available.
+  const mkWrite = (label, cls, fn, title, sc) => {
+    const loadingTitle = "Loading the selected run — try again once it finishes.";
+    const b = mk(label, cls, fn, state.loading ? loadingTitle : title, sc);
+    if (state.loading) b.disabled = true;
+    return b;
+  };
   wrap.append(mk("View evidence", "primary", () => focusEvidence(), "Focus the evidence for this moment’s claims.", "E"));
-  wrap.append(mk("Agree", "", b => submitFeedback(moment, { kind: "agree" }, b, "Agreement recorded — attribution unchanged"), "Records positive feedback; does not raise attribution."));
-  wrap.append(mk("Not decisive", "", b => submitFeedback(moment, { kind: "not_decisive" }, b, "Marked not decisive"), "Preserves the generated record; adds a human annotation."));
-  wrap.append(mk("Flag task/verifier", "", b => submitFeedback(moment, { kind: "flag_task_verifier" }, b, "Task/verifier concern flagged"), "Marks a possible task or verifier problem."));
-  wrap.append(mk("Correct label", "subtle", () => openCorrect(moment), "Quick relabel to a controlled taxonomy value."));
+  wrap.append(mkWrite("Agree", "", b => submitFeedback(moment, { kind: "agree" }, b, "Agreement recorded — attribution unchanged"), "Records positive feedback; does not raise attribution."));
+  wrap.append(mkWrite("Not decisive", "", b => submitFeedback(moment, { kind: "not_decisive" }, b, "Marked not decisive"), "Preserves the generated record; adds a human annotation."));
+  wrap.append(mkWrite("Flag task/verifier", "", b => submitFeedback(moment, { kind: "flag_task_verifier" }, b, "Task/verifier concern flagged"), "Marks a possible task or verifier problem."));
+  wrap.append(mkWrite("Correct label", "subtle", () => openCorrect(moment), "Quick relabel to a controlled taxonomy value."));
   return wrap;
 }
 async function submitFeedback(moment, fields, btn, okMsg) {

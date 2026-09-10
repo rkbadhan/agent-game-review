@@ -19,7 +19,7 @@ function renderFleetSurface(main) {
   nav.append(head);
   const util = el("div", "review-util");
   const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");
-  back.addEventListener("click", () => { state.view = "review"; render(); });
+  back.addEventListener("click", () => { state.view = state.runId ? "review" : "runs"; render(); });
   util.append(back);
   nav.append(util);
   main.append(nav);
@@ -32,6 +32,27 @@ async function loadFleetEpisodes() {
   fl.pending = true;
   try { fl.episodes = await api("/fleet/episodes?group_by=" + encodeURIComponent(fl.groupBy)); }
   finally { fl.pending = false; }
+}
+
+// U3: item 31's argument-shape distribution, always keyed by (tool,
+// error_signature) regardless of the fleet table's own --group-by — it is
+// its own read model, not reshaped per grouping. Loaded once and matched
+// against each fleet group's key below; a group whose key does not carry
+// both dimensions (a "Tool only"/"Error only" grouping) has nothing to match
+// against and shows the column as not applicable rather than a false zero.
+async function loadFleetArgumentShapes() {
+  const fl = state.fleet;
+  if (fl.argumentShapes || fl.argumentShapesPending) return;
+  fl.argumentShapesPending = true;
+  try { fl.argumentShapes = await api("/fleet/argument-shapes"); }
+  catch (e) { fl.argumentShapes = []; }
+  finally { fl.argumentShapesPending = false; }
+}
+function argumentShapesFor(g) {
+  const fl = state.fleet;
+  if (!fl.argumentShapes || fl.groupBy !== "tool,error_signature") return null;
+  const key = JSON.stringify(g.key);
+  return fl.argumentShapes.find(s => JSON.stringify(s.key) === key) || null;
 }
 
 // AGR-06: the whole-fleet usage headline — the union across EVERY episode,
@@ -110,6 +131,7 @@ async function renderFleet(main) {
     catch (e) { fl.usageSummary = null; }
   }
   if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
+  if (!fl.argumentShapes && !fl.argumentShapesPending) await loadFleetArgumentShapes();
   wrap.append(renderFleetTable(fl.episodes));
 }
 
@@ -121,7 +143,7 @@ function renderFleetTable(groups) {
     + "re-read of persisted recovery episodes; nothing here is recomputed."));
   const t = el("table", "vs-table");
   t.append(rowEls("tr", ["Group", "Count", "Runs", "Repeat rate", "Resolved",
-    "Avg turns", "Tokens", "Wall time", "Examples"], "th"));
+    "Avg turns", "Tokens", "Wall time", "Episodes", "Argument shapes"], "th"));
   for (const g of groups) {
     const tr = el("tr");
     const groupCell = td(g.key.filter(Boolean).join(" / ") || "(none)");
@@ -175,27 +197,76 @@ function renderFleetTable(groups) {
     if (g.overlapping_usage_events || g.usage_unavailable_count) tokensCell.title = g.usage_note;
     tr.append(tokensCell);
     tr.append(td(fmtWallMs(g.total_wall_ms)));
-    const exCell = el("td");
-    for (const a of (g.example_anchors || [])) {
-      const label = a.run_id.length > 22 ? a.run_id.slice(0, 20) + "…" : a.run_id;
-      // §4.18 "Evidence links state their target, for example 'Open
-      // verifier check C3'" (AGR-14): the visible label is truncated for
-      // layout, so the accessible name must carry the full, untruncated
-      // target rather than relying on a hover-only title matching it.
-      const target = "Open " + a.run_id + " at this episode's failure (" + a.classification + ")";
-      const b = el("button", "seg", label);
-      b.title = target;
-      b.setAttribute("aria-label", target);
-      b.addEventListener("click", () => openRunAtEvent(a.run_id, a.failure_event_id));
-      exCell.append(b);
-    }
-    tr.append(exCell);
+    tr.append(representativeEpisodesCell(g));
+    tr.append(argumentShapesCell(g));
     t.append(tr);
   }
   const scroll = el("div", "table-scroll");
   scroll.append(t);
   card.append(scroll);
   return card;
+}
+
+// U3: a drilldown onto this group's sample episodes (up to _MAX_ANCHORS,
+// item 30) — which run, how that one episode resolved, and which tier
+// selected its error signature — not just a bare "open" link with the detail
+// hidden behind a hover title. Matches the §4.16 .vs-drill convention used
+// for a comparison's contributing run pairs.
+function representativeEpisodesCell(g) {
+  const cell = el("td");
+  const anchors = g.example_anchors || [];
+  if (!anchors.length) { cell.append(el("span", "vs-counts", "none captured")); return cell; }
+  const d = el("details", "vs-drill");
+  d.append(el("summary", null, anchors.length + " representative episode(s)"));
+  const list = el("div", "vs-pairs");
+  for (const a of anchors) {
+    const row = el("div", "vs-pair");
+    const target = "Open " + a.run_id + " at this episode's failure (" + a.classification + ")";
+    const b = el("button", null, a.run_id);
+    b.title = target; b.setAttribute("aria-label", target);
+    b.addEventListener("click", () => openRunAtEvent(a.run_id, a.failure_event_id));
+    row.append(b);
+    row.append(el("span", "vs-counts", (a.classification || "?").replace(/_/g, " ")
+      + (a.error_signature_basis === "fallback_last_nonempty" ? " · fallback signature" : "")));
+    list.append(row);
+  }
+  d.append(list);
+  cell.append(d);
+  return cell;
+}
+
+// U3: item 31's argument-shape distribution for this exact (tool,
+// error_signature) group — the key SET and value TYPE at each key among the
+// group's failing calls, never the retained values (argument_shapes.py never
+// computes or stores those). Only meaningful when the table is grouped by
+// both dimensions together; a coarser grouping ("Tool only"/"Error only")
+// spans multiple (tool, error_signature) pairs and has no single distribution
+// to show, so the column says so rather than picking one arbitrarily.
+function argumentShapesCell(g) {
+  const cell = el("td");
+  if (state.fleet.groupBy !== "tool,error_signature") {
+    cell.append(el("span", "vs-counts", "n/a for this grouping"));
+    return cell;
+  }
+  const shapes = argumentShapesFor(g);
+  if (!shapes || !shapes.shapes.length) {
+    cell.append(el("span", "vs-counts", "no retained tool_input"));
+    return cell;
+  }
+  const d = el("details", "vs-drill");
+  d.append(el("summary", null, shapes.shapes.length + " shape(s) among "
+    + shapes.total_failing_calls + " failing call(s)"));
+  const list = el("div", "vs-pairs");
+  for (const shape of shapes.shapes) {
+    const row = el("div", "vs-pair");
+    const keys = shape.keys.map(([k, t]) => k + ":" + t).join(", ") || "(no keys)";
+    row.append(el("span", "mono", keys));
+    row.append(el("span", "vs-counts", Math.round(shape.share * 100) + "% · " + shape.count + " call(s)"));
+    list.append(row);
+  }
+  d.append(list);
+  cell.append(d);
+  return cell;
 }
 
 // AGR-04 (review 82cc113): confirmed/plausible/unrecovered as three distinct
