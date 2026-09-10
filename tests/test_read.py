@@ -38,6 +38,31 @@ def test_list_runs_empty_store(tmp_path):
     assert read.list_runs(store) == []
 
 
+def test_list_runs_skips_a_legacy_run_dir_with_an_invalid_charset_id(tmp_path):
+    """F1 follow-up (review of PR #64): the path-safety charset added to
+    Store._run_dir sits on every read path too, via list_runs' directory
+    walk. A run directory left over from before that charset existed (e.g. a
+    colon in an old logical_run_id, never rejected at the time it was
+    ingested) must be skipped, not raise InvalidRunId out of the walk and
+    take down the entire listing."""
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+
+    # A directory name no run_id could pass validate_run_id() today, written
+    # directly to disk the way an OLD AGR version's ingest would have —
+    # simulating a store that predates F1's run_id charset.
+    legacy_dir = os.path.join(store.root, "runs", "legacy:2024-01-01T00:00:00Z")
+    os.makedirs(legacy_dir, exist_ok=True)
+    with open(os.path.join(legacy_dir, "index.json"), "w", encoding="utf-8") as fh:
+        json.dump([{"capture_id": "capture_legacy", "source_hash": "sha256:x",
+                    "adapter_version": "v0", "capture_revision": 1,
+                    "supersedes_source_capture_id": None,
+                    "capture_completeness": "complete", "ingested_at": "2024-01-01T00:00:00Z",
+                    "idempotent": False}], fh)
+
+    run_ids = {s["run_id"] for s in read.list_runs(store)}
+    assert run_ids == {"chess_best_move__seed42"}  # the legacy dir is silently skipped
+
+
 def test_list_runs_summarises_each_run(tmp_path):
     store = _store_with(tmp_path, "chess_best_move.atif.json", "contract_mismatch.atif.json")
     summaries = {s["run_id"]: s for s in read.list_runs(store)}
@@ -52,9 +77,38 @@ def test_list_runs_summarises_each_run(tmp_path):
     assert chess["contract"]["status"] == "human_confirmed"
     assert chess["contract"]["watermarked"] is False
     assert chess["watermark"] is None
+    # U2 Runs table: the same "one decisive finding" the Overview chapter and
+    # mainFinding() lead with, so a triage reader gets a headline without
+    # opening the run.
+    assert chess["main_finding"] and chess["main_finding_polarity"] == "negative"
 
 
 # --- AGR-04: confirmed vs. plausible recovery counts, never conflated -------
+
+
+def test_list_runs_and_get_review_surface_captured_cost_and_usage(tmp_path):
+    """F5: cost/usage captured by the adapter must reach both read surfaces
+    the frontend actually uses (the run list and the run-detail 'run' block),
+    and stay None (not 0) when the capture never had it."""
+    store = Store(str(tmp_path / "store"))
+    with_cost = _load("chess_best_move.atif.json")
+    with_cost["run"]["total_cost_usd"] = 0.0521
+    with_cost["run"]["usage"] = {"input_tokens": 900, "output_tokens": 210}
+    analyze(with_cost, store)
+
+    no_cost = _load("contract_mismatch.atif.json")
+    assert "total_cost_usd" not in no_cost["run"] and "usage" not in no_cost["run"]
+    analyze(no_cost, store)
+
+    summaries = {s["run_id"]: s for s in read.list_runs(store)}
+    assert summaries["chess_best_move__seed42"]["cost"] == 0.0521
+    assert summaries["chess_best_move__seed42"]["tokens"] == {"input_tokens": 900, "output_tokens": 210}
+    assert summaries["greeting_report__seed7"]["cost"] is None
+    assert summaries["greeting_report__seed7"]["tokens"] is None
+
+    rv = read.get_review(store, "chess_best_move__seed42")
+    assert rv["run"]["cost"] == 0.0521
+    assert rv["run"]["tokens"] == {"input_tokens": 900, "output_tokens": 210}
 
 
 def test_list_runs_reports_confirmed_recovery_counts(tmp_path):

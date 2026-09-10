@@ -179,6 +179,45 @@ several acceptance details the first pass left unfinished.
   it (and no theme flash on load).
 - Added a favicon (inline SVG), removing the console 404 on every page load.
 
+### Changed (workflow UI revamp)
+
+- **Runs / Patterns / Compare versions are workspaces, not a sidebar glued to
+  whatever run is open.** These three destinations now render full-width with
+  no persistent queue sidebar or evidence panel — reclaiming the space those
+  panels occupied — while opening a run still switches into the familiar
+  three-pane investigation shell. A new `body.workspace-mode` toggle drives the
+  layout; `#main.wide` widens the ~900px reading column the run-review
+  chapters otherwise keep for prose.
+- **Browser Back/Forward move between actual destinations.** Chapter, moment,
+  filter, and evidence changes still use `history.replaceState` (no history
+  spam per click), but switching between Runs, Patterns, Compare versions, and
+  a given run's investigation now pushes a real history entry, so Back/Forward
+  restores the destination a reader actually meant to leave, not just the last
+  query-string edit.
+- **A full-width Runs table.** The triage queue is now also a dedicated table
+  surface with task/run identity, outcome, main finding, review status,
+  duration, and cost columns; a client-side search over task name and run id;
+  and explicit filter chips for passed/undetermined outcomes and
+  in-progress/handled review status (previously only failed/needs-attention
+  and unreviewed were reachable as chips). Returning from a run restores the
+  search text, filters, sort, and scroll position.
+- **Cost/duration sort no longer conflates "unavailable" with "free."** A run
+  with no captured cost or duration now sorts consistently to the end of that
+  sort, instead of tying with (and, once negated for descending order, sorting
+  ahead of) a run that genuinely measured zero.
+- **Patterns groups are inspectable, not just summarized.** Each group's row
+  now expands a "representative episodes" drilldown (which run, how it
+  resolved, which signature tier) and, when grouped by tool + error together,
+  an "argument shapes" drilldown reading item 31's key/type distribution among
+  the group's failing calls — both were computed by the backend already but
+  had no surface in the fleet view.
+- **The Overview chapter's main finding is now the most prominent element on
+  the page**, not the task identifier above it: the run-header title shrank to
+  a label and the main-finding headline grew, toned by polarity like the
+  existing plain-language verdict. A new "View evidence →" action opens Key
+  moments and focuses the evidence panel on that finding in one click, instead
+  of requiring a separate manual step after "Open in Key moments."
+
 ### Known gaps carried forward
 
 - **AGR-15** — no real `.gold.json` labels exist yet; annotation is a

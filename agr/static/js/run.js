@@ -5,6 +5,13 @@
 // chapter, moment, and trace step to land on. Anything the loaded review no
 // longer contains is reported rather than silently ignored.
 async function selectRun(runId, restore) {
+  // F4: this selection invalidates any load already in flight (an earlier
+  // selectRun/refreshRun/reviewer switch whose response has not landed yet).
+  // Capture the token now; after the await, a mismatch means a NEWER
+  // selection has since started and this response must be discarded rather
+  // than overwrite what the reader has already moved on to.
+  const token = ++state.loadToken;
+  state.loading = true;
   state.runId = runId; state.momentIdx = 0; state.dispOpen = false;
   state.view = "review"; state.chapter = "moments"; state.viewed = new Set();
   state.expandedMoments = new Set(); state.expandedLessons = new Set(); state.evidenceFocus = null;
@@ -14,10 +21,23 @@ async function selectRun(runId, restore) {
   closeTrace();  // a drawer left open belongs to the run being left behind
   state.compare = restore && restore.left && restore.right
     ? { left: restore.left, right: restore.right } : null;
-  [state.forensic, state.review] = await Promise.all([
-    api("/runs/" + encodeURIComponent(runId) + "/forensic"),
-    api(reviewUrl(runId, state.reviewerKey)),
-  ]);
+  // Re-render immediately so any action buttons still on screen (from the
+  // run/reviewer being left behind) disable right away, before the network
+  // round trip even starts — not just once this load's response lands.
+  render();
+  let forensic, review;
+  try {
+    [forensic, review] = await Promise.all([
+      api("/runs/" + encodeURIComponent(runId) + "/forensic"),
+      api(reviewUrl(runId, state.reviewerKey)),
+    ]);
+  } catch (e) {
+    if (token === state.loadToken) { state.loading = false; render(); }
+    throw e;
+  }
+  if (token !== state.loadToken) return;  // superseded by a newer selection
+  state.forensic = forensic; state.review = review;
+  state.loading = false;
   // Landing chapter: a shared link's position (§4.1) wins; otherwise the §4.3.5
   // workspace preference decides between Overview and the first key moment.
   // `normalizeChapter` translates a chapter id from before the T1 navigation
@@ -64,8 +84,14 @@ function applyEntryPreference(explicitChapter) {
   return false;
 }
 async function refreshRun() {
-  state.review = await api(reviewUrl(state.runId, state.reviewerKey));
+  // F4: same staleness guard as selectRun — a refresh in flight when the
+  // reader switches run/reviewer must not land on top of the new selection.
+  const token = state.loadToken, runId = state.runId, reviewerKey = state.reviewerKey;
+  const review = await api(reviewUrl(runId, reviewerKey));
+  if (token !== state.loadToken) return;
+  state.review = review;
   await loadInbox().catch(() => {});
+  if (token !== state.loadToken) return;
   render();
 }
 // AGR-07 UX: which reviewer's snapshot to serve. ``null`` = the most-enriched

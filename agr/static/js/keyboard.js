@@ -36,14 +36,13 @@ document.addEventListener("click", e => {
     if (!d.contains(e.target)) d.removeAttribute("open");
   });
 });
-// "Runs": return to the triage queue without a selected run. On narrow
-// screens this also opens the queue drawer, since there is no run view left
-// to show once the selection is cleared.
+// "Runs" (U1): the global triage workspace, distinct from a run's investigation
+// shell — full width, no evidence panel (render.js's isWorkspaceView), reached
+// from the app bar regardless of what was open before.
 function goToRuns() {
   state.runId = null; state.review = null; state.forensic = null;
-  state.view = "review"; closeTrace();
-  $("#crumb-task").textContent = "Select a run";
-  if (window.innerWidth <= 820) $("#queue").classList.add("open");
+  state.view = "runs"; closeTrace();
+  $("#crumb-task").textContent = "Runs";
   render();
 }
 document.addEventListener("click", e => { if (!e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
@@ -53,13 +52,16 @@ document.addEventListener("keydown", e => {
   const onMoments = state.view === "review" && state.chapter === "moments";
   if (e.key === "Escape") {
     closeTrace(); closeModals(); state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open");
-    if (state.view === "compare" || state.view === "versions" || state.view === "fleet"
-        || state.view === "sibling") {
-      state.view = "review"; render();
+    if (state.view === "compare" || state.view === "sibling") { state.view = "review"; render(); }
+    // U1: leaving a global workspace (Patterns / Compare versions) returns to
+    // the run being investigated when one is loaded, else to the Runs
+    // workspace — never the empty "review" mode with nothing to show.
+    else if (state.view === "versions" || state.view === "fleet") {
+      state.view = state.runId ? "review" : "runs"; render();
     }
   }
-  else if (k === "v") { state.view = state.view === "versions" ? "review" : "versions"; render(); }
-  else if (k === "f") { state.view = state.view === "fleet" ? "review" : "fleet"; render(); }
+  else if (k === "v") { state.view = state.view === "versions" ? (state.runId ? "review" : "runs") : "versions"; render(); }
+  else if (k === "f") { state.view = state.view === "fleet" ? (state.runId ? "review" : "runs") : "fleet"; render(); }
   else if (k === "g") openGlossary();
   else if (!state.review) return;
   else if (e.key === "[") moveChapter(-1);
@@ -72,7 +74,13 @@ document.addEventListener("keydown", e => {
     else if ((state.review.available_reviews || []).length >= 2) { state.view = "compare"; render(); }
     else toast("Compare reviewer outputs needs a second review of this run");
   }
-  else if (k === "d") toggleDisposition();
+  // F4 follow-up (review of PR #64): the bottom-bar button already disables
+  // itself while a run/reviewer selection is loading (disposition.js) — the
+  // shortcut must honor the same guard instead of opening the menu around it.
+  // F4 follow-up (review of PR #64): the bottom-bar button already disables
+  // itself while a run/reviewer selection is loading (disposition.js) — the
+  // shortcut must honor the same guard instead of opening the menu around it.
+  else if (k === "d") { if (!state.loading) toggleDisposition(); }
   else if (k === "n") gotoNextUnhandled();
   else if (k === "t") openTrace(null);
   else if (e.key === "?") openModal("#help-modal");

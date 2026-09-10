@@ -547,6 +547,69 @@ def test_rejection_reasons_recorded_in_telemetry():
     assert "rejections" in telemetry
 
 
+# --- F2: a private key never survives to the outbound provider payload ------
+
+_SYNTHETIC_KEY = (
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "MIIEpAIBAAKCAQEAsynthetic0000000000000000000000000000000000000\n"
+    "QKBgQCthisIsNotARealKeyJustSyntheticBytesForTestingRedactionOnly\n"
+    "-----END RSA PRIVATE KEY-----"
+)
+_KEY_BODY_FRAGMENT = "MIIEpAIBAAKCAQEAsynthetic0000000000000000000000000000000000000"
+
+
+def test_private_key_never_reaches_provider_in_initial_packet():
+    """No real credentials or network calls: the 'model' is _FakeProvider, an
+    offline stub that only records what it was sent."""
+    ev = DerivedEvent(event_id="evt_leak", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": f"cat id_rsa\n{_SYNTHETIC_KEY}"})
+    ctx = _ctx([], events=[ev], anchor_ids=["evt_leak"])
+    rev = _FakeProvider([{"moments": []}])
+    rev.propose(ctx)
+
+    assert len(rev.sent) == 1
+    assert _KEY_BODY_FRAGMENT not in rev.sent[0]
+    assert "-----BEGIN RSA PRIVATE KEY-----" not in rev.sent[0]
+    assert "[REDACTED:private_key]" in rev.sent[0]
+
+
+def test_private_key_never_reaches_provider_in_evidence_expansion():
+    ev = DerivedEvent(event_id="evt_leak", run_id="r", source_capture_id="c",
+                      sequence=1, source_step_ids=["s"], event_type="tool_call",
+                      actor="agent", payload={"content": f"cat id_rsa\n{_SYNTHETIC_KEY}"})
+    ctx = _ctx([], events=[ev], anchor_ids=["evt_leak"])
+    rev = _FakeProvider([
+        {"expansion_requests": [{"event_ids": ["evt_leak"], "reason": "need the file"}]},
+        {"moments": []},
+    ])
+    rev.propose(ctx)
+
+    assert len(rev.sent) == 2
+    for sent in rev.sent:
+        assert _KEY_BODY_FRAGMENT not in sent
+        assert "-----BEGIN RSA PRIVATE KEY-----" not in sent
+    second = json.loads(rev.sent[1])
+    assert second["expansion"]["evidence"][0]["event_id"] == "evt_leak"
+    assert "[REDACTED:private_key]" in second["expansion"]["evidence"][0]["content"]
+
+
+def test_private_key_never_reaches_provider_in_revision_request():
+    cand = _cand("cand_1", structured_facts=[
+        {"type": "requirement_status", "check_id": "C1", "status_at_submission": "failed"},
+    ])
+    ctx = _ctx([cand])
+    rev = _FakeProvider([{"moments": []}])
+
+    errors = [{"reason": "bad fact", "detail": f"leaked key in log: {_SYNTHETIC_KEY}"}]
+    rev.revise(cand, errors, ctx)
+
+    assert len(rev.sent) == 1
+    assert _KEY_BODY_FRAGMENT not in rev.sent[0]
+    assert "-----BEGIN RSA PRIVATE KEY-----" not in rev.sent[0]
+    assert "[REDACTED:private_key]" in rev.sent[0]
+
+
 def test_propose_never_calls_the_provider_when_budget_is_not_met(monkeypatch):
     """AGR-10/AGR-11: build_packet's own enforced-budget result must gate the
     provider call — a packet that does not fit the effective budget even at

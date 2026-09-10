@@ -32,7 +32,7 @@ function renderVersionsSurface(main) {
   nav.append(head);
   const util = el("div", "review-util");
   const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");
-  back.addEventListener("click", () => { state.view = "review"; render(); });
+  back.addEventListener("click", () => { state.view = state.runId ? "review" : "runs"; render(); });
   util.append(back);
   nav.append(util);
   main.append(nav);

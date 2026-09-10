@@ -284,6 +284,26 @@ def test_resource_rows_state_what_the_capture_lacks(tmp_path):
     assert rows["duration_s"]["captured"] is True
 
 
+def test_resource_rows_report_captured_cost_and_usage(tmp_path):
+    """F5: when both sides of a matched pair have captured cost/usage, the
+    comparison surfaces real numbers instead of 'not_captured' — and a run
+    dict's usage (a nested per-kind token dict) is summed to one comparable
+    number rather than crashing on the getter."""
+    store = _slice(
+        tmp_path,
+        baseline_extra={"total_cost_usd": 1.0, "usage": {"input_tokens": 100, "output_tokens": 50}},
+        candidate_extra={"total_cost_usd": 2.0, "usage": {"input_tokens": 200, "output_tokens": 100}},
+    )
+    result = _compare(store)
+    rows = {r["metric_id"]: r for r in result["resources"]}
+    assert rows["cost"]["captured"] is True
+    assert rows["cost"]["baseline"]["mean"] == 1.0
+    assert rows["cost"]["candidate"]["mean"] == 2.0
+    assert rows["tokens"]["captured"] is True
+    assert rows["tokens"]["baseline"]["mean"] == 150
+    assert rows["tokens"]["candidate"]["mean"] == 300
+
+
 # --- saved definitions -------------------------------------------------------
 
 

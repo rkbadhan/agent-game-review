@@ -119,10 +119,113 @@ def test_grouping_partitions_all_runs(tmp_path):
     assert grouped == len(view["run_ids"]) == len(ALL_FIXTURES)
 
 
+def test_cost_sort_never_ranks_uncaptured_cost_as_cheapest(tmp_path):
+    """F5: a run whose cost was never captured must not tie with (or rank
+    ahead of, under descending-cost order) a run that genuinely cost $0 —
+    that would present 'unknown' as 'free'. Known costs sort first, highest
+    to lowest; every uncaptured-cost run trails behind all of them.
+
+    The $0 and uncaptured roles are assigned so the tie-break on run_id
+    alone (both would carry the same numeric key of 0.0 without the fix)
+    puts them in the WRONG order — "greeting_file__..." sorts before
+    "greeting_report__..." alphabetically, so if the fix regressed to a bare
+    numeric key, list_runs' own alphabetical order would silently produce
+    the very order this test expects to fail on, and the test would pass
+    for the wrong reason. Swapping which fixture plays which role is what
+    makes this test actually exercise the guard."""
+    store = Store(str(tmp_path / "store"))
+    names_and_costs = [
+        ("chess_best_move.atif.json", 5.0),
+        ("clean_pass.atif.json", None),          # never captured
+        ("contract_mismatch.atif.json", 0.0),    # genuinely free
+    ]
+    for name, cost in names_and_costs:
+        with open(os.path.join(FIXTURES, name), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        if cost is not None:
+            doc["run"]["total_cost_usd"] = cost
+        analyze(doc, store)
+
+    order = queue.queue_view(store, sort="cost")["run_ids"]
+    assert order == [
+        "chess_best_move__seed42",    # $5.00, known
+        "greeting_report__seed7",     # $0.00, known
+        "greeting_file__clean_pass",  # uncaptured — last, not tied with $0.00
+    ]
+
+
+def test_duration_sort_never_ranks_uncaptured_duration_as_shortest(tmp_path):
+    """Review of PR #64: the same 'absent is not zero' guard the cost sort
+    got must also apply to duration — an uncaptured duration_s (missing
+    started_at/finished_at) must not tie with a genuine 0-second run. Role
+    assignment follows the same reasoning as the cost test above: the
+    alphabetically-earlier run_id gets the uncaptured duration, so a
+    regression to a bare numeric tie-break (which falls back to list_runs'
+    alphabetical order) would put it first — the wrong order — rather than
+    coincidentally matching what the fix produces."""
+    store = Store(str(tmp_path / "store"))
+
+    with open(os.path.join(FIXTURES, "chess_best_move.atif.json"), encoding="utf-8") as fh:
+        long_run = json.load(fh)  # started_at/finished_at ~4m12s apart
+    analyze(long_run, store)
+
+    with open(os.path.join(FIXTURES, "clean_pass.atif.json"), encoding="utf-8") as fh:
+        unknown_run = json.load(fh)
+    del unknown_run["run"]["finished_at"]  # never captured
+    analyze(unknown_run, store)
+
+    with open(os.path.join(FIXTURES, "contract_mismatch.atif.json"), encoding="utf-8") as fh:
+        zero_run = json.load(fh)
+    zero_run["run"]["finished_at"] = zero_run["run"]["started_at"]  # genuinely 0s
+    analyze(zero_run, store)
+
+    order = queue.queue_view(store, sort="duration")["run_ids"]
+    assert order == [
+        "chess_best_move__seed42",    # ~252s, known
+        "greeting_report__seed7",     # 0s, known
+        "greeting_file__clean_pass",  # uncaptured — last, not tied with 0s
+    ]
+
+
 def test_unknown_filter_and_sort_raise(tmp_path):
     store = _store(tmp_path)
     with pytest.raises(ValueError):
         queue.queue_view(store, filters=["nope"])
+
+
+def test_cost_and_duration_sort_put_missing_values_last_not_tied_with_zero():
+    """U2: a run with no cost/duration captured is unavailable, not free or
+    instant — it must not sort as if it tied with (and, once negated for
+    descending order, sorted ahead of) a run that genuinely measured zero.
+    A pure unit test of the sort key against synthetic run cards — run-level
+    cost/duration are not wired through any adapter yet (§4.3.3), so this
+    cannot be exercised end to end via ``analyze()``."""
+    def card(run_id, cost=None, duration_s=None):
+        return {"run_id": run_id, "cost": cost, "duration_s": duration_s,
+                "outcome": {"status": "PASSED"}, "workflow": {}}
+
+    cards = [card("unpriced"), card("priced", cost=5.0), card("free", cost=0.0)]
+    order = [r["run_id"] for r in sorted(cards, key=queue._sort_key("cost"))]
+    assert order == ["priced", "free", "unpriced"]
+
+    cards = [card("no_duration"), card("slow", duration_s=90), card("instant", duration_s=0)]
+    order = [r["run_id"] for r in sorted(cards, key=queue._sort_key("duration"))]
+    assert order == ["slow", "instant", "no_duration"]
+
+
+def test_outcome_and_review_status_filters_are_explicit(tmp_path):
+    """U2: passed/undetermined and in_progress/handled are their own filter
+    chips, not only reachable through a sort order."""
+    store = _store(tmp_path)
+    passed = queue.queue_view(store, filters=["passed"])["runs"]
+    assert passed and all((r["outcome"].get("status") or "").upper() == "PASSED" for r in passed)
+
+    rid = queue.queue_view(store)["run_ids"][0]
+    workflow.set_workflow(store, rid, actor="tester", base_version=0, progress="in_progress")
+    in_progress = queue.queue_view(store, filters=["in_progress"])["run_ids"]
+    assert rid in in_progress
+    assert rid not in queue.queue_view(store, filters=["unreviewed"])["run_ids"]
+    assert rid not in queue.queue_view(store, filters=["handled"])["run_ids"]
     with pytest.raises(ValueError):
         queue.queue_view(store, sort="nope")
 
