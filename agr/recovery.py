@@ -56,6 +56,7 @@ from datetime import datetime
 from typing import Optional
 
 from . import version
+from .error_signature import diagnostic_line_with_basis as _compute_diagnostic_line_with_basis
 from .error_signature import error_signature_with_basis as _compute_error_signature_with_basis
 from ._util import (
     action_signature,
@@ -440,6 +441,11 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
         # the line — a real diagnostic vs. an opaque fallback like "---")
         # travels alongside the signature itself, not discarded here.
         sig, sig_basis = _compute_error_signature_with_basis(failure_text)
+        # Same failure text, unmasked — a per-run headline wants the real
+        # numbers/paths the grouping signature above deliberately discards.
+        # Same input + same selection tiers as error_signature_with_basis, so
+        # its own basis is not tracked separately — sig_basis already applies.
+        diagnostic, _ = _compute_diagnostic_line_with_basis(failure_text)
         # AGR-05: episode_window_tokens sums EVERY event strictly after the
         # failure result through window_end_idx (inclusive), by POSITION —
         # never the `evidence` list, which is built for display/traceability
@@ -512,6 +518,7 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 tool=tool,
                 error_signature=sig,
                 error_signature_basis=sig_basis,
+                failure_diagnostic=diagnostic,
                 turns_to_resolve=turns_to_resolve,
                 episode_window_tokens=episode_window_tokens,
                 initiating_attempt_tokens=initiating_attempt_tokens,

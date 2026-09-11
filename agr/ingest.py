@@ -152,6 +152,7 @@ def ingest(doc: dict, store: Store, adapter_version: str | None = None) -> Inges
         # source, it stays None rather than becoming a misleading 0.
         cost=run.get("total_cost_usd"),
         tokens=run.get("usage"),
+        cwd=run.get("cwd"),
     )
     capabilities = _capability_profile(doc, run_id, capture_id)
 

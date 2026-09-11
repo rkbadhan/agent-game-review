@@ -33,6 +33,15 @@ function renderMomentCard(rv, f, moment) {
   heading.append(el("span", "moment-anchor", moment._stepIdx != null ? "trace step " + (moment._stepIdx + 1) : (moment.anchor_event_ids || [])[0] || ""));
   summary.append(heading);
   summary.append(el("p", "moment-observed", observedBehaviourSummary(moment, f)));
+  // Kept apart from Situation/Consequence below: recovery status is its own
+  // claim, scoped to what this moment's own evidence supports — never a
+  // statement about the run's eventual task outcome.
+  const rec = recoveryText(moment);
+  if (rec) {
+    const r = el("p", "moment-recovery " + rec.cls);
+    r.append(el("strong", null, "Recovery: "), document.createTextNode(rec.text));
+    summary.append(r);
+  }
   const anchors = (moment.anchor_event_ids || []).filter(Boolean);
   if (anchors.length) {
     const row = el("div", "moment-anchors");
@@ -118,12 +127,49 @@ function mcBlock(label, sub, text, kind) {
   const l = el("div", "mc-label"); l.append(document.createTextNode(label)); l.append(el("span", null, sub)); b.append(l);
   b.append(el("p", "mc-text", text)); return b;
 }
+// The (tool, diagnostic) identity of a state_transition fact — the same
+// identity agr.fleet groups recovery episodes by (item 32 follow-up) — or
+// null when the fact carries neither. `usable` is false for an opaque
+// fallback signature (no traceback, no recognised diagnostic marker: the
+// fleet view's "Unclassified" case), where showing the raw last-line text as
+// if it identified the failure would be misleading.
+function toolFailureIdentity(f) {
+  if (!f || f.type !== "state_transition") return null;
+  const diag = f.failure_diagnostic || f.error_signature;
+  const usable = !!diag && f.error_signature_basis !== "fallback_last_nonempty";
+  return { tool: f.tool || null, diag: usable ? diag : null };
+}
 function situationText(m) { const f = (m.facts || [])[0] || {};
   if (f.type === "requirement_status") return "Requirement check " + f.check_id + " required " + fmtVal(f.expected) + ".";
   if (f.type === "absence") return "Declared artifact " + fmtVal(f.declared_artifact) + " was expected in the run.";
   if (f.type === "repetition") return "An action was available to advance the task.";
-  if (f.type === "state_transition") return "A tool failure occurred at " + fmtVal(f.failure_event) + ".";
+  if (f.type === "state_transition") {
+    const id = toolFailureIdentity(f);
+    if (id && id.tool && id.diag) return id.tool + " failed: " + id.diag;
+    if (id && id.tool) return "The " + id.tool + " call failed at " + fmtVal(f.failure_event) + ".";
+    return "A tool call failed at " + fmtVal(f.failure_event) + ".";
+  }
   return m.summary || "See evidence."; }
+// The Overview "Recovery:" line (and reusable wherever a moment's recovery
+// status needs stating on its own) — only for a tool-failure fact, and always
+// scoped to what THIS moment's evidence supports, never the run's eventual
+// outcome. Returns null for a moment with no recovery-relevant fact at all.
+function recoveryText(m) {
+  const f = (m.facts || [])[0] || {};
+  if (f.type !== "state_transition") return null;
+  if (f.resolution_event)
+    return { cls: "pos", text: "Confirmed — a later strategy change resolved this failure before submission." };
+  return { cls: "warn", text: "Not observed before submission. Whether this affected the final result is a "
+    + "separate question — state only what the evidence below actually supports." };
+}
+// The Overview / moment-card evidence action label: names the concrete
+// artifact a reader is about to open (a tool's request and response) rather
+// than the generic "View evidence" whenever a tool identity is known.
+function evidenceActionLabel(m) {
+  const f = (m.facts || [])[0] || {};
+  const id = toolFailureIdentity(f);
+  return (id && id.tool) ? "View " + id.tool + " request and response →" : "View evidence →";
+}
 // T2: the exact captured detail for a source step — the tool, the target
 // path, a short excerpt of its content/data, and an exit code when the
 // capture has them — so a card reads "shell call ./build.sh" instead of a
@@ -173,7 +219,7 @@ function consequenceText(m) { const f = (m.facts || [])[0] || {};
       ? "; the agent's trace last observed it " + f.agent_observed_status : "; the agent's trace records no observation of this check";
     return "Check " + f.check_id + " ended '" + (f.status || f.status_at_submission) + "' in the run's final verifier (observed " + fmtVal(f.observed) + ")" + observedBy + ".";
   }
-  if (f.type === "state_transition") return f.resolution_event ? "The failure was later resolved by a strategy change." : "The failure was left unresolved before submission.";
+  if (f.type === "state_transition") return f.resolution_event ? "The failure was later resolved by a strategy change." : "No resolving action was observed before submission — see the Recovery line above.";
   if (m.consequence) return m.consequence; return "See the evidence panel for the observed result."; }
 
 const RELABEL_GROUPS = [["lost_requirement","Lost requirement"],["skipped_verification","Skipped verification"],
@@ -240,7 +286,7 @@ function renderMomentActions(moment) {
     if (state.loading) b.disabled = true;
     return b;
   };
-  wrap.append(mk("View evidence", "primary", () => focusEvidence(), "Focus the evidence for this moment’s claims.", "E"));
+  wrap.append(mk(evidenceActionLabel(moment), "primary", () => focusEvidence(), "Focus the evidence for this moment’s claims.", "E"));
   wrap.append(mkWrite("Agree", "", b => submitFeedback(moment, { kind: "agree" }, b, "Agreement recorded — attribution unchanged"), "Records positive feedback; does not raise attribution."));
   wrap.append(mkWrite("Not decisive", "", b => submitFeedback(moment, { kind: "not_decisive" }, b, "Marked not decisive"), "Preserves the generated record; adds a human annotation."));
   wrap.append(mkWrite("Flag task/verifier", "", b => submitFeedback(moment, { kind: "flag_task_verifier" }, b, "Task/verifier concern flagged"), "Marks a possible task or verifier problem."));

@@ -175,6 +175,22 @@ def error_signature_with_basis(text: str) -> tuple[str, str]:
     return line or "<empty>", basis
 
 
+def diagnostic_line_with_basis(text: str) -> tuple[str, str]:
+    """Like :func:`error_signature_with_basis`, but returns the diagnostic line
+    UNMASKED — before the ``<N>``/``<PATH>``/``<STR>``/etc. substitutions that
+    make :func:`error_signature` a good cross-run grouping key but throw away
+    the exact figures a reader of a SINGLE run wants to see (a real token
+    count, a real path, a real exit code). Same selection tiers and basis
+    values as :func:`error_signature_with_basis`; only the masking step is
+    skipped.
+    """
+    line, basis = _select_diagnostic(_unwrap_json_transport(text or ""))
+    line = " ".join(line.split())
+    if len(line) > _MAX_SIGNATURE_CHARS:
+        line = line[:_MAX_SIGNATURE_CHARS] + "…"
+    return line or "<empty>", basis
+
+
 def error_signature(text: str) -> str:
     """A normalised, bounded grouping key for an error message.
 

@@ -66,6 +66,33 @@ function runsOutcomeBadgeClass(status) {
   return sc === "undetermined" ? "warn" : sc === "warning" ? "warn" : sc === "passed" ? "pass" : "fail";
 }
 
+// Runs §item "readable session identity": the captured task is the title
+// (already r.task_id, the closest thing to a human-given name this source
+// carries); below it, ONE shortened, copyable session-id fragment — never the
+// full "namespace/task__uuid" string repeated in mono, which is what forced a
+// reader to read UUIDs to tell two runs apart — plus repository (the
+// harness's working directory, when the source captured one — currently only
+// Claude Code sessions do) and captured time, when available.
+function runsIdentityCell(r) {
+  const cell = el("td", "runs-id-cell");
+  cell.append(el("div", "runs-task", r.task_id || r.run_id));
+  const meta = el("div", "runs-id-meta");
+  const short = shortRunId(r.run_id);
+  if (short) {
+    meta.append(el("span", "mono runs-run-id", short));
+    meta.append(copyButton(r.run_id, "Copy full session id"));
+  }
+  if (r.cwd) meta.append(el("span", "runs-id-repo", r.cwd));
+  const when = relTime(r.finished_at || r.started_at);
+  if (when) meta.append(el("span", "runs-id-time", when));
+  if (meta.childNodes.length) cell.append(meta);
+  return cell;
+}
+
+// Runs §item "simpler controls": Cost and Duration are shown only when at
+// least one run in the CURRENT (filtered) set actually captured a value —
+// a column of permanent "—" cells is noise, and a missing value must never
+// be hidden by collapsing it into a false 0 either.
 function renderRunsTable(host) {
   host.textContent = "";
   const all = (state.queue && state.queue.runs) || [];
@@ -81,18 +108,20 @@ function renderRunsTable(host) {
     host.append(card);
     return;
   }
+  const showDuration = runs.some(r => r.duration_s != null);
+  const showCost = runs.some(r => r.cost != null);
   const scroll = el("div", "table-scroll");
   const t = el("table", "vs-table runs-table");
-  t.append(rowEls("tr", ["Run", "Outcome", "Main finding", "Review status", "Duration", "Cost"], "th"));
+  const headers = ["Session", "Outcome", "Main finding", "Review status"];
+  if (showDuration) headers.push("Duration");
+  if (showCost) headers.push("Cost");
+  t.append(rowEls("tr", headers, "th"));
   for (const r of runs) {
     const tr = el("tr", "runs-row" + (r.run_id === state.runId ? " active" : ""));
     tr.tabIndex = 0;
     tr.dataset.runId = r.run_id;
 
-    const idTd = el("td", "runs-id-cell");
-    idTd.append(el("div", "runs-task", r.task_id || r.run_id));
-    if (r.task_id && r.task_id !== r.run_id) idTd.append(el("div", "runs-run-id mono", r.run_id));
-    tr.append(idTd);
+    tr.append(runsIdentityCell(r));
 
     const o = r.outcome || {};
     const outTd = el("td");
@@ -102,8 +131,8 @@ function renderRunsTable(host) {
 
     const mfTd = el("td", "runs-finding");
     if (r.main_finding) {
-      const text = r.main_finding.length > 140 ? r.main_finding.slice(0, 138) + "…" : r.main_finding;
-      mfTd.append(el("span", r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg", text));
+      mfTd.append(el("span", r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg",
+        leadFinding(r.main_finding)));
     } else {
       mfTd.append(el("span", "panel-dim", "No decisive finding"));
     }
@@ -117,8 +146,8 @@ function renderRunsTable(host) {
       handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label));
     tr.append(rsTd);
 
-    tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate"));
-    tr.append(td(fmtCost(r.cost) || "—", "vs-rate"));
+    if (showDuration) tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate"));
+    if (showCost) tr.append(td(fmtCost(r.cost) || "—", "vs-rate"));
 
     const open = () => { state.runsScroll = $("#main").scrollTop; selectRun(r.run_id); };
     tr.addEventListener("click", open);

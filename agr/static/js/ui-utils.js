@@ -73,3 +73,83 @@ function toast(msg) { const n = $("#toast"); n.textContent = msg; n.classList.ad
   clearTimeout(toastTimer); toastTimer = setTimeout(() => n.classList.remove("show"), 1800); }
 function flash(node, msg) { const old = node.textContent; node.textContent = msg; node.classList.add("flashed");
   setTimeout(() => { node.textContent = old; node.classList.remove("flashed"); }, 1500); }
+
+// --- shared display helpers (Runs + Patterns) --------------------------------
+// A readable label for a run id, so a table cell can show a task name and a
+// short, copyable id fragment instead of a full "namespace/task__uuid" string
+// that wraps into a stack of unreadable fragments. Convention: the LAST
+// "__"-separated segment of the final path component is the run's own random
+// suffix (a uuid, or a short synthetic id); everything before it is the task
+// name. A run id with no "__" has no separable suffix, so the whole thing is
+// the task name and there is no short id to show.
+function runIdParts(runId) {
+  const last = (runId || "").split("/").pop() || runId || "";
+  const bits = last.split("__");
+  if (bits.length < 2) return { task: last, id: null };
+  return { task: bits.slice(0, -1).join("__"), id: bits[bits.length - 1] };
+}
+function shortRunId(runId, n) {
+  const { id } = runIdParts(runId);
+  if (!id) return null;
+  return id.length > (n || 8) ? id.slice(0, n || 8) : id;
+}
+// A small inline "copy" affordance next to a truncated id — copies the FULL
+// value (never the shortened display text) so a reader can paste the exact
+// run id elsewhere.
+function copyButton(text, title) {
+  const b = el("button", "copy-btn", "⧉");
+  b.type = "button";
+  const label = title || "Copy " + text;
+  b.title = label; b.setAttribute("aria-label", label);
+  b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(text); flash(b, "✓"); }
+    catch (err) { toast("Could not copy — clipboard unavailable"); }
+  });
+  return b;
+}
+// Runs §item "useful finding summaries": a table row needs a short lead, not
+// a naive character slice that can cut a long rendered statement mid-word or
+// mid-enumeration ("...ended: terminal_bench_reward, test_ou…"). Takes the
+// first sentence (never a trailing ". No agent action was captured..." aside)
+// and, only if that alone is still long, trims at the nearest natural
+// boundary (", " or ": " or a space) before the limit rather than mid-word.
+// The full statement is always what the run's own Overview/moment card shows
+// once opened — this is presentation-only, never a different value.
+function leadFinding(text, limit) {
+  limit = limit || 150;
+  if (!text) return text;
+  // A ". "/"! "/"? " is only a sentence boundary when followed by a
+  // capitalized word — a bare split(". ")[0] cut through "e.g. missing dep"
+  // (and any other lowercase-continuation abbreviation) as if it ended the
+  // sentence there. No match (e.g. a single-sentence statement with nothing
+  // after its own final period) keeps the whole text for the boundary-slice
+  // trimming below, same as before.
+  const boundary = /[.!?](?=\s+[A-Z])/.exec(text);
+  let s = (boundary ? text.slice(0, boundary.index + 1) : text).trim();
+  if (!/[.!?]$/.test(s)) s += ".";
+  if (s.length <= limit) return s;
+  const slice = s.slice(0, limit);
+  const cut = Math.max(slice.lastIndexOf(", "), slice.lastIndexOf(": "), slice.lastIndexOf(" "));
+  return (cut > 40 ? slice.slice(0, cut) : slice) + "…";
+}
+// Compact large-number formatting (Patterns §item 4): 203147393 -> "203.1M".
+// Never applied to a value that could be mistaken for an exact count a reader
+// would want to compare precisely (checks passed, run counts stay exact) —
+// only to large aggregate magnitudes like token usage.
+const _COMPACT_SCALES = [[1e3, "K"], [1e6, "M"], [1e9, "B"], [1e12, "T"]];
+function fmtCompact(n) {
+  if (n == null) return "—";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  let i = -1;
+  for (let k = 0; k < _COMPACT_SCALES.length; k++) if (abs >= _COMPACT_SCALES[k][0]) i = k;
+  if (i < 0) return sign + String(abs);
+  // Rounding to one decimal can round up INTO the next scale (999950 would
+  // otherwise show "1000.0K" instead of "1.0M") — escalate the scale when
+  // that happens rather than ever showing a 4-digit mantissa.
+  while (i < _COMPACT_SCALES.length - 1
+    && Math.round((abs / _COMPACT_SCALES[i][0]) * 10) / 10 >= 1000) i++;
+  const v = (abs / _COMPACT_SCALES[i][0]).toFixed(1).replace(/\.0$/, "");
+  return sign + v + _COMPACT_SCALES[i][1];
+}

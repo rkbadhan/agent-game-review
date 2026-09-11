@@ -218,6 +218,78 @@ several acceptance details the first pass left unfinished.
   moments and focuses the evidence panel on that finding in one click, instead
   of requiring a separate manual step after "Open in Key moments."
 
+### Changed (Runs / Patterns / run-review redesign)
+
+A follow-up design pass across the three surfaces above, prioritized
+Overview + evidence first (the run-review synthesis a reader sees before
+anything else), then Patterns, then Runs.
+
+- **Tool-failure findings name the tool and its own diagnostic**, not just an
+  anonymous event id: a moment's summary now reads e.g. `shell failed:
+  ModuleNotFoundError: No module named 'numpy'` instead of "a tool failure at
+  evt_012 was left unresolved before submission." `RecoveryEpisode` carries a
+  new `failure_diagnostic` field — the same failure text `error_signature`
+  already derives its (masked, cross-run-groupable) signature from, kept
+  UNMASKED so a single run's finding shows the real numbers/paths a reader
+  wants, not `<N>`/`<PATH>` placeholders. Both `IgnoredToolFailure` and
+  `SuccessfulRecoveryViaStrategyChange` carry `tool`/`error_signature`/
+  `failure_diagnostic` through to the rendered card.
+- **Tool failure, recovery, and task outcome are visually separate claims.**
+  The Overview chapter and each tool-failure moment card now show a dedicated
+  "Recovery:" line — "Confirmed" or "Not observed before submission" — that
+  never states or implies the run's eventual task outcome; task outcome is
+  its own "Task outcome:" line read from the same reconciled narrative the
+  header verdict uses. The old always-present, always-generic "What
+  happened" sentence and a separate "Main finding" card are now one card:
+  the specific, evidence-backed finding headline leads, with a single
+  "View {Tool} request and response →" (or "View evidence →") action.
+- **The full-trace drawer shows a tool call and its result together.** A
+  synchronized panel for a `tool_result` now also shows its paired
+  `tool_call` request (and vice versa) beneath it — matched the same way
+  `agr._util.paired_call`/`paired_result` already match them elsewhere, now
+  exposed per source step as `paired_step_id` — instead of requiring a
+  second click to see the other half of the same exchange. Panels with
+  nothing to say about the selected step collapse to their header instead of
+  a permanent "—" body, and the capability badges row moved behind a
+  "Capture capabilities" disclosure instead of occupying space above every
+  trace opened.
+- **Patterns leads with a compact overview and compact rows.** A new stat
+  row (affected runs · episodes · recorded usage, large numbers formatted as
+  `203.1M`) and one coverage line ("Recorded usage is partial — …") replace
+  several always-visible paragraphs about the counting methodology, which
+  moved behind a "How this is counted" disclosure. Each pattern's row is now
+  Pattern · Affected runs · Episodes · Recovery · Recorded usage; repeat
+  rate, avg turns, wall time, argument shapes, and representative episodes
+  moved into a per-row expandable detail so opening one pattern's examples
+  never reflows the others. A pattern's title is now derived from its
+  diagnostic text (e.g. `bash — ModuleNotFoundError: No module named
+  '<STR>'`); a group where every episode's signature came from the opaque
+  fallback tier (no traceback, no recognised diagnostic marker — the bare
+  `---`/`}`/`===` case) is labelled **Unclassified tool failures** instead
+  of presenting that raw text as if it identified a real common cause — the
+  raw text is still shown, just not as the headline.
+- **Session identity reads as a name, not a UUID.** The Runs table's
+  identity cell now shows the captured task as the title, one shortened
+  session-id fragment with a copy button (Patterns' representative-episode
+  links use the same shortened, copyable form instead of the full
+  `namespace/task__uuid` string), and — when the source captured it — the
+  working directory (`RunSource.cwd`, currently only the Claude Code
+  adapter) and a relative capture time.
+- **Runs finding cells truncate at a sentence/clause boundary**, never
+  mid-word or mid-enumeration; the full statement is unchanged and still
+  shown in full once the run is opened.
+- **Filter chips are grouped, not a ten-chip wall.** The shared filter row
+  (Runs table and the investigation sidebar) now reads as two labelled
+  groups — Outcome, Review status — with the remaining behavioural flags
+  (Needs attention, Recovered, Plausible recovery, Verifier concern) behind
+  a "More filters" disclosure that opens itself when one of those is active.
+  The "Undetermined" chip is relabelled "Undetermined / Unverified" since it
+  already matched both outcome statuses; each run's own badge still shows
+  the exact one.
+- **Cost/Duration columns disappear when the current run set never captured
+  either value**, instead of a column of permanent "—" cells; a missing
+  value is still never shown as a misleading 0.
+
 ### Known gaps carried forward
 
 - **AGR-15** — no real `.gold.json` labels exist yet; annotation is a

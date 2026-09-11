@@ -4,9 +4,31 @@
 // U2: outcome (failed/passed/undetermined) and review status (unreviewed/
 // in_progress/handled) are both explicit axes now, not just reachable via a
 // sort order — mirrors agr/queue.py's FILTER_CHIPS one-for-one.
-const FILTER_CHIPS = [["failed","Failed"],["passed","Passed"],["undetermined","Undetermined"],
-  ["needs_attention","Needs attention"],["recovered","Recovered"],["plausible_recovery","Plausible recovery"],
-  ["verifier_concern","Verifier concern"],["unreviewed","Unreviewed"],["in_progress","In progress"],["handled","Handled"]];
+//
+// Runs §item "simpler controls": a flat wall of ten chips reads as noise.
+// Grouped into the two axes a reader actually reasons about — Outcome, Review
+// status — with the remaining, less-frequently-needed chips (behavioural
+// flags, not states) tucked behind a "More filters" disclosure. FILTER_CHIPS
+// stays the flat list every chip resolves to (validated against
+// agr/queue.py's FILTER_CHIPS one-for-one) since state.js's URL parsing and
+// the queue API both need the flat set, not the grouping.
+//
+// The "undetermined" chip matches BOTH the UNDETERMINED and UNVERIFIED
+// outcome statuses (agr/queue.py) — two genuinely different situations (a
+// verifier ran and could not reach a verdict, vs. no verifier ran at all).
+// The label says so rather than picking one and leaving the other looking
+// mislabelled; the per-run badge always shows the exact status.
+const FILTER_GROUPS = [
+  ["Outcome", [["failed", "Failed"], ["passed", "Passed"], ["undetermined", "Undetermined / Unverified"]]],
+  ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Handled"]]],
+];
+const MORE_FILTER_CHIPS = [["needs_attention", "Needs attention"], ["recovered", "Recovered"],
+  ["plausible_recovery", "Plausible recovery"], ["verifier_concern", "Verifier concern"]];
+const FILTER_TIPS = {
+  undetermined: "Matches both UNDETERMINED (a verifier ran but reached no clean verdict) and "
+    + "UNVERIFIED (no verifier ran at all) — each run's own badge shows which one applies.",
+};
+const FILTER_CHIPS = FILTER_GROUPS.flatMap(([, chips]) => chips).concat(MORE_FILTER_CHIPS);
 const SORT_OPTIONS = [["triage","Triage priority"],["outcome","Outcome"],["review_progress","Review progress"],["cost","Cost"],["duration","Duration"],["recently_updated","Recently updated"]];
 const TRIAGE_TIP = "Workflow convenience, not a severity or model-quality score.";
 // §4.3.5 fast/deep entry — where each run opens. "Overview" (the default) opens
@@ -80,19 +102,41 @@ function renderSweep() {
 // Shared by the investigation sidebar's controls below and the U2 full-width
 // Runs table (runs.js) — one filter/sort definition so the two surfaces can
 // never silently disagree about what a chip or sort option means.
+function _fchip(key, label, onChange) {
+  const on = state.filters.has(key);
+  const c = el("button", "fchip" + (on ? " on" : ""), label);
+  c.setAttribute("aria-pressed", on ? "true" : "false");
+  c.dataset.filter = key;
+  if (FILTER_TIPS[key]) c.title = FILTER_TIPS[key];
+  c.addEventListener("click", () => { on ? state.filters.delete(key) : state.filters.add(key);
+    track("queue_filter_changed", { kind: key, filters: [...state.filters] });
+    onChange(); });
+  return c;
+}
+// Runs §item "simpler controls": Outcome and Review status as two labelled
+// groups (what a reader actually filters BY), with the remaining behavioural
+// flags behind one "More filters" disclosure — never a ten-chip wall with no
+// structure. A chip active inside "More filters" keeps the disclosure open by
+// default so an active-but-hidden filter is never invisible.
 function buildFilterChipsRow(onChange) {
-  const chips = el("div", "filters");
-  for (const [key, label] of FILTER_CHIPS) {
-    const on = state.filters.has(key);
-    const c = el("button", "fchip" + (on ? " on" : ""), label);
-    c.setAttribute("aria-pressed", on ? "true" : "false");
-    c.dataset.filter = key;
-    c.addEventListener("click", () => { on ? state.filters.delete(key) : state.filters.add(key);
-      track("queue_filter_changed", { kind: key, filters: [...state.filters] });
-      onChange(); });
-    chips.append(c);
+  const wrap = el("div", "filter-groups");
+  for (const [label, chipDefs] of FILTER_GROUPS) {
+    const group = el("div", "filter-group");
+    group.append(el("span", "filter-group-label", label));
+    const row = el("div", "filters");
+    for (const [key, chipLabel] of chipDefs) row.append(_fchip(key, chipLabel, onChange));
+    group.append(row);
+    wrap.append(group);
   }
-  return chips;
+  const moreOn = MORE_FILTER_CHIPS.some(([key]) => state.filters.has(key));
+  const more = el("details", "filter-group more-filters");
+  if (moreOn) more.open = true;
+  more.append(el("summary", null, "More filters" + (moreOn ? " (active)" : "")));
+  const moreRow = el("div", "filters");
+  for (const [key, chipLabel] of MORE_FILTER_CHIPS) moreRow.append(_fchip(key, chipLabel, onChange));
+  more.append(moreRow);
+  wrap.append(more);
+  return wrap;
 }
 function buildSortRow(onChange) {
   const sortRow = el("label", "sort-row"); sortRow.append(el("span", null, "Sort"));

@@ -14,11 +14,23 @@ function closeTrace() { const d = $("#trace-drawer"); d.classList.remove("open")
 document.querySelectorAll("[data-close-trace]").forEach(b => b.addEventListener("click", closeTrace));
 function renderTrace() {
   const f = state.forensic, body = $("#trace-body"); body.textContent = "";
+  // §4.12 "a capability panel states which evidence types were complete,
+  // partial, ... or unavailable" — moved behind a disclosure (§4.9/§4.12) so
+  // it stays reachable without occupying permanent space above every trace a
+  // reader opens; unavailable/partial capabilities relevant to THIS run
+  // still surface inline wherever they actually limit a panel (see the
+  // per-panel "evidence <state>" note in selectStep, and the not-reviewable
+  // notice on Overview).
+  const capsWrap = el("details", "caps-disclosure");
+  const anyLimited = Object.values(f.capability_badge || {}).some(info => info.state !== "complete");
+  capsWrap.append(el("summary", null, "Capture capabilities"
+    + (anyLimited ? " (some limited)" : "")));
   const caps = el("div", "caps");
   for (const [name, info] of Object.entries(f.capability_badge || {})) {
     const c = el("div", "cap"); c.append(el("span", "dot " + info.state), el("span", null, name), el("span", "lvl", info.level || info.state)); caps.append(c);
   }
-  body.append(caps);
+  capsWrap.append(caps);
+  body.append(capsWrap);
   const grid = el("div", "forensic");
   const fs = el("div", "fsteps"); fs.append(el("div", "th", "Timeline · " + f.steps.length + " source steps"));
   for (const s of f.steps) {
@@ -51,13 +63,45 @@ function selectStep(stepId) {
   for (const p of document.querySelectorAll("#trace-body .panels .pane")) {
     if (p.dataset.panel === "verifier") continue;
     const isTarget = p.dataset.panel === step.panel; p.classList.toggle("lit", isTarget);
+    // §4.9/§4.12 "collapse empty panels": a panel that has nothing to say
+    // about the selected step shrinks to its header instead of a body that
+    // only ever reads "—" — four mostly-empty columns is not "synchronized",
+    // it is noise around the one panel that actually lit up.
+    p.classList.toggle("empty", !isTarget);
     const pb = $(".pb", p); pb.textContent = "";
-    if (isTarget) { pb.classList.add("mono"); pb.append(renderPanelContent(step));
-      const av = step.availability || {}; if (av.state && av.state !== "complete") pb.append(el("div", "dim", "evidence " + av.state + (av.level ? " (" + av.capability + ": " + av.level + ")" : ""))); }
-    else { pb.classList.remove("mono"); pb.append(el("span", "dim", "—")); }
+    if (isTarget) {
+      pb.classList.add("mono");
+      pb.append(renderPanelContent(step));
+      const av = step.availability || {};
+      if (av.state && av.state !== "complete")
+        pb.append(el("div", "dim", "evidence " + av.state + (av.level ? " (" + av.capability + ": " + av.level + ")" : "")));
+      // The matching tool request/result, shown together rather than
+      // requiring a second click on a different step.
+      const paired = renderPairedStep(f, step);
+      if (paired) pb.append(paired);
+    } else { pb.classList.remove("mono"); }
   }
 }
 function renderPanelContent(step) { return renderStepContent(step); }
+
+// Evidence §4.9/§4.12: "the matching tool request and result together" — a
+// tool_call's paired tool_result (or a tool_result's paired tool_call), shown
+// right beside the focused step instead of requiring a reader to search the
+// timeline for the other half of the same exchange. `step.paired_step_id`
+// comes from agr.read.get_forensic's own id-based-with-adjacency-fallback
+// pairing (mirrors agr._util.paired_call/paired_result); null when the
+// capture recorded no matching counterpart.
+function renderPairedStep(f, step) {
+  if (!step || !step.paired_step_id) return null;
+  const idx = f.steps.findIndex(s => s.step_id === step.paired_step_id);
+  if (idx < 0) return null;
+  const paired = f.steps[idx];
+  const wrap = el("div", "evidence-paired");
+  const label = step.event_type === "tool_call" ? "Matching result" : "Matching request";
+  wrap.append(el("div", "evidence-paired-label", label + " · trace step " + (idx + 1)));
+  wrap.append(renderStepContent(paired));
+  return wrap;
+}
 
 // --- T3: shared step-content rendering (full trace + evidence panel) --------
 // One formatter for "what did this source step actually contain" so the
