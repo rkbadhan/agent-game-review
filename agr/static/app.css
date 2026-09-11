@@ -151,6 +151,18 @@
   .fchip:hover { color:var(--ink); border-color:var(--line-strong); }
   .fchip.on { color:var(--navy); background:var(--navy-soft); border-color:var(--line-strong); font-weight:680; }
   :root[data-theme="dark"] .fchip.on, .fchip.on { color:var(--ink); }
+  /* Runs §item "simpler controls": Outcome / Review status / More filters
+     instead of one undifferentiated ten-chip row. */
+  .filter-groups { display:flex; flex-direction:column; gap:9px; }
+  .filter-group-label { display:block; margin-bottom:4px; color:var(--faint); font-size:9.5px;
+    font-weight:760; letter-spacing:.07em; text-transform:uppercase; }
+  .more-filters summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:650; }
+  .more-filters summary::-webkit-details-marker { display:none; }
+  .more-filters summary::before { content:"▸ "; }
+  .more-filters[open] summary::before { content:"▾ "; }
+  .more-filters .filters { margin-top:6px; }
+  .runs-controls-row .filter-groups { flex:1 1 auto; flex-direction:row; flex-wrap:wrap; align-items:flex-start; gap:16px; }
+  .runs-controls-row .filter-group { min-width:0; }
   .sort-row { margin-top:9px; display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
   .sort-row select { padding:3px 5px; border:1px solid var(--line); border-radius:6px;
     color:var(--ink-soft); background:var(--paper-strong); font-size:11px; }
@@ -188,7 +200,13 @@
   .runs-row.active { background:var(--navy-soft); }
   .runs-row:focus-visible { outline:2px solid var(--navy); outline-offset:-2px; }
   .runs-task { font-weight:650; }
-  .runs-run-id { color:var(--muted); font-size:10.5px; margin-top:1px; }
+  /* Runs §item "readable session identity": task title + one short, copyable
+     id fragment + repository/time, instead of the full "namespace/task__uuid"
+     string repeated in mono underneath. */
+  .runs-id-meta { margin-top:3px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+  .runs-run-id { color:var(--muted); font-size:10.5px; }
+  .runs-id-repo { color:var(--faint); font-size:10.5px; overflow-wrap:anywhere; }
+  .runs-id-time { color:var(--faint); font-size:10.5px; }
   .runs-finding { max-width:38ch; }
   .runs-finding-neg { color:var(--ink); }
   .runs-finding-pos { color:var(--moss); }
@@ -217,6 +235,13 @@
   .run-verdict.fail .run-verdict-key { color:var(--rust); }
   .run-verdict.warn .run-verdict-key { color:var(--amber); }
   .run-verdict.pass .run-verdict-key { color:var(--moss); }
+  /* U5: Overview's "Task outcome:" line reuses .run-verdict-key with the tone
+     class on the SPAN itself (its ancestor is .finding-outcome, not
+     .run-verdict) — direct-class rules so the tone colors regardless of
+     which ancestor carries the class. */
+  .run-verdict-key.fail { color:var(--rust); }
+  .run-verdict-key.warn { color:var(--amber); }
+  .run-verdict-key.pass { color:var(--moss); }
   .header-status { flex:none; display:flex; align-items:center; gap:7px; padding:8px 11px; border-radius:9px;
     color:var(--rust); background:var(--rust-soft); border:1px solid color-mix(in srgb,var(--rust) 32%,transparent);
     font-size:11px; font-weight:750; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }
@@ -395,25 +420,30 @@
      in the run-review shell — bigger and bolder than the run-header h1 above,
      and toned by polarity (a concern in rust, the strongest positive in moss)
      the same way .run-verdict already is. */
-  .main-finding-title { margin:2px 0 8px; font:700 clamp(21px,2.2vw,27px) var(--serif); line-height:1.22; letter-spacing:-.015em; }
+  .main-finding-title { margin:2px 0 8px; font:700 clamp(21px,2.2vw,27px) var(--serif); line-height:1.22;
+    letter-spacing:-.015em; overflow-wrap:anywhere; }
   .main-finding-title.fail { color:var(--rust); }
   .main-finding-title.pass { color:var(--moss); }
+  .main-finding-title.warn { color:var(--amber); }
 
-  /* outcome summary */
-  .outcome { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr); gap:20px;
-    padding:18px 20px; border-bottom:1px solid var(--line); }
-  .outcome h2 { margin:0 0 5px; font-size:15px; letter-spacing:-.01em; }
-  .outcome p { margin:0; color:var(--ink-soft); font-size:12.5px; line-height:1.5; }
-  .req-summary { display:flex; align-items:center; gap:12px; }
-  .req-count { flex:none; width:52px; height:52px; display:grid; place-items:center; border-radius:50%;
-    font-family:var(--serif); font-size:18px; border:1px solid; }
-  .req-count.failed { color:var(--rust); background:var(--rust-pale); border-color:color-mix(in srgb,var(--rust) 34%,transparent); }
-  .req-count.passed { color:var(--moss); background:var(--moss-soft); border-color:color-mix(in srgb,var(--moss) 34%,transparent); }
-  .req-count.warning { color:var(--amber); background:var(--amber-soft); border-color:color-mix(in srgb,var(--amber) 34%,transparent); }
-  .req-copy strong { display:block; font-size:12px; } .req-copy span { display:block; margin-top:2px; color:var(--muted); font-size:10.5px; }
-  .review-mode-note { padding:11px 20px; border-bottom:1px solid var(--line); color:var(--muted);
-    font-size:11.5px; font-style:italic; }
-  .review-mode-note.not-reviewable { color:var(--rust); background:var(--amber-soft); font-style:normal; }
+  /* U5: Overview's single finding card — headline, then one line each for
+     recovery / task outcome / review mode, stated once and never repeated as
+     a separate card below it. */
+  .finding-sub { margin:0 0 10px; color:var(--muted); font-size:12.5px; line-height:1.5; }
+  .finding-line { margin:7px 0 0; color:var(--ink-soft); font-size:12.5px; line-height:1.5; }
+  .finding-line strong { color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.05em; text-transform:uppercase; }
+  .finding-recovery { padding:7px 10px; border-radius:8px; }
+  .finding-recovery.pos { background:var(--moss-soft); }
+  .finding-recovery.pos strong { color:var(--moss); }
+  .finding-recovery.warn { background:var(--amber-soft); }
+  .finding-recovery.warn strong { color:var(--amber); }
+  .finding-mode { font-style:italic; color:var(--muted); }
+  .finding-mode.not-reviewable { color:var(--rust); }
+  .finding-actions { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); max-width:none; }
+  .moment-recovery { margin:6px 0 0; padding:6px 9px; border-radius:7px; font-size:12px; line-height:1.5; }
+  .moment-recovery strong { color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.05em; text-transform:uppercase; }
+  .moment-recovery.pos { background:var(--moss-soft); color:var(--ink-soft); } .moment-recovery.pos strong { color:var(--moss); }
+  .moment-recovery.warn { background:var(--amber-soft); color:var(--ink-soft); } .moment-recovery.warn strong { color:var(--amber); }
 
   /* section heading */
   .section-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
@@ -572,6 +602,10 @@
   .content-state.unavailable { color:var(--faint); background:var(--canvas-deep); border:1px dashed var(--line-strong); }
   .content-state.partial { color:var(--amber); background:var(--amber-soft); }
   .evidence-span-note { margin:8px 0 0; color:var(--muted); font-size:10px; font-style:italic; line-height:1.4; }
+  /* §4.9/§4.12: the matching tool request/result shown together */
+  .evidence-paired { margin-top:9px; padding-top:9px; border-top:1px dashed var(--line); }
+  .evidence-paired-label { margin-bottom:5px; color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .evidence-paired .content-line { font:11px/1.55 var(--mono); color:var(--ink-soft); word-break:break-word; }
   .evidence-neighbors { margin-top:9px; }
   .evidence-neighbors summary { cursor:pointer; color:var(--muted); font-size:10px; font-weight:650; list-style:none; }
   .evidence-neighbors summary::-webkit-details-marker { display:none; }
@@ -720,6 +754,45 @@
   .vs-pair { display:flex; gap:8px; align-items:center; font:10.5px var(--mono); color:var(--muted); }
   .vs-pair button { border:0; background:transparent; padding:0; color:var(--rust); font:inherit; cursor:pointer; }
   .vs-pair button:hover { text-decoration:underline; }
+
+  /* shared: a small inline copy affordance next to a shortened id */
+  .copy-btn { border:0; background:transparent; padding:1px 3px; margin-left:2px; color:var(--faint);
+    font-size:11px; line-height:1; cursor:pointer; border-radius:4px; }
+  .copy-btn:hover { color:var(--ink); background:var(--paper-strong); }
+  .copy-btn.flashed { color:var(--moss); }
+
+  /* Patterns overview card (item 4) */
+  .fleet-stats { grid-template-columns:repeat(3,1fr); }
+  .coverage-line { margin-top:12px; font-size:12px; color:var(--ink-soft); line-height:1.5; }
+  .coverage-line.warn { color:var(--amber); }
+  .coverage-line.pos { color:var(--moss); }
+  .coverage-detail { display:inline; }
+  .coverage-detail summary { display:inline; cursor:pointer; color:var(--muted); font-size:11px;
+    font-weight:650; list-style:none; text-decoration:underline; text-underline-offset:2px; }
+  .coverage-detail summary::-webkit-details-marker { display:none; }
+  .coverage-detail .subline { margin:6px 0 0; color:var(--muted); font-size:11px; line-height:1.5; }
+
+  /* Patterns table (item 5/6): compact rows, expandable per-row detail */
+  .fleet-table th:first-child, .fleet-table td.fleet-toggle { width:26px; padding-right:0; }
+  .fleet-toggle-btn { border:0; background:transparent; color:var(--muted); font-size:10px; cursor:pointer;
+    padding:4px 6px; border-radius:5px; }
+  .fleet-toggle-btn:hover { color:var(--ink); background:var(--paper-strong); }
+  .fleet-pattern { max-width:34ch; }
+  .fleet-pattern-title { font-weight:640; font-size:12.5px; overflow-wrap:anywhere; }
+  .fleet-pattern-title.unclassified { color:var(--muted); font-style:italic; font-weight:600; }
+  .fleet-pattern-raw { margin-top:3px; color:var(--faint); font-size:10px; }
+  .fleet-pattern-raw .mono { overflow-wrap:anywhere; }
+  .fleet-row.unclassified { background:color-mix(in srgb,var(--canvas-deep) 55%,transparent); }
+  .fleet-detail-row > td { border-bottom:0; padding:0; }
+  .fleet-detail-row.open > td { border-bottom:1px solid var(--line); }
+  .fleet-detail { width:100%; }
+  .fleet-detail summary { display:none; }
+  .fleet-detail-body { padding:2px 0 14px 34px; display:grid; gap:2px; }
+  .fleet-detail .kv-block { grid-template-columns:170px minmax(0,1fr); padding:8px 0; }
+  .fleet-examples { margin-top:2px; }
+  .fleet-example-row { flex-wrap:wrap; }
+  .fleet-example-link { color:var(--rust); font:600 11.5px var(--mono); }
+  .fleet-example-id { color:var(--faint); }
   .vs-interp { max-width:900px; margin:0 auto 16px; padding:14px 16px; border-radius:11px;
     background:var(--violet-soft); border:1px solid color-mix(in srgb,var(--violet) 26%,transparent); }
   .vs-interp .eyebrow { color:var(--violet); }
@@ -739,7 +812,14 @@
   .drawer-header h2 { margin:0; font-size:16px; }
   .drawer-header p { margin:2px 0 0; color:var(--muted); font-size:10px; }
   .drawer-body { padding:14px 18px 30px; }
-  .caps { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  /* §4.9/§4.12: capability badges behind a disclosure instead of a permanent
+     row above every trace a reader opens. */
+  .caps-disclosure { margin-bottom:14px; }
+  .caps-disclosure summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:650; }
+  .caps-disclosure summary::-webkit-details-marker { display:none; }
+  .caps-disclosure summary::before { content:"▸ "; }
+  .caps-disclosure[open] summary::before { content:"▾ "; }
+  .caps { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .cap { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border:1px solid var(--line); border-radius:6px; font-size:11px; }
   .cap .lvl { color:var(--muted); }
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
@@ -762,6 +842,11 @@
   .pane.lit { border-color:var(--rust); box-shadow:0 0 0 1px var(--rust); } .pane.lit .ph { color:var(--rust); }
   .pane .pb { padding:9px 11px; font-size:12.5px; } .pane .pb.mono { font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; }
   .pane .dim { color:var(--muted); font-style:italic; } .kv { color:var(--muted); }
+  /* §4.9/§4.12 "collapse empty panels": a panel with nothing to say about the
+     selected step shrinks to its header — no wasted "—" body, and the one
+     lit panel stays the visual focus. */
+  .pane.empty { opacity:.55; }
+  .pane.empty .pb { display:none; }
 
   /* modal + help + toast */
   .modal-shade { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:20px;
@@ -852,7 +937,7 @@
       transform:translateX(-100%); box-shadow:18px 0 46px rgba(15,24,30,.2); transition:transform .2s; }
     .queue.open { transform:translateX(0); }
     .mobile-toggle { display:grid; }
-    .outcome { grid-template-columns:1fr; } .mc-block { grid-template-columns:1fr; gap:5px; }
+    .mc-block { grid-template-columns:1fr; gap:5px; }
     .mc-label span { display:inline; margin:0 0 0 6px; }
     .moment-heading { flex-direction:column; } .bottom-bar { flex-wrap:wrap; } .disp-wrap { margin-left:0; }
   }

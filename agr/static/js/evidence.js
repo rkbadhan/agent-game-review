@@ -114,6 +114,8 @@ function renderSourceGroup(rv, f, moment) {
     const highlightable = terms.filter(t => t.length >= MIN_HIGHLIGHT_TERM_LENGTH);
     if (step && highlightable.length && !highlightable.some(t => stepContentHasTerm(step, t)))
       item.append(el("p", "evidence-span-note", "No exact supporting span was located in this event's captured text — shown without a highlighted match."));
+    const paired = renderPairedStep(f, step);
+    if (paired) item.append(paired);
     item.append(renderNeighbors(f, idx));
     if (step) {
       const b = el("button", "source-link", "Open source step →");

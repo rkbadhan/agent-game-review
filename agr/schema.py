@@ -192,6 +192,12 @@ class RunSource:
     # agent-under-test's, and the two are never added together.
     cost: Optional[float] = None
     tokens: Optional[dict] = None
+    # Runs §item: the working directory the harness ran in, when the source
+    # captured one (currently only the Claude Code adapter's stream init
+    # record). Shown as a compact repository/location hint on the Runs
+    # surface; ``None`` when the source never declared it — never guessed
+    # from task_id or any other field.
+    cwd: Optional[str] = None
 
     def to_dict(self) -> dict:
         return _clean(asdict(self))
@@ -428,6 +434,13 @@ class RecoveryEpisode:
     # diagnostic found, e.g. bare "---") is then indistinguishable from a
     # confident traceback-derived one downstream (fleet grouping, the UI).
     error_signature_basis: Optional[str] = None
+    # The same diagnostic line error_signature is derived from, kept UNMASKED
+    # (real numbers/paths/strings, not <N>/<PATH>/<STR> placeholders) — useful
+    # for a per-run finding headline, where error_signature's normalisation is
+    # exactly what makes cross-run grouping possible but throws away the exact
+    # figures a reader of ONE run wants to see (e.g. "43,320 tokens", not
+    # "<N> tokens"). Same basis tiering as error_signature_basis.
+    failure_diagnostic: Optional[str] = None
     turns_to_resolve: Optional[int] = None        # tool_call count from failure through resolution; None if unresolved
     # AGR-05: usage summed strictly AFTER the failure result through the
     # selected resolution (or the observed terminal event, for an unrecovered

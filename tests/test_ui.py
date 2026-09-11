@@ -305,9 +305,11 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         assert not page.is_visible(".evidence-panel")
         assert page.evaluate("() => document.body.classList.contains('workspace-mode')")
 
-        # U2 columns.
+        # U2 columns. Runs §item "simpler controls": Cost is hidden here since
+        # neither fixture run in this store captured a cost value — a column
+        # of permanent "—" cells is never shown.
         headers = [h.inner_text().upper() for h in page.query_selector_all(".runs-table th")]
-        assert headers == ["RUN", "OUTCOME", "MAIN FINDING", "REVIEW STATUS", "DURATION", "COST"]
+        assert headers == ["SESSION", "OUTCOME", "MAIN FINDING", "REVIEW STATUS", "DURATION"]
         rows = page.query_selector_all(".runs-row")
         assert len(rows) == 2
 
@@ -318,9 +320,11 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         assert _query(page.url).get("q") == ["chess"]
 
         # Filters are explicit for outcome (failed/passed/undetermined) and
-        # review status (unreviewed/in_progress/handled), not just a sort order.
+        # review status (unreviewed/in_progress/handled), not just a sort
+        # order — grouped under labelled Outcome/Review status headings now
+        # rather than one flat chip row.
         chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip")}
-        assert {"Failed", "Passed", "Undetermined", "Unreviewed", "In progress", "Handled"} <= chip_labels
+        assert {"Failed", "Passed", "Undetermined / Unverified", "Unreviewed", "In progress", "Handled"} <= chip_labels
         page.fill(".runs-search", "")
         page.click('.runs-controls-row .fchip:has-text("Failed")')
         page.wait_for_function("() => location.search.includes('filter=failed')")
@@ -468,9 +472,10 @@ def test_browser_back_to_runs_refreshes_the_table_under_restored_filters(server)
 
 
 def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_server):
-    """U3: a Patterns group's evidence links open the exact run and event, and
-    a reviewer can inspect representative episodes and argument shapes inline
-    without leaving the surface."""
+    """U3 / Patterns redesign (compact rows, spacious details): a group's
+    evidence links open the exact run and event, and a reviewer can inspect
+    representative episodes and argument shapes inline, behind the row's own
+    expandable detail, without leaving the surface."""
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
@@ -478,27 +483,29 @@ def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_s
         page.wait_for_selector(".run-header")
 
         page.click("#fleet-button")
-        page.wait_for_selector(".vs-table")
+        page.wait_for_selector(".fleet-table")
         assert not page.is_visible(".queue")
         assert not page.is_visible(".evidence-panel")
 
-        headers = [h.inner_text().upper() for h in page.query_selector_all(".vs-table th")]
-        assert "EPISODES" in headers and "ARGUMENT SHAPES" in headers
+        headers = [h.inner_text().upper() for h in page.query_selector_all(".fleet-table th")]
+        # Argument shapes and representative episodes moved out of the compact
+        # header row into the per-row expandable detail (item 6); the compact
+        # row itself carries only the five lead columns.
+        assert "PATTERN" in headers and "EPISODES" in headers and "RECOVERY" in headers
+        assert "ARGUMENT SHAPES" not in headers
 
-        row = page.query_selector(".vs-table tbody tr") or page.query_selector_all(".vs-table tr")[1]
-        drills = row.query_selector_all("details.vs-drill")
-        episodes_drill, shapes_drill = drills[0], drills[1]
+        row = page.query_selector(".fleet-table tr.fleet-row")
+        row.query_selector(".fleet-toggle-btn").click()
+        detail = page.wait_for_selector(".fleet-detail-body")
+        detail_text = detail.inner_text().lower()
+        assert "representative episode" in detail_text
 
-        episodes_drill.query_selector("summary").click()
-        assert "representative episode" in episodes_drill.inner_text().lower()
-
-        shapes_drill.query_selector("summary").click()
-        shapes_text = shapes_drill.inner_text()
+        shapes_text = detail.inner_text()
         assert "file_path:str" in shapes_text
         assert "shape(s) among 2 failing call(s)" in shapes_text
 
         # Evidence link opens the exact run and event.
-        episodes_drill.query_selector(".vs-pair button").click()
+        detail.query_selector(".fleet-example-link").click()
         page.wait_for_selector("#trace-drawer.open")
         assert _query(page.url)["run"]
 
@@ -556,7 +563,9 @@ def test_patterns_regrouping_mid_load_lands_on_the_latest_choice(patterns_server
             .get_attribute("aria-pressed") == "true"
         assert page.query_selector('.vs-keys .fchip:has-text("Tool only")') \
             .get_attribute("aria-pressed") == "false"
-        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector("td")
+        # The Pattern column is the second <td> now (item 6's leading toggle
+        # column is the first).
+        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector_all("td")[1]
         assert "Edit" not in group_cell.inner_text()
 
         # The delayed "Tool only" response must not land afterward and flip
@@ -565,7 +574,9 @@ def test_patterns_regrouping_mid_load_lands_on_the_latest_choice(patterns_server
         assert page.query_selector('.vs-keys .fchip:has-text("Error only")') \
             .get_attribute("aria-pressed") == "true"
         assert page.query_selector("#main .vs-table")
-        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector("td")
+        # The Pattern column is the second <td> now (item 6's leading toggle
+        # column is the first).
+        group_cell = page.query_selector_all(".vs-table tr")[1].query_selector_all("td")[1]
         assert "Edit" not in group_cell.inner_text()
 
         browser.close()
@@ -580,7 +591,7 @@ def test_overview_main_finding_is_the_most_prominent_element_and_opens_evidence(
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
-        page.wait_for_selector(".outcome")  # boot lands on Overview by default
+        page.wait_for_selector(".finding-card")  # boot lands on Overview by default
 
         title = page.query_selector(".main-finding-title")
         assert title is not None
@@ -666,7 +677,7 @@ def test_workspace_and_full_trace(server):
         # Overview chapter (T1/§4.5): outcome, main finding, and — further down —
         # a disabled detector listed under review limits.
         page.click('.outline > .ochip:has-text("Overview")')
-        page.wait_for_selector(".outcome")
+        page.wait_for_selector(".finding-card")
         # AGR-05: the compaction detector is a registered placeholder — it shows
         # the honest "not implemented" chip, not a capability-gated skip.
         assert any("not implemented" in c.inner_text()
@@ -1343,8 +1354,8 @@ def test_not_reviewable_capture_says_why(not_reviewable_server):
         page.wait_for_selector(".run")
         page.click(".run")
         page.click('.outline > .ochip:has-text("Overview")')
-        page.wait_for_selector(".review-mode-note.not-reviewable")
-        note = page.query_selector(".review-mode-note.not-reviewable").inner_text()
+        page.wait_for_selector(".finding-mode.not-reviewable")
+        note = page.query_selector(".finding-mode.not-reviewable").inner_text()
         assert "Not reviewable" in note
         assert "tool_calls" in note and "verifier_code" in note
         browser.close()
@@ -1440,17 +1451,23 @@ def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tm
             page.wait_for_selector(".run")
             page.click('.run[data-run-id="undetermined__seed9"]')
             page.click('.outline > .ochip:has-text("Overview")')
-            page.wait_for_selector(".outcome h2")
-            headline = page.query_selector(".outcome h2").inner_text()
-            assert "undetermined" in headline.lower()
-            assert "passed" not in headline.lower()
+            # U5: the finding headline and the task-outcome detail are two
+            # distinct lines now (never merged into one generic sentence) —
+            # the headline carries the short label, the "Task outcome:" line
+            # carries the reconciled detail text.
+            page.wait_for_selector(".finding-outcome")
+            headline = page.query_selector(".main-finding-title").inner_text()
+            outcome_line = page.query_selector(".finding-outcome").inner_text()
+            assert "undetermined" in headline.lower() or "undetermined" in outcome_line.lower()
+            assert "passed" not in headline.lower() and "passed" not in outcome_line.lower()
 
             page.click('.run[data-run-id="unverified__seed10"]')
-            page.wait_for_function("() => { const h = document.querySelector('.outcome h2');"
-                                   " return h && /no verifier checks/i.test(h.textContent); }")
-            headline = page.query_selector(".outcome h2").inner_text()
-            assert "no verifier checks" in headline.lower()
-            assert "passed" not in headline.lower()
+            page.wait_for_function("() => { const l = document.querySelector('.finding-outcome');"
+                                   " return l && /no verifier checks/i.test(l.textContent); }")
+            headline = page.query_selector(".main-finding-title").inner_text()
+            outcome_line = page.query_selector(".finding-outcome").inner_text()
+            assert "no verifier checks" in outcome_line.lower()
+            assert "passed" not in headline.lower() and "passed" not in outcome_line.lower()
 
             assert errors == []
             browser.close()
@@ -1485,8 +1502,8 @@ def test_missing_outcome_never_defaults_to_passed(tmp_path):
             assert "passed" not in verdict.lower()
 
             page.click('.outline > .ochip:has-text("Overview")')
-            page.wait_for_selector(".outcome h2")
-            headline = page.query_selector(".outcome h2").inner_text()
+            page.wait_for_selector(".main-finding-title")
+            headline = page.query_selector(".main-finding-title").inner_text()
             assert "passed" not in headline.lower()
 
             assert errors == []
@@ -1556,8 +1573,8 @@ def test_superseded_check_never_makes_a_reconciled_pass_read_as_failed(tmp_path)
 
             # Overview headline must agree with the header, not re-derive its own.
             page.click('.outline > .ochip:has-text("Overview")')
-            page.wait_for_selector(".outcome h2")
-            headline = page.query_selector(".outcome h2").inner_text()
+            page.wait_for_selector(".main-finding-title")
+            headline = page.query_selector(".main-finding-title").inner_text()
             assert headline.lower().startswith("passed")
             assert "failed" not in headline.lower()
 

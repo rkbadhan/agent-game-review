@@ -164,17 +164,23 @@ function renderMomentsChapter(main) {
   chapterClose(main);
 }
 
-// Overview chapter (T1 / formerly "Outcome", §4.5): outcome, the main finding
-// when one is available, and what materially limits the review. The atomic
-// check table, contract mapping, and requirement warnings live in Checks; a
-// full walkthrough of each finding lives in Key moments.
+// Overview chapter (T1 / formerly "Outcome", §4.5): a single evidence-backed
+// finding headline, kept separate from the task outcome and from whether any
+// recovery happened, plus what materially limits the review. The atomic check
+// table, contract mapping, and requirement warnings live in Checks; a full
+// walkthrough (action, consequence, likely impact, better action, evidence)
+// lives on the moment card itself in Key moments.
+//
+// U5: previously this chapter opened with a full-sentence, always-generic
+// "What happened" verdict ("Passed — all 6 checks evidenced.") as its biggest
+// element, with the actual decisive finding relegated to a second card below
+// it — so the one specific, evidence-backed fact about the run competed with,
+// rather than led, the page. The two cards are now one: the finding headline
+// (or, when none was selected, the outcome narrative itself) is the single
+// most prominent thing on the page; task outcome and review-mode context sit
+// right beneath it, stated once, not restated in a second card.
 function renderOverviewChapter(main) {
-  const rv = state.review, f = state.forensic, o = rv.outcome || {}, checks = rv.checks || [];
-
-  const card = el("div", "card");
-  const outcome = el("div", "outcome");
-  const oc = el("div");
-  oc.append(el("p", "eyebrow", "What happened"));
+  const rv = state.review, f = state.forensic, o = rv.outcome || {};
   // F3: reads the SAME reconciled narrative as the header verdict
   // (outcomeNarrative, ui-utils.js) instead of re-deriving one from raw
   // check.status — that duplication was how a superseded/stale check or
@@ -184,16 +190,50 @@ function renderOverviewChapter(main) {
     tone: "warn", headline: "Unverified —",
     detail: "no atomic check evidence was captured, so nothing here should be read as a pass.",
   };
-  oc.append(el("h2", null, narrative.headline + " " + narrative.detail));
-  outcome.append(oc);
-  const rq = el("div", "req-summary");
-  rq.append(el("div", "req-count " + statusClass(o.status), (o.passed ?? "?") + "/" + (o.total ?? "?")));
-  const rc = el("div", "req-copy");
-  rc.append(el("strong", null, "Requirements evidenced"), el("span", null, "Objective task progress, not a success estimate"));
-  rq.append(rc); outcome.append(rq);
-  card.append(outcome);
+  const mf = mainFinding();
+
+  const card = el("div", "card card-pad finding-card");
+  if (mf) {
+    // U4/U5: the single most prominent element on the page (.main-finding-title)
+    // — a reader's eye should land on the specific, evidence-backed finding,
+    // not the task identifier in the header or a generic pass/fail sentence.
+    // A headline reads at a sentence/clause boundary (leadFinding, shared with
+    // the Runs table row) rather than the full statement — an aggregate
+    // finding naming every failing check can run to several lines, which
+    // defeats "headline"; the untruncated statement is always one click away
+    // via "Open in Key moments →" below.
+    const headline = el("h2", "main-finding-title " + (mf.polarity === "positive" ? "pass" : "fail"),
+      leadFinding(mf.summary, 220));
+    if (leadFinding(mf.summary, 220) !== mf.summary) headline.title = mf.summary;
+    card.append(headline);
+    if (mf.polarity === "positive")
+      card.append(el("p", "finding-sub", "Strongest behaviour observed in this run."));
+    // One important content rule (spec): keep tool failure, recovery, and the
+    // final task outcome separate — a Recovery line only ever states what the
+    // evidence for THIS moment supports, never the run's eventual result.
+    const rec = recoveryText(mf);
+    if (rec) {
+      const r = el("p", "finding-line finding-recovery " + rec.cls);
+      r.append(el("strong", null, "Recovery: "), document.createTextNode(rec.text));
+      card.append(r);
+    }
+  } else {
+    const tone = narrative.tone === "pass" ? "pass" : narrative.tone === "fail" ? "fail" : "warn";
+    card.append(el("h2", "main-finding-title " + tone, narrative.headline.replace(/\s*—$/, "")));
+    card.append(el("p", "finding-sub", rv.review_mode === "not_reviewable"
+      ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
+      : "No decisive finding was selected for this run."));
+  }
+  // Task outcome, stated once here (never repeated as its own card below it) —
+  // the requirement tally folded inline rather than a competing colour block.
+  const outLine = el("p", "finding-line finding-outcome");
+  outLine.append(el("strong", null, "Task outcome: "));
+  outLine.append(el("span", "run-verdict-key " + narrative.tone, narrative.headline.replace(/\s*—$/, "")));
+  outLine.append(document.createTextNode(" (" + (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks) — " + narrative.detail));
+  card.append(outLine);
+
   const vm = vocab("review_mode", rv.review_mode);
-  const modeNote = el("div", "review-mode-note" + (rv.review_mode === "not_reviewable" ? " not-reviewable" : ""));
+  const modeNote = el("p", "finding-line finding-mode" + (rv.review_mode === "not_reviewable" ? " not-reviewable" : ""));
   if (rv.review_mode === "not_reviewable") {
     const missing = rv.missing_capabilities || [];
     modeNote.append(vm.label + " — the captured evidence is insufficient for a trustworthy review"
@@ -201,35 +241,17 @@ function renderOverviewChapter(main) {
         : "; affected detectors are marked Not evaluated."));
   } else {
     modeNote.append(vm.label + (rv.review_mode === "deterministic_only"
-      ? " — Situation, action, and consequence are restated from validated facts. Likely impact and better action are added only by the model reviewer."
+      ? " — situation, action, and consequence are restated from validated facts. Likely impact and better action are added only by the model reviewer."
       : " — deterministic baseline plus model-assisted interpretation."));
   }
   card.append(modeNote);
-  main.append(card);
 
-  // Main finding (T1): the one moment Overview leads with, so a reader gets a
-  // finding headline without visiting Key moments first. Full detail — action,
-  // consequence, likely impact, better action, evidence — lives on the moment
-  // card itself; this is a pointer to it, not a duplicate of it.
-  const mf = mainFinding();
-  const fsec = el("div", "card card-pad");
-  fsec.append(el("p", "eyebrow", "Main finding"));
   if (mf) {
-    // U4: this is the single most prominent element on the page (see
-    // .main-finding-title) — a reader's eye should land here, not on the task
-    // identifier in the header above.
-    fsec.append(el("h2", "main-finding-title " + (mf.polarity === "positive" ? "pass" : "fail"), mf.summary));
-    fsec.append(el("p", "chapter-lede",
-      (mf.polarity === "positive" ? "Strongest behaviour observed in this run. " : "")
-      + consequenceText(mf)));
-    const actions = el("div", "chapter-foot");
+    // U4/U5: "how to inspect its evidence" from the initial view — one click,
+    // and an obvious action rather than a second, easy-to-miss button.
+    const actions = el("div", "chapter-foot finding-actions");
     const idx = currentMoments().indexOf(mf);
-    const open = el("button", "button", "Open in Key moments →");
-    open.addEventListener("click", () => { if (idx >= 0) state.momentIdx = idx; setChapter("moments"); });
-    actions.append(open);
-    // U4: "how to inspect its evidence" from the initial view — one click, not
-    // "open the moment, then separately open its evidence."
-    const viewEvidence = el("button", "button subtle", "View evidence →");
+    const viewEvidence = el("button", "button primary", evidenceActionLabel(mf));
     viewEvidence.addEventListener("click", () => {
       if (idx >= 0) state.momentIdx = idx;
       state.view = "review"; state.chapter = "moments"; state.viewed.add("moments");
@@ -237,13 +259,12 @@ function renderOverviewChapter(main) {
       focusEvidence();
     });
     actions.append(viewEvidence);
-    fsec.append(actions);
-  } else {
-    fsec.append(el("p", "chapter-lede", rv.review_mode === "not_reviewable"
-      ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
-      : "No decisive finding was selected for this run."));
+    const open = el("button", "button subtle", "Open in Key moments →");
+    open.addEventListener("click", () => { if (idx >= 0) state.momentIdx = idx; setChapter("moments"); });
+    actions.append(open);
+    card.append(actions);
   }
-  main.append(fsec);
+  main.append(card);
 
   main.append(renderFinalState(rv, f));
 

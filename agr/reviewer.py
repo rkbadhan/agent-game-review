@@ -657,18 +657,28 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
                     f"environment{link}.")
         return f"The declared artifact {fact.get('declared_artifact')} was never observed in the run{link}."
     if ftype == "state_transition":
+        # Item 32 follow-up: lead with WHAT failed (the tool, and its own
+        # diagnostic text) instead of only WHERE (an anonymous event id) — the
+        # same identity fleet.py already groups these episodes by, restated
+        # here so a reader gets "bash failed: ModuleNotFoundError: No module
+        # named 'numpy'" instead of "a tool failure at evt_012". Falls back to
+        # a bare tool name when the failure text carried no recognised
+        # diagnostic (an opaque fallback signature — the fleet view's
+        # "Unclassified" case) rather than showing a meaningless line.
+        tool = fact.get("tool")
+        diag = fact.get("failure_diagnostic") or fact.get("error_signature")
+        diag_usable = diag and fact.get("error_signature_basis") != "fallback_last_nonempty"
+        lead = (f"{tool} failed: {diag}" if (tool and diag_usable)
+                else f"The {tool} call failed" if tool else "A tool call failed")
         if fact.get("resolution_event"):
-            return (
-                f"A failure at {fact.get('failure_event')} was recovered via a strategy "
-                f"change at {fact.get('resolution_event')}.")
+            return f"{lead}, then recovered via a strategy change before submission."
         if observation_scope:
             # R1: no check/contract link exists (usually no verifier). The
             # observation states what the capture recorded and its limit —
             # never that the task outcome or final implementation is wrong.
-            return (f"The recorded tool call at {fact.get('failure_event')} failed, and no "
-                    f"resolving check appears in the available capture; whether the task's "
-                    f"final state is correct remains unknown.")
-        return f"A tool failure at {fact.get('failure_event')} was left unresolved before submission{link}."
+            return (f"{lead}, and no resolving check appears in the available capture; "
+                    f"whether the task's final state is correct remains unknown.")
+        return f"{lead}, and was left unresolved before submission{link}."
     if ftype == "event_support":
         evs = [q.get("event_id") for q in (fact.get("quotes") or []) if q.get("event_id")]
         return f"Grounded in quoted run evidence ({', '.join(evs)}){link}."

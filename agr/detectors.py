@@ -202,6 +202,14 @@ class IgnoredToolFailure(Detector):
                 structured_facts=[{
                     "type": "state_transition", "failure_event": ep.failure_event_id,
                     "resolved_before_submission": False,
+                    # Carried from the same recovery episode fleet.py already
+                    # groups by, so a moment card and the fleet view describe
+                    # the SAME failure identically instead of one naming only
+                    # "a tool failure" while the other already knows which
+                    # tool and what its diagnostic said.
+                    "tool": ep.tool, "error_signature": ep.error_signature,
+                    "error_signature_basis": ep.error_signature_basis,
+                    "failure_diagnostic": ep.failure_diagnostic,
                 }],
             ))
         return out
@@ -324,6 +332,9 @@ class SuccessfulRecoveryViaStrategyChange(Detector):
                     "type": "state_transition", "failure_event": ep.failure_event_id,
                     "resolution_event": ep.resolution_event_id,
                     "strategy_changed": ep.strategy_changed, "changed_action": ep.changed_action,
+                    "tool": ep.tool, "error_signature": ep.error_signature,
+                    "error_signature_basis": ep.error_signature_basis,
+                    "failure_diagnostic": ep.failure_diagnostic,
                 }],
             ))
         return out

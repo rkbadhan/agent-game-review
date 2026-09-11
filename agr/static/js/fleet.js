@@ -69,36 +69,51 @@ function argumentShapesFor(g) {
   return fl.argumentShapes.find(s => JSON.stringify(s.key) === key) || null;
 }
 
-// AGR-06: the whole-fleet usage headline — the union across EVERY episode,
-// never a sum of the per-group "Tokens" column above (which would
-// double-count an event two different groups' episodes both cover).
+// Patterns overview (item 4): affected runs, episode count, and recorded
+// usage are the three numbers a reader needs before reading any group row —
+// shown as prominent stat tiles (the same .sweep-stats treatment Runs already
+// uses for its own top-line counts) instead of buried in a sentence. AGR-06:
+// this is the union across EVERY episode in the store, never a sum of the
+// per-group "Recorded usage" column below (which would double-count an event
+// two different groups' episodes both cover).
+//
+// "Display one coverage qualification, with counting methodology expandable"
+// (item 4): the measured/partial/unavailable qualifier is ONE line; the full
+// union/overlap/undercount methodology this store already computes moves
+// behind a disclosure instead of repeating as several always-visible
+// warning paragraphs.
+function coverageQualification(summary) {
+  const avail = summary.usage_availability;
+  if (avail === "unavailable")
+    return { cls: "warn", text: "Recorded usage is unavailable — no episode in the store was ever instrumented." };
+  if (avail === "partial") {
+    const bits = [];
+    if (summary.usage_unavailable_episode_count)
+      bits.push(summary.usage_unavailable_episode_count + " never instrumented");
+    if (summary.usage_partial_episode_count)
+      bits.push(summary.usage_partial_episode_count + " only partly instrumented");
+    return { cls: "warn", text: "Recorded usage is partial — " + bits.join(", ") + " of " + summary.episode_count + " episode(s); the totals below undercount." };
+  }
+  return { cls: "pos", text: "Recorded usage covers every episode in the store." };
+}
 function renderFleetUsageSummaryCard(summary) {
   const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", "Patterns usage"));
-  const line = el("p", "chapter-lede",
-    summary.total_tokens + " token(s) across " + summary.episode_count + " episode(s) in "
-    + summary.affected_runs + " affected run(s).");
-  card.append(line);
-  // AGR-05/06 (review 82cc113): an episode with no usage instrumentation at
-  // all contributes nothing to total_tokens — without this line the headline
-  // reads as a real, complete measurement even when it isn't.
-  if (summary.usage_unavailable_episode_count) {
-    card.append(el("p", "subline warn",
-      summary.usage_unavailable_episode_count + " of " + summary.episode_count
-      + " episode(s) never had usage instrumented — total_tokens undercounts the fleet's real cost."));
-  }
-  // Follow-up (review of commit 5782f1b): a partially-instrumented episode
-  // (some but not all of its window measured) previously had no fleet-wide
-  // equivalent to this line — its qualifier was silently dropped even
-  // though the per-episode data already distinguished it.
-  if (summary.usage_partial_episode_count) {
-    card.append(el("p", "subline warn",
-      summary.usage_partial_episode_count + " of " + summary.episode_count
-      + " episode(s) had only part of their window instrumented — total_tokens may undercount "
-      + "even where it is nonzero."));
-  }
-  const note = el("p", "subline", summary.usage_note);
-  card.append(note);
+  card.append(el("p", "eyebrow", "Patterns overview"));
+  const stats = el("div", "sweep-stats fleet-stats");
+  const stat = (n, lbl) => { const d = el("div", "sweep-stat"); d.append(el("strong", null, String(n)), el("span", null, lbl)); return d; };
+  stats.append(
+    stat(summary.affected_runs, "affected runs"),
+    stat(summary.episode_count, "episodes"),
+    stat(fmtCompact(summary.total_tokens), "recorded usage (tokens)"));
+  card.append(stats);
+  const cov = coverageQualification(summary);
+  const covLine = el("div", "coverage-line " + cov.cls);
+  covLine.append(el("span", null, cov.text + " "));
+  const d = el("details", "coverage-detail");
+  d.append(el("summary", null, "How this is counted"));
+  d.append(el("p", "subline", summary.usage_note));
+  covLine.append(d);
+  card.append(covLine);
   return card;
 }
 
@@ -165,71 +180,108 @@ async function renderFleet(main) {
   wrap.append(renderFleetTable(fl.episodes));
 }
 
+// Item 5/6: a pattern's title is derived from its diagnostic error text
+// (the same traceback/diagnostic-marker extraction error_signature.py already
+// does), never a raw opaque fallback line presented as if it identified a
+// common cause. A group where EVERY episode selected its signature via the
+// opaque fallback tier (agr.fleet.EpisodeGroup.all_fallback_basis — no
+// traceback, no recognised diagnostic marker anywhere, e.g. bare "---") is
+// labelled "Unclassified tool failures" instead; its raw fallback text is
+// preserved and shown, just not presented as an established common cause.
+function patternTitle(g) {
+  const toolIdx = g.group_by.indexOf("tool");
+  const sigIdx = g.group_by.indexOf("error_signature");
+  const tool = toolIdx >= 0 ? g.key[toolIdx] : null;
+  const sig = sigIdx >= 0 ? g.key[sigIdx] : null;
+  if (g.all_fallback_basis && sig)
+    return { title: "Unclassified tool failures" + (tool ? " · " + tool : ""), raw: sig, unclassified: true };
+  const parts = g.key.filter(Boolean);
+  return { title: parts.join(" — ") || "(none)", raw: null, unclassified: false };
+}
+
+// Item 6: compact rows — Pattern · Affected runs · Episodes · Recovery ·
+// Recorded usage is everything a triage read needs; repeat rate, avg turns,
+// wall time, argument shapes, and representative episodes move into a
+// per-row expandable detail area (a <details> in a full-width second row) so
+// opening examples for one pattern never reflows or crowds the other rows.
 function renderFleetTable(groups) {
   const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", groups.length + " group(s)"));
+  card.append(el("p", "eyebrow", groups.length + " pattern(s)"));
   card.append(el("p", "chapter-lede",
     "Sorted by group size — the most-repeated failure first. Every number is a "
     + "re-read of persisted recovery episodes; nothing here is recomputed."));
-  const t = el("table", "vs-table");
-  t.append(rowEls("tr", ["Group", "Count", "Runs", "Repeat rate", "Resolved",
-    "Avg turns", "Tokens", "Wall time", "Episodes", "Argument shapes"], "th"));
+  const t = el("table", "vs-table fleet-table");
+  t.append(rowEls("tr", ["", "Pattern", "Affected runs", "Episodes", "Recovery", "Recorded usage"], "th"));
   for (const g of groups) {
-    const tr = el("tr");
-    const groupCell = td(g.key.filter(Boolean).join(" / ") || "(none)");
-    // AGR-07 (review 82cc113): a group keyed by an opaque fallback signature
-    // (e.g. bare "---"/"}"/"===" — no traceback, no recognised diagnostic
-    // marker anywhere) is not a meaningful exception group. Flag it instead
-    // of presenting it identically to a confident traceback-derived one.
-    if (g.all_fallback_basis) {
-      // §4.18/§4.19 (AGR-14): a controlled-vocabulary flag needs a definition
-      // reachable by keyboard and by tap, not only mouse hover — a bare <span>
-      // with only a `title` is invisible to both. tabindex + aria-label give
-      // it a focus stop and an accessible name that carries the same meaning.
-      const flagText = "Every episode in this group selected its error signature via the "
-        + "opaque fallback tier — no traceback or recognised diagnostic marker was found; "
-        + "the signature is just whatever line happened to be last in the failure text.";
-      const flag = el("span", "chip", "fallback");
-      flag.title = flagText;
-      flag.setAttribute("tabindex", "0");
-      flag.setAttribute("aria-label", "Fallback signature group: " + flagText);
-      groupCell.append(" ");
-      groupCell.append(flag);
+    const title = patternTitle(g);
+    const detail = el("details", "fleet-detail");
+    const tr = el("tr", "fleet-row" + (title.unclassified ? " unclassified" : ""));
+
+    const detailRow = el("tr", "fleet-detail-row");
+    const toggleCell = el("td", "fleet-toggle");
+    const toggleBtn = el("button", "fleet-toggle-btn", "▸");
+    toggleBtn.setAttribute("aria-label", "Show details for this pattern");
+    toggleBtn.setAttribute("aria-expanded", "false");
+    toggleBtn.addEventListener("click", () => { detail.open = !detail.open; });
+    // A closed <details> hides its own children, but the wrapping table row
+    // still has ITS OWN padding/border — mirror the open state onto the row
+    // so a closed pattern's detail row fully collapses instead of leaving a
+    // thin empty divider between every compact row.
+    detail.addEventListener("toggle", () => {
+      toggleBtn.textContent = detail.open ? "▾" : "▸";
+      toggleBtn.setAttribute("aria-expanded", detail.open ? "true" : "false");
+      detailRow.classList.toggle("open", detail.open);
+    });
+    toggleCell.append(toggleBtn);
+    tr.append(toggleCell);
+
+    const patternCell = el("td", "fleet-pattern");
+    patternCell.append(el("div", "fleet-pattern-title" + (title.unclassified ? " unclassified" : ""), title.title));
+    if (title.raw) {
+      const raw = el("div", "fleet-pattern-raw");
+      raw.append(el("span", null, "raw: "), el("span", "mono", title.raw));
+      patternCell.append(raw);
     }
-    tr.append(groupCell);
-    tr.append(td(String(g.count), "vs-rate"));
+    tr.append(patternCell);
+
     tr.append(td(String(g.runs)));
-    // AGR-06: repeat_rate is affected_runs_with_>1_episode / affected_runs,
-    // rendered as a percentage; an empty denominator is `null` (unavailable),
-    // never a misleading 0.00.
-    const rateCell = td(g.repeat_rate != null ? Math.round(g.repeat_rate * 100) + "%" : "unavailable");
-    rateCell.title = "Share of this group's affected runs where the failure recurred "
-      + "more than once within that same run.";
-    tr.append(rateCell);
-    // AGR-04 (review 82cc113): a group can be 0% unrecovered and still
-    // contain only plausible (weaker-tier) resolutions — showing only the
-    // unrecovered share hid that distinction entirely. Render the full
-    // confirmed/plausible/unrecovered breakdown instead of one number.
+    tr.append(td(String(g.count)));
     tr.append(resolutionBreakdownCell(g));
-    tr.append(td(g.avg_turns_to_resolve != null ? g.avg_turns_to_resolve.toFixed(1) : "—"));
+
     // AGR-05/06 (review 82cc113): a group whose episodes NEVER had usage
     // instrumented renders as "unavailable", never a bare "0" indistinguishable
     // from a group that genuinely cost nothing. A group with SOME but not all
     // episodes measured keeps the number but flags it as a partial count.
-    // §4.18 "Redacted content is labelled `Redacted`; missing capture is
-    // labelled `Not captured`" (AGR-14): a partial count gets the same kind
-    // of visible, readable label as the "unavailable" case — never a bare
-    // trailing "*" whose meaning only exists in a hover-only title.
-    let tokensText = String(g.total_tokens);
+    let tokensText = fmtCompact(g.total_tokens);
     if (g.usage_availability === "unavailable") tokensText = "unavailable";
     else if (g.usage_availability === "partial") tokensText += " (partial)";
     const tokensCell = td(tokensText);
     if (g.overlapping_usage_events || g.usage_unavailable_count) tokensCell.title = g.usage_note;
     tr.append(tokensCell);
-    tr.append(td(fmtWallMs(g.total_wall_ms)));
-    tr.append(representativeEpisodesCell(g));
-    tr.append(argumentShapesCell(g));
     t.append(tr);
+
+    const detailCell = el("td"); detailCell.colSpan = 6;
+    detail.append(el("summary", null, "Details — avg turns, wall time, argument shapes, examples"));
+    const body = el("div", "fleet-detail-body");
+    // AGR-06: repeat_rate is affected_runs_with_>1_episode / affected_runs;
+    // an empty denominator is `null` (unavailable), never a misleading 0.00.
+    const rate = kvBlock("Repeat rate", g.repeat_rate != null ? Math.round(g.repeat_rate * 100) + "%" : "unavailable");
+    rate.title = "Share of this group's affected runs where the failure recurred more than once within that same run.";
+    body.append(rate);
+    body.append(kvBlock("Avg turns to resolve", g.avg_turns_to_resolve != null ? g.avg_turns_to_resolve.toFixed(1) : "—"));
+    body.append(kvBlock("Wall time", fmtWallMs(g.total_wall_ms)));
+    const argBlock = el("div", "kv-block");
+    argBlock.append(el("span", "kv-k", "Argument shapes"));
+    const argV = el("span", "kv-v"); argV.append(argumentShapesBlock(g)); argBlock.append(argV);
+    body.append(argBlock);
+    const exBlock = el("div", "kv-block");
+    exBlock.append(el("span", "kv-k", "Representative episodes"));
+    const exV = el("span", "kv-v"); exV.append(representativeEpisodesBlock(g)); exBlock.append(exV);
+    body.append(exBlock);
+    detail.append(body);
+    detailCell.append(detail);
+    detailRow.append(detailCell);
+    t.append(detailRow);
   }
   const scroll = el("div", "table-scroll");
   scroll.append(t);
@@ -239,30 +291,33 @@ function renderFleetTable(groups) {
 
 // U3: a drilldown onto this group's sample episodes (up to _MAX_ANCHORS,
 // item 30) — which run, how that one episode resolved, and which tier
-// selected its error signature — not just a bare "open" link with the detail
-// hidden behind a hover title. Matches the §4.16 .vs-drill convention used
-// for a comparison's contributing run pairs.
-function representativeEpisodesCell(g) {
-  const cell = el("td");
+// selected its error signature. Session links show a readable task name plus
+// a short, copyable id fragment (never the full "namespace/task__uuid"
+// string, which wraps into unreadable stacked fragments in a table cell).
+function representativeEpisodesBlock(g) {
+  const wrap = el("div");
   const anchors = g.example_anchors || [];
-  if (!anchors.length) { cell.append(el("span", "vs-counts", "none captured")); return cell; }
-  const d = el("details", "vs-drill");
-  d.append(el("summary", null, anchors.length + " representative episode(s)"));
-  const list = el("div", "vs-pairs");
+  if (!anchors.length) { wrap.append(el("span", "vs-counts", "none captured")); return wrap; }
+  const list = el("div", "vs-pairs fleet-examples");
   for (const a of anchors) {
-    const row = el("div", "vs-pair");
+    const row = el("div", "vs-pair fleet-example-row");
+    const { task } = runIdParts(a.run_id);
+    const short = shortRunId(a.run_id);
     const target = "Open " + a.run_id + " at this episode's failure (" + a.classification + ")";
-    const b = el("button", null, a.run_id);
+    const b = el("button", "fleet-example-link", task);
     b.title = target; b.setAttribute("aria-label", target);
     b.addEventListener("click", () => openRunAtEvent(a.run_id, a.failure_event_id));
     row.append(b);
+    if (short) {
+      row.append(el("span", "mono fleet-example-id", short));
+      row.append(copyButton(a.run_id, "Copy full run id"));
+    }
     row.append(el("span", "vs-counts", (a.classification || "?").replace(/_/g, " ")
       + (a.error_signature_basis === "fallback_last_nonempty" ? " · fallback signature" : "")));
     list.append(row);
   }
-  d.append(list);
-  cell.append(d);
-  return cell;
+  wrap.append(list);
+  return wrap;
 }
 
 // U3: item 31's argument-shape distribution for this exact (tool,
@@ -271,20 +326,19 @@ function representativeEpisodesCell(g) {
 // computes or stores those). Only meaningful when the table is grouped by
 // both dimensions together; a coarser grouping ("Tool only"/"Error only")
 // spans multiple (tool, error_signature) pairs and has no single distribution
-// to show, so the column says so rather than picking one arbitrarily.
-function argumentShapesCell(g) {
-  const cell = el("td");
+// to show, so the block says so rather than picking one arbitrarily.
+function argumentShapesBlock(g) {
+  const wrap = el("div");
   if (state.fleet.groupBy !== "tool,error_signature") {
-    cell.append(el("span", "vs-counts", "n/a for this grouping"));
-    return cell;
+    wrap.append(el("span", "vs-counts", "n/a for this grouping"));
+    return wrap;
   }
   const shapes = argumentShapesFor(g);
   if (!shapes || !shapes.shapes.length) {
-    cell.append(el("span", "vs-counts", "no retained tool_input"));
-    return cell;
+    wrap.append(el("span", "vs-counts", "no retained tool_input"));
+    return wrap;
   }
-  const d = el("details", "vs-drill");
-  d.append(el("summary", null, shapes.shapes.length + " shape(s) among "
+  wrap.append(el("p", "vs-counts", shapes.shapes.length + " shape(s) among "
     + shapes.total_failing_calls + " failing call(s)"));
   const list = el("div", "vs-pairs");
   for (const shape of shapes.shapes) {
@@ -294,9 +348,8 @@ function argumentShapesCell(g) {
     row.append(el("span", "vs-counts", Math.round(shape.share * 100) + "% · " + shape.count + " call(s)"));
     list.append(row);
   }
-  d.append(list);
-  cell.append(d);
-  return cell;
+  wrap.append(list);
+  return wrap;
 }
 
 // AGR-04 (review 82cc113): confirmed/plausible/unrecovered as three distinct

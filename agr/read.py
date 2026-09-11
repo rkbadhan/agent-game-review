@@ -138,9 +138,14 @@ def _moment_summary(candidate: dict) -> str:
     if ftype == "absence":
         return f"declared artifact {f.get('declared_artifact')} never observed"
     if ftype == "state_transition":
+        tool = f.get("tool")
+        diag = f.get("failure_diagnostic") or f.get("error_signature")
+        diag_usable = diag and f.get("error_signature_basis") != "fallback_last_nonempty"
+        lead = (f"{tool} failed: {diag}" if (tool and diag_usable)
+                else f"{tool} call failed" if tool else "tool call failed")
         if f.get("resolution_event"):
-            return f"failure at {f.get('failure_event')} recovered via strategy change"
-        return f"tool failure at {f.get('failure_event')} left unresolved before submission"
+            return f"{lead}, recovered via strategy change"
+        return f"{lead}, left unresolved before submission"
     return candidate.get("detector", "candidate")
 
 
@@ -735,6 +740,11 @@ def list_runs(store: Store) -> list[dict]:
         summaries.append({
             "run_id": run_id,
             "task_id": rs.get("task_id"),
+            # Runs surface (item: readable session identity) — the working
+            # directory the harness ran in, when the source captured one.
+            # None means the source never declared it, not that this run has
+            # no repository.
+            "cwd": rs.get("cwd"),
             "model": rs.get("model"),
             "agent": rs.get("agent"),
             "harness_version": rs.get("harness_version"),
@@ -1038,6 +1048,15 @@ def get_forensic(store: Store, run_id: str) -> dict:
     for evt in events:
         for step_id in evt.get("source_step_ids", []):
             events_by_step.setdefault(step_id, []).append(evt)
+    # Safe to key by event_id alone (no last-wins collision, and a paired
+    # call/result can never resolve to the SAME step as itself): every event
+    # this read model ever sees was built by agr.events.derive_events, which
+    # assigns each event exactly one source_step_ids entry from its own
+    # ATIF step — the mapping is a bijection, one event per step and one
+    # step per event, by construction.
+    step_of_event = {evt["event_id"]: step_id
+                     for step_id, evs in events_by_step.items() for evt in evs}
+    paired_event = _pair_tool_events(events)
 
     rows: list[dict] = []
     for step in source.get("steps", []):
@@ -1048,6 +1067,16 @@ def get_forensic(store: Store, run_id: str) -> dict:
         panel = _EVENT_PANEL.get(event_type, "timeline") if event_type else "timeline"
         cap = _PANEL_CAPABILITY.get(panel)
         level = capabilities.get(cap) if cap else None
+        # The paired call (for a result) or result (for a call) — same step,
+        # not event, since a UI selects steps. None when this step's event has
+        # no matched counterpart (an id-less capture's unresolved result, or a
+        # call the capture never observed a result for) or is not a tool_call/
+        # tool_result step at all.
+        paired_step_id = None
+        if primary is not None:
+            paired_eid = paired_event.get(primary["event_id"])
+            if paired_eid is not None:
+                paired_step_id = step_of_event.get(paired_eid)
         rows.append({
             "step_id": step_id,
             "kind": step.get("kind"),
@@ -1057,6 +1086,7 @@ def get_forensic(store: Store, run_id: str) -> dict:
             "sequence": primary["sequence"] if primary else None,
             "phase_id": primary.get("phase_id") if primary else None,
             "panel": panel,
+            "paired_step_id": paired_step_id,
             "content": _panel_content(step, event_type),
             "availability": {
                 "capability": cap,
@@ -1143,6 +1173,52 @@ def get_comparison(store: Store, run_id: str, left_key: str, right_key: str,
 
 
 # --- projection details ------------------------------------------------------
+
+
+def _pair_tool_events(events: list[dict]) -> dict[str, str]:
+    """``event_id -> paired event_id`` for every matched tool_call/tool_result
+    pair, so the forensic view can show a request and its response together
+    (spec §4.9/§4.12: "the matching tool request and result together") instead
+    of only whichever one a reader happened to click.
+
+    Mirrors :func:`agr._util.paired_result` specifically (the function its own
+    docstring names as "the ONE call/result index used by ... evidence
+    views"), not :func:`agr._util.paired_call`: matched by ``tool_use_id``
+    when BOTH sides carry one (correct for parallel calls), else the nearest
+    following id-less result with no other call in between. A result whose id
+    matches no captured call, or an id-less result following an id-BEARING
+    call, stays unpaired rather than guessed — ``paired_call`` alone falls
+    back to adjacency whenever the RESULT is id-less regardless of whether
+    the call it is nearest to actually carries an id; ``paired_result`` (and
+    this function) does not, since that direction is what recovery,
+    repetition detection, and fact validation already rely on for a
+    consistent call/result index. A capture that inconsistently tags only one
+    side of a pair with an id is not expected in practice (source adapters
+    tag both sides or neither), so this stays unpaired-by-design rather than
+    guessed.
+    """
+    pairs: dict[str, str] = {}
+    pending_by_id: dict[str, str] = {}
+    pending_adjacent: Optional[str] = None
+    for e in events:
+        et = e.get("event_type")
+        if et == "tool_call":
+            cid = (e.get("payload") or {}).get("tool_use_id")
+            if cid:
+                pending_by_id[str(cid)] = e["event_id"]
+                pending_adjacent = None
+            else:
+                pending_adjacent = e["event_id"]
+        elif et == "tool_result":
+            cid = (e.get("payload") or {}).get("tool_use_id")
+            call_id = pending_by_id.pop(str(cid), None) if cid else None
+            if call_id is None and not cid:
+                call_id = pending_adjacent
+            if call_id is not None:
+                pairs[call_id] = e["event_id"]
+                pairs[e["event_id"]] = call_id
+            pending_adjacent = None
+    return pairs
 
 
 def _panel_content(step: dict, event_type: Optional[str]) -> dict:
