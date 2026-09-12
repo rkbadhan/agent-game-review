@@ -84,7 +84,20 @@ Support priority, newest last:
    - Register as `("opencode", "agr.ingest_opencode", "OPENCODE_ADAPTER")`
      after `pi`, add an `OPENCODE_ADAPTER_VERSION`, and pin the mapping with
      tests over a captured sample session.
-4. **`otel`** — planned (spec §5.3 Increment 3).
+4. **span-tree sources** — `otel`, `langfuse`, `langsmith` — shipped (spec
+   §5.3). These three share one shape: a nested, timestamped span tree rather
+   than a per-turn log, so they share one implementation too: a single
+   **span-tree → trajectory flattener** (`agr/span_tree.py`) plus a thin field
+   map per source (`agr/ingest_otel.py`, `agr/ingest_langfuse.py`,
+   `agr/ingest_langsmith.py`), not three independent adapters. Built in the
+   planned order: flattener → `otel` (OTLP is what Langfuse and LangSmith also
+   accept) → `langfuse` → `langsmith`. Full design, field mappings, and
+   capability declarations: [`span-adapters.md`](./span-adapters.md).
+   `langfuse` additionally accepts the trace directly from the live API (no
+   file needed) via `agr/langfuse_api.py:fetch_trace` +
+   `agr ingest-langfuse-api --trace-id <id>` — see span-adapters.md for the
+   two accepted export shapes and the deprecation note on the endpoint it
+   calls.
 
 ## The step-kind vocabulary
 

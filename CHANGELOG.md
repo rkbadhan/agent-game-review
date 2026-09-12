@@ -290,6 +290,69 @@ anything else), then Patterns, then Runs.
   either value**, instead of a column of permanent "—" cells; a missing
   value is still never shown as a misleading 0.
 
+### Fixed (item 33, 2026-09-11 audit)
+
+A spot-check audit of `ignored_tool_failure` candidates measured 1/5
+precision on a sampled set: four of the five flagged episodes were a
+read-only existence/state check (`test -f`, `ls`, `stat`, `which`...) that
+came back non-zero because the target was absent — the answer the check
+existed to get — immediately followed by the agent creating or handling
+that same target. The fifth was a genuine unresolved failure and stayed
+correctly flagged.
+
+- **`RecoveryEpisode` gained `expected_probe`**, a judgement computed
+  alongside (never instead of) the existing `unrecovered_failure`
+  classification: true only when the failed call is a recognized probe
+  executable, its own failure reads as absence rather than some other
+  problem (a `ls` failing on "Permission denied" does not qualify), and a
+  later action in the episode's window addresses the SAME target. The raw
+  non-zero `tool_result` and the episode's evidence/window are untouched —
+  this labels an existing fact, it does not suppress one. Deliberately
+  never keyed on incidental command text like `2>/dev/null`: a genuine
+  failure redirects stderr exactly as often as a probe does.
+- **`ignored_tool_failure` no longer emits a candidate for an
+  `expected_probe` episode.** Every other `UNRECOVERED` episode — including
+  a probe with no addressing follow-up, and a probe that failed for a
+  different reason than absence — is unaffected and still flagged.
+- Regression coverage: `tests/test_expected_probe.py` (the four corrected
+  false-positive shapes, the fifth genuine-failure shape, and counter-
+  examples for suppressed stderr and an unrelated follow-up action) plus
+  two end-to-end `tests/test_detectors.py` cases through the full pipeline.
+- **Not done in this pass**: a fresh 50-finding precision re-audit against
+  real captured trajectories (the audit's own closing step) — this repo
+  carries no such corpus to draw that sample from.
+
+#### Follow-up (PR #69 review, 2026-09-12)
+
+A code-review pass on the above found five real bugs in the first cut, all
+reproduced and fixed:
+
+- **Crash**: a failing call with empty/whitespace content raised `IndexError`
+  before the probe-shape guard ever ran, aborting recovery classification
+  for the entire capture — not just for probe-shaped calls.
+- **Unguarded substring matching**: probe/follow-up target comparison had no
+  minimum-token-length floor, unlike the sibling
+  `is_state_changing_action_related_to` (`MIN_RELATED_TOKEN_LEN` = 3) — a
+  1-character target ("x") matched an unrelated `mkdir bax` by coincidence.
+  Fixed by reusing `_util.target_tokens`/`MIN_RELATED_TOKEN_LEN` directly
+  (both promoted to public names for that reuse) instead of a separate,
+  weaker reimplementation.
+- **Unsuccessful follow-up credited**: a target-matching `mkdir`/`touch`
+  that itself failed (e.g. permission denied) was credited the same as a
+  successful one — the target is still absent either way. `_probe_branch_
+  taken` now requires `is_tool_success` on the follow-up's own result.
+- **Stderr-only diagnostics missed**: `ls`/`stat`/`find`'s absence check
+  read only the rendered `content` text, never a Claude Code capture's
+  separately-recorded `tool_use_result.stderr` — so the exemption never
+  fired on exactly the capture shape the original audit's false positives
+  came from.
+- **Compound commands**: `test -f x || mkdir y` pulled the CHAINED command's
+  own executable/args into the probe's target set. Target extraction now
+  truncates at the first shell chain operator (`&&`/`||`/`;`/`|`/`&`).
+
+`RECOVERY_VERSION` bumped to `recovery-0.10`; five new regression tests
+added to `tests/test_expected_probe.py` reproducing each finding.
+
 ### Known gaps carried forward
 
 - **AGR-15** — no real `.gold.json` labels exist yet; annotation is a

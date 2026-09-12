@@ -54,7 +54,13 @@ SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # now the CURRENT (reconciled, effective_status is not None) check count,
 # never len(ctx.checks) — a superseded historical observation no longer
 # inflates the denominator a selected card renders as "N of total checks".
-DETECTOR_VERSION = "detectors-0.3"
+# 0.4 (item 33, 2026-09-11 audit): IgnoredToolFailure no longer emits a
+# candidate for an UNRECOVERED episode RecoveryEpisode.expected_probe marks
+# as an answered existence/state check followed by the agent taking the
+# intended branch — an audited sample measured 1/5 precision on exactly this
+# shape. The raw failure fact is untouched; only this detector's reading of
+# it changed.
+DETECTOR_VERSION = "detectors-0.4"
 CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
 # 1.1 (AGR-02, review 82cc113): reads each mapped check's effective_status
 # (the current, reconciled view) rather than its raw immutable status — a
@@ -194,7 +200,36 @@ ERROR_SIGNATURE_VERSION = "error-sig-0.2"
 # nonempty) actually selected the line, so an opaque fallback signature (bare
 # "---"/"}"/"===", no real diagnostic anywhere) was indistinguishable from a
 # confident traceback-derived one downstream (fleet grouping, the UI).
-RECOVERY_VERSION = "recovery-0.8"
+# 0.9 (item 33, 2026-09-11 audit): episodes now carry expected_probe — an
+# UNRECOVERED episode whose failed call was a read-only existence/state probe
+# (test/[/ls/stat/find/which/type), whose own failure reads as the target
+# being ABSENT rather than some other problem, and whose window shows a
+# LATER action addressing that same target. Additive only: classification,
+# evidence, and the window are unchanged — the raw non-zero result is never
+# suppressed, only labelled as also answering an expected check.
+# 0.10 (PR #69 review, 2026-09-12): five fixes to 0.9's expected_probe.
+# * A failing call with empty/whitespace content no longer crashes
+#   classification for the whole capture (an unguarded executable lookup
+#   raised IndexError before the probe-shape guard ever ran).
+# * Probe-target/follow-up-target comparison now reuses `_util.target_tokens`
+#   / `MIN_RELATED_TOKEN_LEN`, the same "no trivial 1-2 character token"
+#   floor `is_state_changing_action_related_to` already needs — a bare
+#   substring check previously let a 1-character target match an unrelated
+#   command purely by coincidence.
+# * A follow-up action must itself have SUCCEEDED to count as the intended
+#   branch — a target-matching mkdir/touch that itself failed (e.g.
+#   permission denied) leaves the target just as absent as before, and was
+#   previously credited the same as a successful one.
+# * `ls`/`stat`/`find`'s absence diagnostic is now also read from a Claude
+#   Code capture's separately-recorded stdout/stderr (`tool_use_result`),
+#   not only the rendered `content` text that adapter deliberately keeps
+#   distinct — the previous text-only read never fired the exemption on
+#   exactly the capture shape the audit's false positives came from.
+# * A compound command (`test -f x || mkdir y`) no longer pulls the CHAINED
+#   command's own executable/args into the probe's target set — only the
+#   probe's own invocation, truncated at the first shell chain operator, is
+#   considered.
+RECOVERY_VERSION = "recovery-0.10"
 
 # The corpus manifest (AGR-01): reproducible provenance over a Harbor eval
 # corpus root — source locations/checksums, logical run ids, capture ids, and

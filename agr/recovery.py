@@ -59,13 +59,17 @@ from . import version
 from .error_signature import diagnostic_line_with_basis as _compute_diagnostic_line_with_basis
 from .error_signature import error_signature_with_basis as _compute_error_signature_with_basis
 from ._util import (
+    MIN_RELATED_TOKEN_LEN,
     action_signature,
+    exit_code,
+    is_mutation,
     is_state_changing_action_related_to,
     is_tool_failure,
     is_tool_success,
     paired_call_index,
     paired_result,
     preceding_call_signature,
+    target_tokens,
 )
 from .schema import DerivedEvent, RecoveryEpisode
 
@@ -140,6 +144,183 @@ def _plausible_operation_match(success_sig: tuple | None, failed_sig: tuple | No
     targets_a = {t for t in tokens_a[1:] if not t.startswith("-")}
     targets_b = {t for t in tokens_b[1:] if not t.startswith("-")}
     return bool(targets_a & targets_b)
+
+
+# --- item 33 — expected-probe classification --------------------------------
+#
+# Audit finding (2026-09-11): IgnoredToolFailure measured 1/5 precision on a
+# sampled set of UNRECOVERED episodes. Four of the five were a read-only
+# existence/state CHECK (``test -f``, ``ls``, ``stat``...) that came back
+# non-zero because the target was absent — precisely the answer the agent was
+# asking for — immediately followed by the agent creating or handling that
+# same target. Flagging that as an "ignored failure" is wrong: nothing was
+# ignored, the branch the check existed to select WAS taken. The fifth was a
+# genuine unresolved failure and stayed correctly flagged.
+#
+# The fix does NOT touch ``is_tool_failure`` or the raw non-zero result — a
+# ``tool_result`` with a non-zero exit code is still, and must remain, a
+# failure fact (``classify_recoveries`` still opens an UNRECOVERED episode
+# for it, with its true evidence and window intact). What changes is a
+# SEPARATE, narrower judgement — ``RecoveryEpisode.expected_probe`` — read
+# only by detectors deciding whether an UNRECOVERED episode is also a
+# BEHAVIOURAL mistake worth a negative finding. The distinction is the point:
+# a probe answering "not there" is not a mistake, and misclassifying that
+# would be the same error IgnoredToolFailure just made, only inverted, if the
+# raw failure fact were suppressed instead of just re-labelled.
+#
+# Deliberately mechanical and conservative on three axes, per the audit's own
+# correction to an earlier, looser attempt at this same fix:
+#   1. The executable must be a CLOSED set of read-only existence/state
+#      checks — never inferred from command text like ``2>/dev/null``, which
+#      a genuine failure suppressing its own stderr can carry exactly as
+#      well as a probe can. A build, test, or install failure piping stderr
+#      to /dev/null is not exempted by that alone.
+#   2. The failure itself must read as ABSENCE, not some other problem that
+#      happens to share the executable — ``test``/``[``/``which``/``type``
+#      (boolean-by-design: a bare exit 1 with no output IS their ordinary
+#      "not there" answer) only for their own exit 1 (POSIX: false; exit 2+
+#      is the command's OWN usage error, a genuine problem); ``ls``/``stat``/
+#      ``find`` (display commands whose ordinary job is to succeed with
+#      output) only for an explicit "not found"-shaped diagnostic — a ``ls``
+#      that failed on "Permission denied" is a genuine problem, not an
+#      answered probe.
+#   3. A LATER action must address the SAME target the probe named — target
+#      overlap, not mere presence of ANY subsequent state-changing action.
+#      An unrelated mutation elsewhere in the trace establishes nothing about
+#      THIS probe and must never count as "the intended branch was taken".
+
+_EXISTENCE_PROBE_EXECUTABLES = {"test", "[", "ls", "stat", "find", "which", "type"}
+
+_ABSENCE_DIAGNOSTIC_MARKERS = (
+    "no such file or directory", "cannot access", "cannot stat",
+    "not found", "does not exist", "no matches found",
+)
+
+# A probe command chained with another via a shell operator (``test -f x ||
+# mkdir x``) is still ONE tool_call in most captures — only the part before
+# the operator is what the probe itself checked; ``mkdir``/``x`` after
+# ``||`` belongs to the OTHER command and must never be read as part of the
+# probe's own target set (review finding: compound commands otherwise
+# injected the chained command's own executable/args as spurious targets).
+_SHELL_CHAIN_OPERATORS = {"&&", "||", ";", "|", "&"}
+
+# The mechanical shape of "the agent created/populated the thing the probe
+# found missing" — a small, closed set mirroring ``_STATE_CHANGING_
+# EXECUTABLES`` in ``_util.py`` (deliberately not imported: a probe's
+# resolving action is a narrower notion — no ``rm``/``chmod``/``dd`` here,
+# which do not plausibly CREATE an absent target) plus ``touch``/``mv``, the
+# two common "make it exist" shapes that set omits.
+_PROBE_BRANCH_EXECUTABLES = {"mkdir", "touch", "cp", "mv", "install", "ln", "tee"}
+
+
+def _probe_executable(call_sig: tuple | None) -> Optional[str]:
+    """The call's own executable (first token), or ``None`` for a missing
+    signature or empty/whitespace-only content — never raises on either,
+    unlike an unguarded ``.split()[0]`` (review finding: a failing call with
+    empty content crashed classification for the entire capture)."""
+    tokens = str((call_sig[1] if call_sig else "") or "").split()
+    return tokens[0] if tokens else None
+
+
+def _probe_target_tokens(call_sig: tuple | None) -> Optional[frozenset]:
+    """The probe's target tokens (paths/names) when ``call_sig`` is a
+    recognized existence/state probe — ``None`` otherwise, including for
+    every command not in the closed executable set.
+
+    Reuses ``_util.target_tokens`` (and its ``MIN_RELATED_TOKEN_LEN`` floor)
+    so a probe target is held to the SAME "not a trivial 1-2 character
+    token" guard ``is_state_changing_action_related_to`` already needs —
+    without it, a probe target like ``"x"`` substring-matched an unrelated
+    ``mkdir bax`` (review finding). Only the probe's own invocation is
+    considered (truncated at the first shell chain operator); redirection
+    tokens (``2>/dev/null`` and similar) are noise, never a target and never
+    a signal either way — a genuine failure redirects stderr too.
+    """
+    if call_sig is None:
+        return None
+    tool, content = call_sig[0], str(call_sig[1] or "")
+    tokens = content.split()
+    if not tokens or tokens[0] not in _EXISTENCE_PROBE_EXECUTABLES:
+        return None
+    own_tail: list[str] = []
+    for t in tokens[1:]:
+        if t in _SHELL_CHAIN_OPERATORS:
+            break
+        own_tail.append(t)
+    own_content = " ".join([tokens[0], *own_tail])
+    targets = {
+        t for t in target_tokens((tool, own_content))
+        if t != "]" and ">" not in t and "<" not in t
+    }
+    return frozenset(targets) or None
+
+
+# ``test``/``[``, ``which``/``type`` are BOOLEAN probes by design — a plain
+# exit 1 with no output IS their ordinary "not there" answer (``which black``
+# on a system without it prints nothing at all). ``ls``/``stat``/``find`` are
+# DISPLAY commands whose ordinary job is to succeed with output; a non-zero
+# exit is not self-explanatory the same way, so those require an explicit
+# absence-shaped diagnostic — a ``ls`` that failed on "Permission denied" is
+# a genuine problem, not an answered probe, and must not be exempted just
+# because its executable also appears in existence checks.
+_BOOLEAN_PROBE_EXECUTABLES = {"test", "[", "which", "type"}
+
+
+def _probe_failure_is_absence_shaped(executable: str, failure_event: DerivedEvent) -> bool:
+    """Whether the probe's own failure reads as "the target is absent" — the
+    expected result of an existence check — rather than some other problem
+    that happens to share the executable (permission denied, a malformed
+    invocation)."""
+    if executable in _BOOLEAN_PROBE_EXECUTABLES:
+        # POSIX ``test``/``[``: exit 1 is the condition being false — the
+        # whole POINT of the command; exit 2+ is the command's OWN usage
+        # error, a genuine problem this must not paper over. ``which``/
+        # ``type`` report "not found" the same boolean way.
+        return exit_code(failure_event) == 1
+    # Claude Code captures a Bash result's raw stdout/stderr separately from
+    # the rendered ``content`` text (ingest_claude.py's ``tool_use_result``) —
+    # an ``ls``/``stat``/``find`` diagnostic that lands only in stderr must
+    # still be seen here, or this exemption never fires on exactly the
+    # captures the audit's own false positives came from (review finding).
+    parts = [str(failure_event.payload.get("content") or failure_event.text() or "")]
+    raw_result = failure_event.payload.get("tool_use_result")
+    if isinstance(raw_result, dict):
+        parts.append(str(raw_result.get("stderr") or ""))
+        parts.append(str(raw_result.get("stdout") or ""))
+    text = " ".join(parts).lower()
+    return any(marker in text for marker in _ABSENCE_DIAGNOSTIC_MARKERS)
+
+
+def _probe_branch_taken(events: list[DerivedEvent], start_idx: int, end_idx: int,
+                         probe_targets: frozenset) -> bool:
+    """Whether some call in ``events[start_idx:end_idx]`` addresses the SAME
+    target the probe checked for AND itself succeeded — target overlap,
+    substring-containment like ``_util.is_state_changing_action_related_to``'s
+    own check, never mere presence of ANY state-changing action. An action on
+    a different target is never credited, however state-changing it is; nor
+    is an action on the RIGHT target whose own result failed (e.g. ``mkdir``
+    denied permission) — the target is still absent, so nothing was actually
+    resolved (review finding: a failed follow-up was previously credited the
+    same as a successful one)."""
+    for i in range(start_idx, end_idx):
+        e = events[i]
+        if e.event_type != "tool_call":
+            continue
+        if is_mutation(e):
+            path = str(e.payload.get("path") or e.payload.get("content") or "")
+            if not any(t in path or path in t for t in probe_targets):
+                continue
+        else:
+            content = str(e.payload.get("content") or "")
+            tokens = content.split()
+            if not tokens or tokens[0] not in _PROBE_BRANCH_EXECUTABLES:
+                continue
+            action_targets = target_tokens((e.payload.get("tool"), content))
+            if not any(a in b or b in a for a in action_targets for b in probe_targets):
+                continue
+        if is_tool_success(paired_result(events, i)):
+            return True
+    return False
 
 
 # --- item 29 (2026-09-08): fleet-view enrichment helpers ---------------------
@@ -424,6 +605,22 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 window_end_idx = n - 1
                 usage_completeness = "partial"
 
+        # Item 33: an UNRECOVERED episode whose failed call was a read-only
+        # existence/state probe, whose own failure reads as absence (not some
+        # other problem), and whose window shows a later action addressing
+        # the SAME target — the mechanical shape of "the agent asked, got
+        # 'not there', and took the intended branch". Never computed for the
+        # other two classifications: those already found a resolving action,
+        # so there is nothing left for "expected, not ignored" to say.
+        expected_probe = False
+        if classification == UNRECOVERED:
+            probe_targets = _probe_target_tokens(failed_sig)
+            probe_executable = _probe_executable(failed_sig)
+            if (probe_targets and probe_executable
+                    and _probe_failure_is_absence_shaped(probe_executable, ev)
+                    and _probe_branch_taken(events, idx + 1, window_end_idx + 1, probe_targets)):
+                expected_probe = True
+
         # Item 29: a deterministic summary of this episode for the fleet view
         # — every field below is derived from records this function already
         # computed, none of it a new judgement call.
@@ -526,6 +723,7 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 usage_records=usage_records,
                 wall_ms=wall_ms,
                 resolved_by=resolved_by,
+                expected_probe=expected_probe,
                 derivation_version=version.RECOVERY_VERSION,
             )
         )

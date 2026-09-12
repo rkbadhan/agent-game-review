@@ -220,6 +220,47 @@ def cmd_ingest_pi(args) -> int:
     return cmd_ingest_from(args)
 
 
+def cmd_ingest_langfuse_api(args) -> int:
+    """Fetch one Langfuse trace by id from the live API, then ingest it.
+
+    A thin composition of two already-separate, already-tested seams:
+    ``agr.langfuse_api.fetch_trace`` (the only network access in this whole
+    path) and the Langfuse adapter's ``convert()`` (which accepts the
+    fetched flat dict directly — no intermediate file, unlike ``ingest-from``
+    which always reads a path). Everything after that point — warnings,
+    ``_ingest_doc``'s printed summary — is identical to ``ingest-from
+    --adapter langfuse``, so the two paths stay behaviourally in sync.
+
+    Credentials/host resolve inside ``fetch_trace`` (``--host`` here, else
+    ``$LANGFUSE_HOST``/``$LANGFUSE_PUBLIC_KEY``/``$LANGFUSE_SECRET_KEY``) —
+    there is deliberately no ``--public-key``/``--secret-key`` flag, so a
+    secret can never end up in shell history or a process listing; only the
+    host, which is not sensitive, is ever a CLI argument. The secret key
+    itself is never printed by anything on this path.
+    """
+    from .ingest_langfuse import LANGFUSE_ADAPTER
+    from .langfuse_api import LangfuseAPIError, fetch_trace
+
+    try:
+        trace = fetch_trace(args.trace_id, host=args.host)
+    except (ValueError, LangfuseAPIError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    result = LANGFUSE_ADAPTER.convert(
+        trace,
+        task_id=args.task_id,
+        instruction=args.instruction,
+        run_id=args.run_id,
+        sweep_id=args.sweep_id,
+        configuration_id=args.configuration_id,
+    )
+    for w in result.warnings:
+        print(f"  adapter warning: {w}")
+    store = Store(args.store)
+    return _ingest_doc(result.doc, store)
+
+
 def _ingest_doc(doc: dict, store: Store) -> int:
     analysis = analyze(doc, store)
     rs = analysis.run_source
@@ -1184,6 +1225,22 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("path", help="path to a pi session .jsonl file")
     _add_adapter_args(pp)
     pp.set_defaults(func=cmd_ingest_pi)
+
+    pla = sub.add_parser(
+        "ingest-langfuse-api",
+        help="fetch one Langfuse trace by id from the live API and ingest it")
+    pla.add_argument("--trace-id", required=True, help="Langfuse trace id to fetch")
+    pla.add_argument("--host", default=None,
+                     help="Langfuse host, e.g. https://cloud.langfuse.com (default: "
+                          "$LANGFUSE_HOST, else http://localhost:3000). Credentials are "
+                          "never a CLI argument: set $LANGFUSE_PUBLIC_KEY / "
+                          "$LANGFUSE_SECRET_KEY.")
+    pla.add_argument("--task-id", help="benchmark task id (default: derived from the trace id)")
+    pla.add_argument("--instruction", help="task instruction (default: the trace's captured input)")
+    pla.add_argument("--run-id", help="logical run id (default: derived from the trace id)")
+    pla.add_argument("--sweep-id", help="sweep identity for cross-run surfaces")
+    pla.add_argument("--configuration-id", help="pinned configuration identity")
+    pla.set_defaults(func=cmd_ingest_langfuse_api)
 
     ps = sub.add_parser("show", help="show the deterministic review for a run")
     ps.add_argument("run_id", help="logical run id")

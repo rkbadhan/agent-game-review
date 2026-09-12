@@ -101,11 +101,15 @@ class Adapter(Protocol):
 # adapter's dependencies and never risks an import cycle. Adding a harness is
 # one entry here plus one file. Registry order is support priority: eval-
 # framework sources first (Harbor / Terminal-Bench 2.0 is the primary path),
-# then interactive-session sources (pi), then future harnesses (opencode, otel).
+# then interactive-session sources (pi), then span-tree sources (otel,
+# langfuse, langsmith — docs/span-adapters.md), newest last.
 _BUILTIN_ADAPTERS: dict[str, tuple[str, str]] = {
     "harbor": ("agr.ingest_harbor", "HARBOR_ADAPTER"),
     "pi": ("agr.ingest_pi", "PI_ADAPTER"),
     "claude": ("agr.ingest_claude", "CLAUDE_ADAPTER"),
+    "otel": ("agr.ingest_otel", "OTEL_ADAPTER"),
+    "langfuse": ("agr.ingest_langfuse", "LANGFUSE_ADAPTER"),
+    "langsmith": ("agr.ingest_langsmith", "LANGSMITH_ADAPTER"),
 }
 
 

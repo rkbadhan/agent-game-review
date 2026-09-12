@@ -476,6 +476,17 @@ class RecoveryEpisode:
     wall_ms: Optional[int] = None                 # wall-clock ms failure->resolution, when both carry a timestamp
     nth_occurrence_in_run: int = 1                # 1-indexed count of this error_signature within THIS run
     resolved_by: Optional[str] = None             # the resolving call's tool name; None if unresolved
+    # Item 33 (2026-09-11 audit): True only for an UNRECOVERED episode whose
+    # failed call was a read-only existence/state probe (test/[/ls/stat/
+    # find/which/type), whose own failure reads as the target being ABSENT
+    # rather than some other problem, and whose window shows a LATER action
+    # addressing that same target — "the agent asked, got 'not there', and
+    # took the intended branch". Distinguishing this from a genuine mistake
+    # is a judgement ON TOP of the raw failure, never a replacement for it:
+    # ``classification`` still reads ``unrecovered_failure`` and the episode
+    # keeps its true evidence/window — only a detector deciding whether this
+    # is ALSO a behavioural finding worth surfacing should read this flag.
+    expected_probe: bool = False
     derivation_version: str = ""
 
     def to_dict(self) -> dict:

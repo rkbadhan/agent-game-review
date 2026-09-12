@@ -293,7 +293,7 @@ def is_state_changing_action(event: DerivedEvent) -> bool:
 # Minimum token length considered for the substring relatedness check below —
 # excludes trivial single/double-character tokens that would match almost
 # anything ("rm -f a" should not "relate" to any command via the token "a").
-_MIN_RELATED_TOKEN_LEN = 3
+MIN_RELATED_TOKEN_LEN = 3
 
 # AGR-04 (PR #56 review), narrowed further by AGR-02 (review 82cc113): a
 # closed, mechanical set of PATH markers — never a file extension — that can
@@ -336,9 +336,9 @@ def _is_functional_edit_target(path: str) -> bool:
 _NETWORK_PROBE_EXECUTABLES = {"curl", "wget", "nc", "ncat", "ping", "telnet", "http", "https"}
 
 
-def _target_tokens(target_sig: Optional[tuple]) -> set[str]:
+def target_tokens(target_sig: Optional[tuple]) -> set[str]:
     tokens = str((target_sig[1] if target_sig else "") or "").split()
-    return {t for t in tokens[1:] if not t.startswith("-") and len(t) >= _MIN_RELATED_TOKEN_LEN}
+    return {t for t in tokens[1:] if not t.startswith("-") and len(t) >= MIN_RELATED_TOKEN_LEN}
 
 
 def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optional[tuple]) -> bool:
@@ -367,7 +367,7 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
     containment, not exact equality, so ``rm -rf tests/__pycache__`` still
     relates to a failed ``pytest tests/`` (the target/tail token ``tests/``
     names a directory the rm's own target path lives under). A target under
-    ``_MIN_RELATED_TOKEN_LEN`` characters is excluded from the check.
+    ``MIN_RELATED_TOKEN_LEN`` characters is excluded from the check.
     """
     failed_tokens = str((target_sig[1] if target_sig else "") or "").split()
     failed_executable = failed_tokens[0] if failed_tokens else None
@@ -377,7 +377,7 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
             return False
         if failed_executable not in _NETWORK_PROBE_EXECUTABLES:
             return True
-        failed_targets = _target_tokens(target_sig)
+        failed_targets = target_tokens(target_sig)
         if not failed_targets:
             return True  # nothing to compare against — cannot rule out relatedness
         return any(t in path or path in t for t in failed_targets)
@@ -389,8 +389,8 @@ def is_state_changing_action_related_to(event: DerivedEvent, target_sig: Optiona
         return False
     if target_sig is None:
         return False
-    action_targets = {t for t in tokens[1:] if not t.startswith("-") and len(t) >= _MIN_RELATED_TOKEN_LEN}
-    failed_targets = _target_tokens(target_sig)
+    action_targets = {t for t in tokens[1:] if not t.startswith("-") and len(t) >= MIN_RELATED_TOKEN_LEN}
+    failed_targets = target_tokens(target_sig)
     return any(a in b or b in a for a in action_targets for b in failed_targets)
 
 
