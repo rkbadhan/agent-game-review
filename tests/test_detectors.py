@@ -25,6 +25,23 @@ def test_ignored_tool_failure_silent_when_recovered(tmp_path, load_fixture):
     assert _by_name(a)["ignored_tool_failure"].candidates == []
 
 
+def test_ignored_tool_failure_silent_on_expected_probe(tmp_path, load_fixture):
+    """Item 33 (2026-09-11 audit): a ``test -f`` that came back non-zero
+    because the file was absent, immediately followed by the agent creating
+    it, is not an ignored failure — the check's own answer was acted on."""
+    a = _analyze(tmp_path, load_fixture, "expected_probe_then_create.atif.json")
+    assert _by_name(a)["ignored_tool_failure"].candidates == []
+
+
+def test_ignored_tool_failure_still_fires_on_unactioned_probe(tmp_path, load_fixture):
+    """The same probe shape, but nothing ever creates the missing file —
+    a genuinely ignored failure, which must still be flagged."""
+    a = _analyze(tmp_path, load_fixture, "probe_without_followup.atif.json")
+    d = _by_name(a)["ignored_tool_failure"]
+    assert len(d.candidates) == 1
+    assert d.candidates[0].anchor_event_ids[0] == "evt_003"  # the failing tool_result
+
+
 def test_successful_recovery_detector_is_positive(tmp_path, load_fixture):
     a = _analyze(tmp_path, load_fixture, "tool_failure_recovery.atif.json")
     d = _by_name(a)["successful_recovery_via_strategy_change"]

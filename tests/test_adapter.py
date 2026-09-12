@@ -59,6 +59,17 @@ def test_registry_order_is_support_priority_harbor_first():
     names = adapter_names()
     assert names[0] == "harbor"
     assert "pi" in names
+    assert "otel" in names
+    assert "langfuse" in names
+    assert "langsmith" in names
+    # Span-tree sources (docs/span-adapters.md) are the newest support tier —
+    # registered after every eval-framework/interactive-session adapter, and
+    # among themselves in build order: otel -> langfuse -> langsmith.
+    assert names.index("otel") > names.index("harbor")
+    assert names.index("otel") > names.index("pi")
+    assert names.index("otel") > names.index("claude")
+    assert names.index("langfuse") > names.index("otel")
+    assert names.index("langsmith") > names.index("langfuse")
 
 
 def test_adapters_carry_their_own_version_stamp():
@@ -70,6 +81,18 @@ def test_adapters_carry_their_own_version_stamp():
     assert get_adapter("pi").version == PI_ADAPTER_VERSION
     assert HARBOR_ADAPTER_VERSION.startswith("harbor-")
     assert PI_ADAPTER_VERSION.startswith("pi-")
+
+    from agr.ingest_otel import OTEL_ADAPTER_VERSION
+    assert get_adapter("otel").version == OTEL_ADAPTER_VERSION
+    assert OTEL_ADAPTER_VERSION.startswith("otel-")
+
+    from agr.ingest_langfuse import LANGFUSE_ADAPTER_VERSION
+    assert get_adapter("langfuse").version == LANGFUSE_ADAPTER_VERSION
+    assert LANGFUSE_ADAPTER_VERSION.startswith("langfuse-")
+
+    from agr.ingest_langsmith import LANGSMITH_ADAPTER_VERSION
+    assert get_adapter("langsmith").version == LANGSMITH_ADAPTER_VERSION
+    assert LANGSMITH_ADAPTER_VERSION.startswith("langsmith-")
 
 
 def test_get_unknown_adapter_raises_with_helpful_message():

@@ -196,6 +196,15 @@ class IgnoredToolFailure(Detector):
         for ep in ctx.recoveries:
             if ep.classification != UNRECOVERED:
                 continue
+            # Item 33 (2026-09-11 audit): a raw non-zero result stays a raw
+            # non-zero result — ``classify_recoveries`` still opened this
+            # UNRECOVERED episode with its true evidence intact — but an
+            # existence/state probe whose failure meant "not there" and was
+            # followed by the agent taking exactly that branch was never
+            # IGNORED. Flagging it here would repeat the audit's own finding
+            # (1/5 precision on this detector), just inverted.
+            if ep.expected_probe:
+                continue
             anchor = [ep.failure_event_id] + ([submit.event_id] if submit else [])
             out.append(self._candidate(
                 ctx, ep.failure_event_id, kind="behaviour", anchor_event_ids=anchor,

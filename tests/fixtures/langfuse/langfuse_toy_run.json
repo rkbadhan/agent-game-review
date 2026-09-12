@@ -1,0 +1,151 @@
+{
+  "id": "trace-toy-001",
+  "name": "config-fixer",
+  "sessionId": "conv-toy-001",
+  "timestamp": "2026-09-01T10:00:00.000Z",
+  "input": "Read config.yaml, fix the port field to 8080, and validate the change.",
+  "output": "Fixed port to 8080 in config.yaml; reviewer subagent confirmed the change is valid.",
+  "htmlPath": "/project/proj-toy/traces/trace-toy-001",
+  "observations": [
+    {
+      "id": "obs-m1",
+      "type": "GENERATION",
+      "parentObservationId": null,
+      "name": "chat-1",
+      "model": "gpt-x",
+      "startTime": "2026-09-01T10:00:01.000Z",
+      "usage": {
+        "input": 120,
+        "output": 18
+      },
+      "output": "I'll read config.yaml first."
+    },
+    {
+      "id": "obs-t1",
+      "type": "TOOL",
+      "parentObservationId": null,
+      "name": "read_config",
+      "startTime": "2026-09-01T10:00:02.000Z",
+      "level": "DEFAULT",
+      "input": {
+        "path": "config.yaml"
+      },
+      "output": "port: 80\nhost: localhost\n"
+    },
+    {
+      "id": "obs-m2",
+      "type": "GENERATION",
+      "parentObservationId": null,
+      "name": "chat-2",
+      "model": "gpt-x",
+      "startTime": "2026-09-01T10:00:03.000Z",
+      "usage": {
+        "input": 140,
+        "output": 22
+      },
+      "output": "Validating the current config before editing."
+    },
+    {
+      "id": "obs-v1",
+      "type": "TOOL",
+      "parentObservationId": null,
+      "name": "validate_config",
+      "startTime": "2026-09-01T10:00:04.000Z",
+      "level": "DEFAULT",
+      "input": {
+        "path": "config.yaml"
+      },
+      "output": "{\"returncode\": 1, \"output\": \"connection refused\"}"
+    },
+    {
+      "id": "obs-v2",
+      "type": "TOOL",
+      "parentObservationId": null,
+      "name": "validate_config",
+      "startTime": "2026-09-01T10:00:05.000Z",
+      "input": {
+        "path": "config.yaml"
+      },
+      "output": "ok: schema valid"
+    },
+    {
+      "id": "obs-m3",
+      "type": "GENERATION",
+      "parentObservationId": null,
+      "name": "chat-3",
+      "model": "gpt-x",
+      "startTime": "2026-09-01T10:00:06.000Z",
+      "usage": {
+        "input": 160,
+        "output": 30
+      },
+      "output": "Writing the fix now."
+    },
+    {
+      "id": "obs-w1",
+      "type": "TOOL",
+      "parentObservationId": null,
+      "name": "write_config",
+      "startTime": "2026-09-01T10:00:07.000Z",
+      "input": {
+        "path": "config.yaml",
+        "port": 8080
+      },
+      "output": "wrote config.yaml"
+    },
+    {
+      "id": "obs-eval1",
+      "type": "EVALUATOR",
+      "parentObservationId": null,
+      "name": "policy-check",
+      "startTime": "2026-09-01T10:00:07.500Z",
+      "output": "no policy violations detected"
+    },
+    {
+      "id": "obs-sub",
+      "type": "AGENT",
+      "parentObservationId": null,
+      "name": "reviewer",
+      "startTime": "2026-09-01T10:00:08.000Z"
+    },
+    {
+      "id": "obs-sm1",
+      "type": "GENERATION",
+      "parentObservationId": "obs-sub",
+      "name": "chat-sub",
+      "model": "gpt-x-mini",
+      "startTime": "2026-09-01T10:00:08.100Z",
+      "usage": {
+        "input": 80,
+        "output": 12
+      },
+      "output": "Diffing the change."
+    },
+    {
+      "id": "obs-st1",
+      "type": "TOOL",
+      "parentObservationId": "obs-sub",
+      "name": "diff_check",
+      "startTime": "2026-09-01T10:00:08.300Z",
+      "input": {
+        "path": "config.yaml"
+      },
+      "output": "diff: port 80 -> 8080 (expected)"
+    }
+  ],
+  "scores": [
+    {
+      "id": "score-1",
+      "name": "correctness",
+      "dataType": "BOOLEAN",
+      "value": 1,
+      "stringValue": "True"
+    },
+    {
+      "id": "score-2",
+      "name": "helpfulness",
+      "dataType": "NUMERIC",
+      "value": 0.8
+    }
+  ]
+}
