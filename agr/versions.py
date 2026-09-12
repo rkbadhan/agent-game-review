@@ -572,6 +572,15 @@ def _failure_mode_metrics(pairs: list[dict]) -> list[dict]:
     return rows
 
 
+def _execution_metric(run: dict, dimension: str, key: str) -> Optional[float]:
+    metric = (((run.get("execution_quality") or {}).get("efficiency") or {})
+              .get(dimension) or {})
+    if not metric.get("evaluated"):
+        return None
+    value = metric.get(key)
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def _cost_metrics(pairs: list[dict]) -> list[dict]:
     """Token / cost / latency change — reported only where the capture has it."""
     rows = []
@@ -579,23 +588,37 @@ def _cost_metrics(pairs: list[dict]) -> list[dict]:
         ("duration_s", "Run duration (s)", _duration),
         ("cost", "Cost", lambda r: (r.get("run") or {}).get("cost")),
         ("tokens", "Tokens", lambda r: _token_total((r.get("run") or {}).get("tokens"))),
+        ("median_input_tokens", "Median generation input tokens", lambda r:
+            _execution_metric(r, "context_bloat", "median_input_tokens")),
+        ("p95_generation_ms", "P95 generation latency (ms)", lambda r:
+            _execution_metric(r, "latency", "p95_generation_ms")),
+        ("redundant_actions", "Redundant actions", lambda r:
+            _execution_metric(r, "redundant_work", "violations")),
     ):
-        base = [getter(p["_baseline"]) for p in pairs]
-        cand = [getter(p["_candidate"]) for p in pairs]
-        paired = [(b, c) for b, c in zip(base, cand) if b is not None and c is not None]
-        if not paired:
+        eligible = [
+            (pair, getter(pair["_baseline"]), getter(pair["_candidate"]))
+            for pair in pairs
+        ]
+        eligible = [
+            (pair, baseline, candidate)
+            for pair, baseline, candidate in eligible
+            if baseline is not None and candidate is not None
+        ]
+        if not eligible:
             rows.append({"metric_id": metric_id, "label": label, "kind": "resource",
                          "captured": False, "change": "not_captured"})
             continue
-        stats = _paired_difference([c - b for b, c in paired])
+        stats = _paired_difference([candidate - baseline
+                                    for _, baseline, candidate in eligible])
         rows.append({
             "metric_id": metric_id, "label": label, "kind": "resource", "captured": True,
-            "baseline": {"mean": _mean([b for b, _ in paired]), "n": len(paired)},
-            "candidate": {"mean": _mean([c for _, c in paired]), "n": len(paired)},
-            "contributing_pair_ids": [p["pair_id"] for p, (b, c) in
-                                      zip(pairs, zip(base, cand)) if b is not None and c is not None],
+            "baseline": {"mean": _mean([baseline for _, baseline, _ in eligible]),
+                         "n": len(eligible)},
+            "candidate": {"mean": _mean([candidate for _, _, candidate in eligible]),
+                          "n": len(eligible)},
+            "contributing_pair_ids": [pair["pair_id"] for pair, _, _ in eligible],
             "statistics": stats,
-            "change": _label_change(stats, False, len(paired), len(paired)),
+            "change": _label_change(stats, False, len(eligible), len(eligible)),
         })
     return rows
 

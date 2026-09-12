@@ -796,6 +796,29 @@ def test_message_usage_attaches_to_first_step_only_deduped_by_message_id(tmp_pat
     assert costs[0] == {"usage": {"input_tokens": 100, "output_tokens": 40}}
     assert costs[1] is None
     assert costs[2] is None
+    assert non_task_steps[0]["generation_event"] is True
+    assert doc["capabilities"]["generation_usage"] == "complete"
+
+
+def test_later_record_can_supply_usage_for_existing_message_generation(tmp_path):
+    lines = [
+        {"type": "user", "sessionId": "sess-cost-late",
+         "message": {"role": "user", "content": "Go."}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "m", "id": "msg_late",
+         "content": [{"type": "thinking", "thinking": "working"}]}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "m", "id": "msg_late",
+         "usage": {"input_tokens": 200_000, "output_tokens": 10},
+         "content": [{"type": "text", "text": "done"}]}},
+    ]
+    doc = convert(_write_session(tmp_path, lines)).doc
+    generations = [step for step in doc["steps"] if step.get("generation_event")]
+    assert len(generations) == 1
+    assert generations[0]["cost"] == {
+        "usage": {"input_tokens": 200_000, "output_tokens": 10}
+    }
+    assert doc["capabilities"]["generation_usage"] == "complete"
 
 
 def test_two_messages_each_get_their_own_cost_by_distinct_message_id(tmp_path):

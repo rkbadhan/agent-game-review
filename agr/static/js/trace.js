@@ -35,9 +35,18 @@ function renderTrace() {
   const fs = el("div", "fsteps"); fs.append(el("div", "th", "Timeline · " + f.steps.length + " source steps"));
   for (const s of f.steps) {
     const row = el("button", "step"); row.dataset.stepId = s.step_id;
+    if ((s.execution_findings || []).length) row.classList.add("execution-flag");
     row.append(el("span", "seq", s.sequence != null ? String(s.sequence) : "·"));
-    const k = el("div", "k"); const line = el("div"); line.append(el("span", "kind", s.kind || "?"), document.createTextNode(" "), el("span", "who", s.actor || "")); k.append(line);
-    k.append(el("div", "who", s.step_id + (s.event_ids && s.event_ids.length ? " → " + s.event_ids.join(", ") : ""))); row.append(k);
+    const k = el("div", "k"); const line = el("div"); line.append(el("span", "kind", s.kind || "?"), document.createTextNode(" "), el("span", "who", s.actor || ""));
+    if ((s.content || {}).input_tokens != null || (s.content || {}).wall_ms != null) {
+      const c = s.content || {}, detail = [];
+      if (c.input_tokens != null) detail.push(fmtCompact(c.input_tokens) + " input tokens");
+      if (c.wall_ms != null) detail.push(fmtDuration(c.wall_ms / 1000));
+      if (detail.length) line.append(document.createTextNode(" · " + detail.join(" · ")));
+    }
+    k.append(line);
+    k.append(el("div", "who", s.step_id + (s.event_ids && s.event_ids.length ? " → " + s.event_ids.join(", ") : "")
+      + ((s.execution_findings || []).length ? " · ⚠ execution" : ""))); row.append(k);
     row.addEventListener("click", () => selectStep(s.step_id)); fs.append(row);
   }
   grid.append(fs);
@@ -116,10 +125,16 @@ function renderStepContent(step, opts) {
   const c = (step && step.content) || {};
   const av = (step && step.availability) || {};
   const frag = document.createDocumentFragment();
-  if (av.state === "unavailable") {
+  const generationTelemetry = ["input_tokens", "output_tokens", "total_tokens", "wall_ms", "start_time", "end_time", "provider", "model"]
+    .some(key => c[key] != null);
+  if (av.state === "unavailable" && !generationTelemetry) {
     frag.append(el("div", "content-state unavailable", "Not captured"));
     frag.append(el("p", "dim", "This evidence type (" + (av.capability || "capability") + ") is unavailable for this run's capture."));
     return frag;
+  }
+  if (av.state === "unavailable" && generationTelemetry) {
+    frag.append(el("div", "content-state unavailable", "Message content not captured"));
+    frag.append(el("p", "dim", "Generation usage/timing metadata below was captured independently."));
   }
   const keys = Object.keys(c);
   if (!keys.length) {
@@ -128,7 +143,7 @@ function renderStepContent(step, opts) {
     return frag;
   }
   if (av.state === "partial") frag.append(el("div", "content-state partial", "Partial capture"));
-  const order = ["direction", "tool", "path", "artifact_path", "exit_code", "content", "data", "summary"];
+  const order = ["direction", "tool", "path", "artifact_path", "exit_code", "input_tokens", "output_tokens", "total_tokens", "wall_ms", "start_time", "end_time", "provider", "model", "content", "data", "summary"];
   const seen = new Set();
   const textKeys = new Set(["content", "data", "summary"]);
   for (const key of order.concat(keys.filter(k => !order.includes(k)))) {

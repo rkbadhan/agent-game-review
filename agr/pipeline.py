@@ -24,6 +24,7 @@ from .contract import (
 from .detectors import DetectorContext, run_detectors
 from .evidence import slice_distributed, slice_external, slice_for_check, slice_omission
 from .events import derive_events
+from .execution_quality import execution_quality_summary
 from .ingest import IngestResult, ingest
 from .opportunities import detect_opportunities
 from .phases import segment_phases
@@ -63,6 +64,7 @@ class Analysis:
     recoveries: list[RecoveryEpisode]
     evidence_slices: list[EvidenceSlice]
     detector_results: list[DetectorResult]
+    execution_quality: dict
     signature: list[SignatureRow]
     idempotent: bool
     review_moments: list[ReviewMoment] = field(default_factory=list)
@@ -137,6 +139,7 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         doc=doc, profile=profile, recoveries=recoveries, opportunities=opportunities,
     )
     detector_results = run_detectors(ctx)
+    execution_quality = execution_quality_summary(detector_results, events)
 
     # Omission-branch slices for absence candidates (e.g. required artifact absent).
     verify_opp = next((o for o in opportunities if o.trigger == "required_artifact_exists"), None)
@@ -157,14 +160,22 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
                 opp, cand.anchor_event_ids[0], fs_supported,
             ))
 
-    # Distributed-branch slices: repeated-action patterns anchor an interval.
+    # Distributed-branch slices: execution-quality patterns retain every
+    # explicitly referenced result event as well as their primary anchors.
     for r in detector_results:
-        if r.detector != "repeated_action_no_new_info":
+        if r.detector not in {
+            "context_token_bloat", "excess_latency", "repeated_action_no_new_info"
+        }:
             continue
         for cand in r.candidates:
+            evidence_ids = list(cand.anchor_event_ids)
+            for fact in cand.structured_facts:
+                for event_id in fact.get("result_event_ids", []):
+                    if event_id not in evidence_ids:
+                        evidence_ids.append(event_id)
             slices.append(slice_distributed(
                 rs.run_id, rs.source_capture_id, cand.candidate_id,
-                cand.anchor_event_ids, "repeated identical action without new information",
+                evidence_ids, r.detector.replace("_", " "),
             ))
 
     # External-branch slices: a failed check may be better explained by an
@@ -256,7 +267,8 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         run_source=rs, capabilities=profile, events=events, phases=phases, checks=checks,
         outcome=run_outcome, contract=contract, contract_observations=contract_observations,
         opportunities=opportunities, recoveries=recoveries, evidence_slices=slices,
-        detector_results=detector_results, signature=[], idempotent=result.idempotent,
+        detector_results=detector_results, execution_quality=execution_quality,
+        signature=[], idempotent=result.idempotent,
     )
     signature = build_signature(partial)
 
@@ -281,6 +293,9 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     store.write_derived(rs.run_id, rs.source_capture_id, "evidence_slices.json", [s.to_dict() for s in slices])
     store.write_derived(
         rs.run_id, rs.source_capture_id, "detector_results.json", [r.to_dict() for r in detector_results]
+    )
+    store.write_derived(
+        rs.run_id, rs.source_capture_id, "execution_quality.json", execution_quality
     )
     # Each reviewer writes only its own slot, so a model pass no longer
     # destroys the deterministic baseline. The legacy ``review_moments.json`` is
@@ -357,6 +372,7 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         run_source=rs, capabilities=profile, events=events, phases=phases, checks=checks,
         outcome=run_outcome, contract=contract, contract_observations=contract_observations,
         opportunities=opportunities, recoveries=recoveries, evidence_slices=slices,
-        detector_results=detector_results, signature=signature, audit=audit,
+        detector_results=detector_results, execution_quality=execution_quality,
+        signature=signature, audit=audit,
         idempotent=result.idempotent, review_moments=review_moments,
     )

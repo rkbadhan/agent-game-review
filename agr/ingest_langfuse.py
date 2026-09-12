@@ -88,7 +88,7 @@ from .span_tree import NormalizedSpan, flatten_span_tree
 #      Re-ingest is recommended for any store populated from adapter 0.1:
 #      previously-ingested Langfuse runs may have zero observations and/or
 #      categorical checks stuck at "unknown" that a re-run now resolves.
-LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.2"
+LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.3"
 
 # Langfuse observation ``type`` -> normalized span kind (case-insensitive:
 # the SDKs and the API have varied in casing across versions).
@@ -329,6 +329,7 @@ def _normalize(export: dict, warnings: list[str]) -> tuple[list[NormalizedSpan],
         outputs=trace_output,
         session_id=trace.get("sessionId"),
         timestamp=str(trace.get("timestamp")) if trace.get("timestamp") else None,
+        end_timestamp=str(trace.get("endTime")) if trace.get("endTime") else None,
     )
 
     spans = [root]
@@ -389,6 +390,7 @@ def _normalize(export: dict, warnings: list[str]) -> tuple[list[NormalizedSpan],
             usage=usage,
             session_id=trace.get("sessionId"),
             timestamp=str(obs.get("startTime")) if obs.get("startTime") else None,
+            end_timestamp=str(obs.get("endTime")) if obs.get("endTime") else None,
             attributes=attrs,
         ))
 

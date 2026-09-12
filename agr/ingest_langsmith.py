@@ -54,7 +54,7 @@ from .span_tree import NormalizedSpan, flatten_span_tree
 
 # Provenance stamp written into every document this adapter emits. Bump when
 # the run_type mapping or the feedback->check mapping changes materially.
-LANGSMITH_ADAPTER_VERSION = "langsmith-adapter-0.1"
+LANGSMITH_ADAPTER_VERSION = "langsmith-adapter-0.2"
 
 # LangSmith run_type -> normalized span kind. See the module docstring for
 # why "chain" (the only grouping type LangSmith has) maps to the flattener's
@@ -267,6 +267,7 @@ def _normalize(runs: list, warnings: list[str]) -> list[NormalizedSpan]:
             usage=_extract_usage(r),
             session_id=str(session_id) if session_id else None,
             timestamp=str(r.get("start_time")) if r.get("start_time") else None,
+            end_timestamp=str(r.get("end_time")) if r.get("end_time") else None,
         ))
 
     if unmapped_types:

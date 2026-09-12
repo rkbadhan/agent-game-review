@@ -37,6 +37,8 @@ DEFAULT_CAPABILITIES = {
     "pre_post_compaction_context": "unavailable",
     "sidecar_state": "unavailable",
     "verifier_code": "unavailable",
+    "generation_usage": "unavailable",
+    "generation_timestamps": "unavailable",
 }
 
 

@@ -54,10 +54,11 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import AdapterResult
+from .execution_quality import generation_usage_capability
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
-CLAUDE_ADAPTER_VERSION = "claude-adapter-0.6"
+CLAUDE_ADAPTER_VERSION = "claude-adapter-0.7"
 
 # Item 10 (2026-09-07): harness-injected wrapper tags that ride inside a
 # user-role message's TEXT content — a system-reminder, a slash command's
@@ -378,17 +379,48 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             if pending_cost is not None:
                 seen_msg_ids.add(msg_id)
 
-            for block in msg.get("content") or []:
-                step_cost = pending_cost
-                if step_cost is not None:
+            generation_id = str(msg_id or entry.get("uuid") or f"claude-generation-{builder.seq + 1}")
+            seen_generation_ids = state.setdefault("generation_ids_seen", set())
+            generation_pending = generation_id not in seen_generation_ids
+            if generation_pending:
+                seen_generation_ids.add(generation_id)
+            elif pending_cost is not None:
+                # Saved/streaming transcripts may repeat one message id and
+                # attach usage only on a later record. Keep one generation
+                # marker, but enrich that existing record when the usage
+                # finally arrives instead of dropping it or double-counting.
+                existing = next((
+                    step for step in reversed(builder.steps)
+                    if step.get("generation_id") == generation_id
+                ), None)
+                if existing is not None and "cost" not in existing:
+                    existing["cost"] = {"usage": pending_cost}
+                pending_cost = None
+
+            def _generation_kwarg() -> dict[str, Any]:
+                nonlocal pending_cost, generation_pending
+                if not generation_pending:
+                    return {}
+                generation_pending = False
+                result: dict[str, Any] = {
+                    "generation_event": True,
+                    "generation_id": generation_id,
+                    "model": model,
+                }
+                if pending_cost is not None:
+                    result["cost"] = {"usage": pending_cost}
                     pending_cost = None
-                cost_kwarg: dict[str, Any] = {"cost": {"usage": step_cost}} if step_cost else {}
+                return result
+
+            for block in msg.get("content") or []:
                 btype = block.get("type") if isinstance(block, dict) else None
                 if btype == "text":
-                    builder.add("model_output", "main_agent", content=block.get("text", ""), **cost_kwarg)
+                    builder.add("model_output", "main_agent", content=block.get("text", ""),
+                                **_generation_kwarg())
                 elif btype == "thinking":
                     builder.add("model_output", "main_agent",
-                                content=f"[thinking] {block.get('thinking', '')}", **cost_kwarg)
+                                content=f"[thinking] {block.get('thinking', '')}",
+                                **_generation_kwarg())
                 elif btype == "tool_use":
                     name = block.get("name", "tool")
                     args = block.get("input") or {}
@@ -409,7 +441,7 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                             break
                     else:
                         call["content"] = json.dumps(args, ensure_ascii=False)[:2000]
-                    call.update(cost_kwarg)
+                    call.update(_generation_kwarg())
                     builder.add("tool_call", "main_agent", **call)
                     if bid:
                         pending_calls[bid] = call
@@ -588,7 +620,7 @@ def _final_result_document(
         "verifier_code": "unavailable",
     }
     doc: dict[str, Any] = {
-        "atif_version": "claude-adapter-0.6",
+        "atif_version": CLAUDE_ADAPTER_VERSION,
         "source_type": "claude_final_result",
         "adapter_version": CLAUDE_ADAPTER_VERSION,
         # Always partial: no trajectory was captured, verifier or not.
@@ -772,6 +804,7 @@ def convert(
         # appeared in this capture, never a blanket claim otherwise.
         "compaction_boundary": "complete" if state.get("saw_compaction_boundary") else "unavailable",
         "verifier_code": "complete" if verifier else "unavailable",
+        "generation_usage": generation_usage_capability(steps),
     }
     # Session-completion status is run metadata, not a capability level: it
     # says whether the SOURCE recorded an explicit terminal result.
@@ -782,7 +815,7 @@ def convert(
         warnings.append("task instruction taken from first user message; confirm the contract")
 
     doc: dict[str, Any] = {
-        "atif_version": "claude-adapter-0.6",
+        "atif_version": CLAUDE_ADAPTER_VERSION,
         "source_type": "claude_stream" if is_stream else "claude_session",
         "adapter_version": CLAUDE_ADAPTER_VERSION,
         "capture_completeness": "complete" if (verifier and terminal_entry is not None) else "partial",

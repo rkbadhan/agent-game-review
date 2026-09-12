@@ -70,6 +70,24 @@ def test_basic_conversion_maps_tool_flow(tmp_path):
     assert any(s.get("content", "").startswith("[thinking]") for s in doc["steps"])
 
 
+def test_message_usage_marks_one_generation_and_declares_coverage(tmp_path):
+    path = _write(tmp_path, _session([
+        _msg("user", content="Inspect the repo"),
+        _msg("assistant", content=[
+            {"type": "thinking", "thinking": "first"},
+            {"type": "toolCall", "id": "c1", "name": "bash",
+             "arguments": {"command": "ls"}},
+        ], provider="anthropic", model="claude-x",
+            usage={"input": 90, "cacheRead": 10, "cacheWrite": 5,
+                   "output": 5, "totalTokens": 110}),
+    ]))
+    doc = convert(path).doc
+    generation_steps = [step for step in doc["steps"] if step.get("generation_event")]
+    assert len(generation_steps) == 1
+    assert generation_steps[0]["cost"]["usage"]["input"] == 90
+    assert doc["capabilities"]["generation_usage"] == "complete"
+
+
 def test_tool_error_maps_to_failure_exit_code(tmp_path):
     path = _write(tmp_path, _session([
         _msg("user", content="run the thing"),

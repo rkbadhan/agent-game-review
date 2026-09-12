@@ -26,7 +26,7 @@ from typing import Any, Optional
 # delegate here should mention it in their own version bump notes when the
 # flattening behaviour changes materially, since it affects every span-tree
 # source, not just one.
-SPAN_TREE_VERSION = "span-tree-0.1"
+SPAN_TREE_VERSION = "span-tree-0.2"
 
 # The small, normalized span-kind vocabulary this module understands. A source
 # adapter's field map is responsible for reducing its own operation names
@@ -114,6 +114,7 @@ class NormalizedSpan:
     cost_usd: Optional[float] = None
     session_id: Optional[str] = None
     timestamp: Optional[str] = None
+    end_timestamp: Optional[str] = None
     call_order: Optional[int] = None
     attributes: dict = field(default_factory=dict)
 
@@ -269,6 +270,9 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
         step = {"step_id": f"sp{seq}", "kind": kind, "actor": actor, **payload}
         if span.timestamp is not None:
             step["timestamp"] = span.timestamp
+            step["start_time"] = span.timestamp
+        if span.end_timestamp is not None:
+            step["end_time"] = span.end_timestamp
         steps.append(step)
 
     # --- task_received: the root span's captured input -----------------------
@@ -291,6 +295,8 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
     tool_input_flags: list[bool] = []
     tool_output_flags: list[bool] = []
     model_output_flags: list[bool] = []
+    model_usage_flags: list[bool] = []
+    model_timestamp_flags: list[bool] = []
     saw_body_span = False
     retry_count = 0
     unmapped_count = 0
@@ -387,6 +393,14 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
 
         elif span.kind == "model":
             model_output_flags.append(span.output_captured)
+            model_usage_flags.append(
+                isinstance(span.usage, dict)
+                and isinstance(span.usage.get("input_tokens"), (int, float))
+                and not isinstance(span.usage.get("input_tokens"), bool)
+            )
+            model_timestamp_flags.append(
+                span.timestamp is not None and span.end_timestamp is not None
+            )
             if span.name:
                 model_name = span.name
 
@@ -394,13 +408,16 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
                 retry_count += 1
                 payload = {"status": "error" if span.status == "error" else
                            ("ok" if span.output_captured else "unknown")}
+                payload.update({"generation_event": True, "generation_id": span.span_id,
+                                "model": span.name or None})
                 if span.output_captured:
                     payload["content"] = _stringify(span.outputs)
                 if span.usage or span.cost_usd is not None:
                     payload["cost"] = _cost_dict(span)
                 add("retry", actor, span, **payload)
             else:
-                payload = {}
+                payload = {"generation_event": True, "generation_id": span.span_id,
+                           "model": span.name or None}
                 if span.output_captured:
                     payload["content"] = _stringify(span.outputs)
                 if span.usage or span.cost_usd is not None:
@@ -499,6 +516,13 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
                 f"messages declared {messages_level!r}: model span output content was not "
                 f"fully captured by this source"
             )
+
+    generation_usage_level = _capability_from_flags(model_usage_flags)
+    if generation_usage_level is not None:
+        capabilities["generation_usage"] = generation_usage_level
+    generation_timestamps_level = _capability_from_flags(model_timestamp_flags)
+    if generation_timestamps_level is not None:
+        capabilities["generation_timestamps"] = generation_timestamps_level
 
     if retry_count:
         warnings.append(

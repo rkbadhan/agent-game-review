@@ -32,10 +32,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .adapter import AdapterResult
+from .execution_quality import generation_usage_capability
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
-PI_ADAPTER_VERSION = "pi-adapter-0.5"
+PI_ADAPTER_VERSION = "pi-adapter-0.6"
 
 # Pi session-entry types that carry no trajectory content for analysis.
 _SKIP_ENTRY_TYPES = {
@@ -201,12 +202,33 @@ def convert(
         elif role == "assistant":
             provider = msg.get("provider") or provider
             model = msg.get("model") or model
+            generation_pending = True
+            usage = msg.get("usage")
+            generation_id = str(entry.get("id") or f"pi-generation-{seq + 1}")
+
+            def _generation_kwarg() -> dict[str, Any]:
+                nonlocal generation_pending
+                if not generation_pending:
+                    return {}
+                generation_pending = False
+                result: dict[str, Any] = {
+                    "generation_event": True,
+                    "generation_id": generation_id,
+                    "provider": provider,
+                    "model": model,
+                }
+                if isinstance(usage, dict) and usage:
+                    result["cost"] = {"usage": usage}
+                return result
+
             for block in msg.get("content") or []:
                 btype = block.get("type") if isinstance(block, dict) else None
                 if btype == "text":
-                    add("model_output", "main_agent", content=block.get("text", ""))
+                    add("model_output", "main_agent", content=block.get("text", ""),
+                        **_generation_kwarg())
                 elif btype == "thinking":
-                    add("model_output", "main_agent", content=f"[thinking] {block.get('thinking', '')}")
+                    add("model_output", "main_agent", content=f"[thinking] {block.get('thinking', '')}",
+                        **_generation_kwarg())
                 elif btype == "toolCall":
                     name = block.get("name", "tool")
                     args = block.get("arguments") or {}
@@ -221,6 +243,7 @@ def convert(
                             break
                     else:
                         call["content"] = json.dumps(args, ensure_ascii=False)[:2000]
+                    call.update(_generation_kwarg())
                     add("tool_call", "main_agent", **call)
                     if block.get("id"):
                         pending_calls[block["id"]] = call
@@ -318,6 +341,7 @@ def convert(
             "complete" if saw_compaction_retained else ("partial" if has_compaction else "unavailable")
         ),
         "verifier_code": "complete" if verifier else "unavailable",
+        "generation_usage": generation_usage_capability(steps),
     }
 
     resolved_instruction = instruction if instruction is not None else (first_user_text or "")

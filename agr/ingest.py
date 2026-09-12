@@ -15,6 +15,7 @@ from typing import Any
 from . import version
 from .adapter import apply_capability_defaults
 from .events import KIND_TO_EVENT
+from .execution_quality import reconcile_generation_capabilities
 from .schema import CAPABILITY_LEVELS, CAPTURE_COMPLETENESS, CapabilityProfile, RunSource
 from .store import InvalidRunId, Store, capture_id_for, source_hash, validate_run_id
 
@@ -88,6 +89,7 @@ def _validate(doc: dict) -> None:
 
 def _capability_profile(doc: dict, run_id: str, capture_id: str) -> CapabilityProfile:
     caps = apply_capability_defaults(doc.get("capabilities"))
+    caps = reconcile_generation_capabilities(caps, doc.get("steps") or [])
     return CapabilityProfile(run_id=run_id, source_capture_id=capture_id, capabilities=caps)
 
 
