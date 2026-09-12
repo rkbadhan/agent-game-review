@@ -11,11 +11,18 @@ context detector to exercise the "not evaluated" path.
 
 from __future__ import annotations
 
+import json
+import statistics
 from dataclasses import dataclass, field
 from typing import Optional
 
 from . import version
 from ._util import action_signature, is_mutation, paired_result
+from .execution_quality import (
+    ExecutionQualityConfig,
+    nearest_rank,
+    normalized_generation_usage,
+)
 from .recovery import GOOD_RECOVERY, UNRECOVERED
 from .schema import (
     Candidate,
@@ -75,6 +82,107 @@ class Detector:
             detector_version=version.DETECTOR_VERSION,
             **kw,
         )
+
+
+class ExecutionQualityDetector(Detector):
+    """Shared configurable enable/disable contract for efficiency detectors."""
+
+    enabled_attribute: str = ""
+
+    def run(self, ctx: DetectorContext) -> DetectorResult:
+        config = ExecutionQualityConfig.from_doc(ctx.doc)
+        if not getattr(config, self.enabled_attribute):
+            return DetectorResult(
+                detector=self.name,
+                evaluated=False,
+                unmet_capabilities=["detector_disabled"],
+            )
+        return super().run(ctx)
+
+
+class ContextTokenBloat(ExecutionQualityDetector):
+    """Aggregate generations whose recorded input context meets the threshold."""
+
+    name = "context_token_bloat"
+    required_capabilities = {"generation_usage": "complete"}
+    enabled_attribute = "context_enabled"
+
+    def _run(self, ctx):
+        config = ExecutionQualityConfig.from_doc(ctx.doc)
+        violations = [
+            record for record in normalized_generation_usage(ctx.events)
+            if record.input_tokens is not None
+            and record.input_tokens >= config.input_tokens_threshold
+        ]
+        if not violations:
+            return []
+        peak = max(record.input_tokens for record in violations)
+        severity = "high" if peak > 175_000 else "warning" if peak >= 125_000 else "info"
+        facts = [{
+            "type": "token_usage",
+            "event_id": record.event_id,
+            "identity": list(record.identity),
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+            "total_tokens": record.total_tokens,
+            "threshold": config.input_tokens_threshold,
+            "excess_ratio": round(record.input_tokens / max(1, config.input_tokens_threshold), 4),
+            "provider": record.provider,
+            "model": record.model,
+        } for record in violations]
+        return [self._candidate(
+            ctx, "aggregate", kind="behaviour", severity=severity,
+            behaviour="inefficient_execution", consequence="excess_cost",
+            micro_abilities=["process_monitoring"],
+            anchor_event_ids=[record.event_id for record in violations],
+            structured_facts=facts,
+        )]
+
+
+class ExcessLatency(ExecutionQualityDetector):
+    """Aggregate generations whose normalized wall time meets the threshold."""
+
+    name = "excess_latency"
+    required_capabilities = {"generation_timestamps": "complete"}
+    enabled_attribute = "latency_enabled"
+
+    def _run(self, ctx):
+        config = ExecutionQualityConfig.from_doc(ctx.doc)
+        records = normalized_generation_usage(ctx.events)
+        durations = [record.wall_ms for record in records if record.wall_ms is not None]
+        violations = [
+            record for record in records
+            if record.wall_ms is not None
+            and record.wall_ms >= config.generation_ms_threshold
+        ]
+        if not violations:
+            return []
+        worst = max(record.wall_ms for record in violations if record.wall_ms is not None)
+        severity = (
+            "high" if worst >= config.generation_ms_threshold * 3
+            else "warning" if len(violations) > 1 else "info"
+        )
+        distribution = {
+            "median_ms": round(statistics.median(durations)),
+            "p95_ms": nearest_rank(durations, .95),
+            "max_ms": worst,
+        }
+        facts = [{
+            "type": "generation_latency",
+            "event_id": record.event_id,
+            "start_time": record.start_time,
+            "end_time": record.end_time,
+            "wall_ms": record.wall_ms,
+            "threshold_ms": config.generation_ms_threshold,
+            **distribution,
+        } for record in violations]
+        return [self._candidate(
+            ctx, "aggregate", kind="behaviour", severity=severity,
+            behaviour="inefficient_execution", consequence="excess_latency",
+            micro_abilities=["process_monitoring"],
+            anchor_event_ids=[record.event_id for record in violations],
+            structured_facts=facts,
+        )]
 
 
 class UnresolvedRequirementAtSubmission(Detector):
@@ -224,7 +332,7 @@ class IgnoredToolFailure(Detector):
         return out
 
 
-class RepeatedActionNoNewInfo(Detector):
+class RepeatedActionNoNewInfo(ExecutionQualityDetector):
     """Same action repeated, producing the same output again (§8.5 #2).
 
     AGR-05: a repeated call is an observation, not automatically a defect. The
@@ -237,13 +345,18 @@ class RepeatedActionNoNewInfo(Detector):
 
     name = "repeated_action_no_new_info"
     required_capabilities = {"tool_calls": "complete", "tool_results": "complete"}
+    enabled_attribute = "redundancy_enabled"
 
     @staticmethod
-    def _norm(text: str) -> str:
-        return " ".join(text.split())
+    def _captured_output(event: DerivedEvent) -> tuple[bool, str]:
+        keys = ("content", "data", "tool_use_result")
+        captured = {key: event.payload[key] for key in keys if key in event.payload}
+        if not captured:
+            return False, ""
+        return True, json.dumps(captured, sort_keys=True, separators=(",", ":"), default=str)
 
     def _run(self, ctx):
-        out = []
+        config = ExecutionQualityConfig.from_doc(ctx.doc)
         # First walk: collect tool calls in order and remember whether a
         # strategy change separated a call from the previous one. The result
         # for each call is resolved through the ONE shared call↔result index
@@ -251,24 +364,19 @@ class RepeatedActionNoNewInfo(Detector):
         # only as a conservative id-less fallback). Detector, validator, and
         # evidence views all use this pairing (review 2026-09-07 R2/R3).
         calls: list[dict] = []
-        strategy_since = False
+        strategy_epoch = 0
         for i, ev in enumerate(ctx.events):
             if ev.event_type == "strategy_change":
-                strategy_since = True
+                strategy_epoch += 1
                 continue
             if ev.event_type == "tool_call":
                 calls.append({"idx": i, "call": ev,
-                              "result": None, "strategy_since": strategy_since})
-                strategy_since = False
+                              "result": None, "strategy_epoch": strategy_epoch})
         for c in calls:
             c["result"] = paired_result(ctx.events, c["idx"])
-        # Second walk: consecutive identical calls with no strategy change —
-        # emit only when BOTH outputs are captured and equivalent.
-        for a, b in zip(calls, calls[1:]):
-            if action_signature(a["call"]) != action_signature(b["call"]):
-                continue
-            if a["strategy_since"] or b["strategy_since"]:
-                continue
+        repetitions: list[dict] = []
+        anchors: list[str] = []
+        for current_index, b in enumerate(calls):
             # R2: a repeated mutation (Edit/Write) cannot be flagged on
             # identical acknowledgement text alone — "ok" says nothing about
             # what the file became, so equivalent ack text does not establish
@@ -276,23 +384,47 @@ class RepeatedActionNoNewInfo(Detector):
             # not captured here, so mutations never emit a no-new-info claim.
             if is_mutation(b["call"]):
                 continue
+            window_start = max(0, current_index - config.redundancy_window)
+            previous = next((
+                (index, candidate)
+                for index, candidate in reversed(list(enumerate(calls[window_start:current_index], start=window_start)))
+                if candidate["strategy_epoch"] == b["strategy_epoch"]
+                and action_signature(candidate["call"]) == action_signature(b["call"])
+                and not is_mutation(candidate["call"])
+            ), None)
+            if previous is None:
+                continue
+            previous_index, a = previous
             ra, rb = a["result"], b["result"]
             if ra is None or rb is None:
                 continue  # outputs not captured — the claim is unsupported
-            if self._norm(ra.text()) != self._norm(rb.text()):
+            captured_a, output_a = self._captured_output(ra)
+            captured_b, output_b = self._captured_output(rb)
+            if not captured_a or not captured_b:
+                continue
+            if output_a != output_b:
                 continue  # outputs differ — observation with new information
-            out.append(self._candidate(
-                ctx, b["call"].event_id, kind="behaviour",
-                anchor_event_ids=[a["call"].event_id, b["call"].event_id],
-                structured_facts=[{
-                    "type": "repetition", "signature": list(action_signature(b["call"])),
-                    "events": [a["call"].event_id, b["call"].event_id],
-                    "result_event_ids": [ra.event_id, rb.event_id],
-                    "outputs_compared": True,
-                    "outputs_equivalent": True,
-                }],
-            ))
-        return out
+            pair = [a["call"].event_id, b["call"].event_id]
+            for event_id in pair:
+                if event_id not in anchors:
+                    anchors.append(event_id)
+            repetitions.append({
+                "type": "repetition", "signature": list(action_signature(b["call"])),
+                "events": pair,
+                "result_event_ids": [ra.event_id, rb.event_id],
+                "outputs_compared": True,
+                "outputs_equivalent": True,
+                "calls_between": current_index - previous_index - 1,
+            })
+        if not repetitions:
+            return []
+        severity = "high" if len(repetitions) >= 5 else "warning" if len(repetitions) > 1 else "info"
+        return [self._candidate(
+            ctx, "aggregate", kind="behaviour", severity=severity,
+            behaviour="repeated_unchanged_action", consequence="no_material_effect",
+            micro_abilities=["termination_judgment", "tool_selection"],
+            anchor_event_ids=anchors, structured_facts=repetitions,
+        )]
 
 
 class RequiredArtifactAbsent(Detector):
@@ -367,6 +499,8 @@ class CompactionRequirementLoss(Detector):
 
 
 DETECTORS: list[Detector] = [
+    ContextTokenBloat(),
+    ExcessLatency(),
     UnresolvedRequirementAtSubmission(),
     TerminalFailureWithFailingChecks(),
     IgnoredToolFailure(),

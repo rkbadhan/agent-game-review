@@ -509,6 +509,11 @@ class Candidate:
     kind: str  # behaviour | omission | recovery | external
     anchor_event_ids: list[str]
     polarity: str = "negative"  # negative | positive
+    severity: Optional[str] = None  # info | warning | high
+    behaviour: Optional[str] = None
+    consequence: Optional[str] = None
+    micro_abilities: list[str] = field(default_factory=list)
+    evidence_status: str = "complete"
     affected_checks: list[str] = field(default_factory=list)
     affected_contract_items: list[str] = field(default_factory=list)
     structured_facts: list[dict] = field(default_factory=list)

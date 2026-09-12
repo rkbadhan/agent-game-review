@@ -243,6 +243,27 @@ def test_repeated_failed_sibling_tool_span_becomes_a_retry_step():
     assert any("retry span(s) recognised" in w for w in result.warnings)
 
 
+def test_model_retry_remains_a_generation_for_usage_and_timing():
+    spans = [
+        _span("root", None, 0, "agent", status="ok", input_captured=True, inputs="x",
+              output_captured=True, outputs="done"),
+        _span("m1", "root", 1, "model", name="gpt-x", status="error",
+              output_captured=True, outputs="failed", usage={"input_tokens": 10},
+              timestamp="2026-09-12T10:00:00Z", end_timestamp="2026-09-12T10:00:01Z"),
+        _span("m2", "root", 2, "model", name="gpt-x", status="ok",
+              output_captured=True, outputs="recovered", usage={"input_tokens": 200_000},
+              timestamp="2026-09-12T10:01:00Z", end_timestamp="2026-09-12T10:06:00Z"),
+    ]
+    result = flatten_span_tree(spans)
+    retry = next(step for step in result.steps if step["kind"] == "retry")
+    assert retry["generation_event"] is True
+    assert retry["cost"]["input_tokens"] == 200_000
+    assert retry["start_time"] == "2026-09-12T10:01:00Z"
+    assert retry["end_time"] == "2026-09-12T10:06:00Z"
+    assert result.capabilities["generation_usage"] == "complete"
+    assert result.capabilities["generation_timestamps"] == "complete"
+
+
 def test_deliberate_repeat_call_after_success_is_not_a_retry():
     """The SAME tool called twice, but the first call succeeded — this is the
     agent choosing to call it again, not a framework-retried failure, and

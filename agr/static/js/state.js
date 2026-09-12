@@ -48,7 +48,7 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
   // run switch — an episodes fetch started for a groupBy the reader has since
   // changed away from must not land on top of the newer choice.
   fleet: { groupBy: "tool,error_signature", episodes: null, pending: false,
-    error: null, loadToken: 0, usageSummary: null } };
+    error: null, loadToken: 0, usageSummary: null, executionQuality: null } };
 
 // --- §4.1 shareable review location -----------------------------------------
 //   The exact review position lives in the query string, so a reviewer can share

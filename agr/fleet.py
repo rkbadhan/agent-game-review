@@ -393,3 +393,38 @@ def fleet_usage_summary(store: Store) -> FleetUsageSummary:
         usage_partial_episode_count=sum(
             1 for e in all_eps if e.get("usage_completeness") == "partial"),
     )
+
+
+def fleet_execution_quality(store: Store) -> dict:
+    """Execution issue incidence by outcome, using evaluated runs only."""
+    dimensions = ("context_bloat", "latency", "redundant_work")
+    groups = {"pass": [], "fail": []}
+    for run in read.list_runs(store):
+        status = (run.get("outcome") or {}).get("status")
+        label = "pass" if status == "PASSED" else "fail" if status == "FAILED" else None
+        if label is None:
+            continue
+        run_id, capture_id = run["run_id"], run.get("capture_id")
+        if not capture_id or not store.has_derived(run_id, capture_id, "execution_quality.json"):
+            continue
+        groups[label].append(
+            store.read_derived(run_id, capture_id, "execution_quality.json") or {}
+        )
+    result = {"by_outcome": {}}
+    for label, records in groups.items():
+        metrics = {}
+        for dimension in dimensions:
+            values = [
+                record.get("efficiency", {}).get(dimension, {}) for record in records
+            ]
+            evaluated = [value for value in values if value.get("evaluated")]
+            affected = [value for value in evaluated if value.get("violations", 0) > 0]
+            metrics[dimension] = {
+                "eligible_runs": len(evaluated),
+                "affected_runs": len(affected),
+                "affected_percent": (
+                    round(100 * len(affected) / len(evaluated), 2) if evaluated else None
+                ),
+            }
+        result["by_outcome"][label] = {"runs": len(records), "dimensions": metrics}
+    return result

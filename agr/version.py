@@ -16,7 +16,7 @@ RAW_ATIF_IMPORT_VERSION = "atif-import-0.1"
 # auditable against the release that produced it (never null).
 AGR_VERSION = "0.2.0"
 
-DERIVATION_VERSION = "event-map-0.1"
+DERIVATION_VERSION = "event-map-0.2"
 # 0.2 (AGR-02): checks carry scope/sequence/superseded_by/stale_reason and an
 # effective_status distinct from the raw historical status — reconciled by
 # agr.checks.reconcile_checks before agr.checks.outcome rolls them up.
@@ -60,7 +60,7 @@ SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # intended branch — an audited sample measured 1/5 precision on exactly this
 # shape. The raw failure fact is untouched; only this detector's reading of
 # it changed.
-DETECTOR_VERSION = "detectors-0.4"
+DETECTOR_VERSION = "detectors-0.5"
 CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
 # 1.1 (AGR-02, review 82cc113): reads each mapped check's effective_status
 # (the current, reconciled view) rather than its raw immutable status — a
@@ -74,7 +74,7 @@ TAXONOMY_VERSION = "0.1"
 # The read layer (§4.5 forensic view, Milestone 1 evidence browser) is a
 # projection over persisted records — it derives nothing new, but it is
 # versioned so a UI can pin the shape of the views it consumes.
-READ_MODEL_VERSION = "read-model-0.2"
+READ_MODEL_VERSION = "read-model-0.3"
 
 # The reviewer gold set (§15.1) and the evaluation harness (§15.3). The spec
 # sequences both ahead of the model reviewer (M4, principle #11); versioning

@@ -117,6 +117,27 @@ function renderFleetUsageSummaryCard(summary) {
   return card;
 }
 
+function renderFleetExecutionQuality(matrix) {
+  const card = el("div", "card card-pad");
+  card.append(el("p", "eyebrow", "Execution quality"));
+  const t = el("table", "vs-table");
+  t.append(rowEls("tr", ["Dimension", "PASS", "FAIL"], "th"));
+  const labels = {
+    context_bloat: "Context bloat", latency: "Slow generation", redundant_work: "Redundant work",
+  };
+  const byOutcome = matrix.by_outcome || {};
+  for (const [key, label] of Object.entries(labels)) {
+    const tr = el("tr"); tr.append(td(label));
+    for (const outcome of ["pass", "fail"]) {
+      const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};
+      tr.append(td(metric.affected_percent == null ? "Not evaluated"
+        : metric.affected_percent + "% (" + metric.affected_runs + "/" + metric.eligible_runs + ")"));
+    }
+    t.append(tr);
+  }
+  card.append(t); return card;
+}
+
 function renderFleetGroupByCard(fl) {
   const card = el("div", "card card-pad");
   card.append(el("p", "eyebrow", "Group by"));
@@ -148,6 +169,12 @@ async function renderFleet(main) {
   const wrap = el("div", "section");
   main.append(wrap);
   wrap.append(renderFleetGroupByCard(fl));
+
+  if (!fl.executionQuality) {
+    try { fl.executionQuality = await api("/fleet/execution-quality"); }
+    catch (e) { fl.executionQuality = null; }
+  }
+  if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
 
   if (fl.pending) { wrap.append(el("div", "subline", "Loading fleet episodes…")); return; }
   if (fl.error) { wrap.append(el("div", "empty", "Failed: " + fl.error)); return; }

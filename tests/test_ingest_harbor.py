@@ -243,6 +243,8 @@ def test_turn_metrics_attach_to_first_step_of_the_turn_only(tmp_path):
     non_task_steps = [s for s in res.doc["steps"] if s["kind"] != "task_received"]
     # thinking, message, call c1, call c2 — cost only on the first (thinking).
     assert non_task_steps[0]["cost"] == {"prompt_tokens": 820, "completion_tokens": 64, "cost_usd": 0.01}
+    assert non_task_steps[0]["generation_event"] is True
+    assert res.doc["capabilities"]["generation_usage"] == "complete"
     assert "cost" not in non_task_steps[1]
     assert "cost" not in non_task_steps[2]
     assert "cost" not in non_task_steps[3]

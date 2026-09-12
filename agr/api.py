@@ -144,6 +144,11 @@ def create_app(store_root: str = ".agr-store"):
         event covered by episodes in two different groups."""
         return fleet.fleet_usage_summary(store).to_dict()
 
+    @app.get("/fleet/execution-quality")
+    def fleet_execution_quality() -> dict:
+        """Execution-quality incidence split by passing and failing runs."""
+        return fleet.fleet_execution_quality(store)
+
     @app.get("/fleet/argument-shapes")
     def fleet_argument_shapes(min_group_size: int = 1) -> list[dict]:
         """Item 31: the tool_input KEY SET and value TYPE distribution among

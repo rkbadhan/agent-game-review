@@ -43,7 +43,9 @@
           "compaction_boundary",
           "pre_post_compaction_context",
           "sidecar_state",
-          "verifier_code"
+          "verifier_code",
+          "generation_usage",
+          "generation_timestamps"
         ]
       },
       "additionalProperties": {
@@ -195,6 +197,22 @@
           "cost": {
             "type": "object",
             "description": "Optional per-step cost accounting, carried through untouched."
+          },
+          "start_time": {
+            "type": ["string", "number"],
+            "description": "Observed generation start time. Adapters normalize provider timing here without inference."
+          },
+          "end_time": {
+            "type": ["string", "number"],
+            "description": "Observed generation end time. Required with start_time for generation latency evaluation."
+          },
+          "generation_event": {
+            "type": "boolean",
+            "description": "True on the single derived step that represents one provider generation. This keeps message-block fan-out and tool-only generations from duplicating or losing usage."
+          },
+          "generation_id": {
+            "type": "string",
+            "description": "Provider/source generation identity when captured or deterministically retained by an adapter."
           },
           "provenance": {
             "type": "string",

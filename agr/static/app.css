@@ -133,6 +133,16 @@
   :root[data-theme="dark"] .count-pill, .count-pill { color:var(--ink); }
   .sweep-name { margin-top:5px; color:var(--muted); font-size:12px; }
   .sweep-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:12px; }
+  .execution-quality { margin-top:12px; }
+  .eq-healthy { color:var(--moss); }
+  .eq-issue { color:var(--amber); }
+  .eq-unevaluated { color:var(--muted); }
+  .eq-findings { display:grid; gap:7px; margin-top:12px; }
+  .eq-finding { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--paper-strong); }
+  .eq-finding summary { cursor:pointer; color:var(--ink-soft); font-size:12px; }
+  .eq-fact { padding:6px 0; color:var(--muted); font-size:11px; }
+  .eq-finding .button { margin-top:4px; }
+  .step.execution-flag { border-left:3px solid var(--amber); background:var(--amber-soft); }
   .sweep-stat { padding:7px 6px; border:1px solid var(--line); border-radius:8px;
     background:var(--paper-strong); text-align:center; }
   .sweep-stat strong { display:block; font-size:15px; }

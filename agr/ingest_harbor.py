@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import AdapterResult
+from .execution_quality import generation_usage_capability
 from .schema import CHECK_STATUSES
 
 # Provenance stamp written into every document this adapter emits (and recorded
@@ -89,7 +90,7 @@ from .schema import CHECK_STATUSES
 #      code or message. Downstream (agr/_util.py:is_tool_failure) excludes it
 #      from failure/recovery classification, the same way permission_denied
 #      already is.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.9"
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.10"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -684,13 +685,22 @@ def convert(
             # own token cost.
             metrics = hstep.get("metrics")
             pending_cost = dict(metrics) if isinstance(metrics, dict) and metrics else None
+            pending_generation = True
+            generation_id = str(hstep.get("step_id") or f"harbor-generation-{seq + 1}")
 
             def _cost_kwarg() -> dict[str, Any]:
-                nonlocal pending_cost
-                if pending_cost is None:
+                nonlocal pending_cost, pending_generation
+                if not pending_generation:
                     return {}
-                kw = {"cost": pending_cost}
-                pending_cost = None
+                pending_generation = False
+                kw: dict[str, Any] = {
+                    "generation_event": True,
+                    "generation_id": generation_id,
+                    "model": model,
+                }
+                if pending_cost is not None:
+                    kw["cost"] = pending_cost
+                    pending_cost = None
                 return kw
 
             reasoning = hstep.get("reasoning_content")
@@ -882,6 +892,7 @@ def convert(
         # as captured state, and the asciinema recording isn't parsed here.
         "filesystem": "partial",
         "process_state": "partial",
+        "generation_usage": generation_usage_capability(steps),
     }
     # Item 20 (2026-09-08): terminus-2's tool observations are raw terminal
     # screen text with no exit code anywhere — "partial" (the default above)

@@ -266,6 +266,8 @@ function renderOverviewChapter(main) {
   }
   main.append(card);
 
+  main.append(renderExecutionQuality(rv, f));
+
   main.append(renderFinalState(rv, f));
 
   // What limits the review (§4.5): capture completeness + disabled detectors.
@@ -319,6 +321,81 @@ function renderOverviewChapter(main) {
   lsec.append(limits); main.append(lsec);
 
   chapterClose(main);
+}
+
+function renderExecutionQuality(rv, forensic) {
+  const eq = rv.execution_quality || {}, efficiency = eq.efficiency || {};
+  const card = el("div", "card card-pad execution-quality");
+  card.append(el("p", "eyebrow", "Execution quality · independent of outcome"));
+  const labels = {
+    context_bloat: "Token efficiency", latency: "Latency", redundant_work: "Redundant work",
+  };
+  const table = el("table", "sig-table");
+  table.append(rowEls("tr", ["Dimension", "Status", "Evidence"], "th"));
+  for (const key of Object.keys(labels)) {
+    const metric = efficiency[key] || {
+      evaluated: false, status: "unevaluated", unmet_capabilities: ["not captured"],
+    };
+    const tr = el("tr"); tr.append(td(labels[key]));
+    const status = metric.status || (metric.evaluated ? "healthy" : "unevaluated");
+    const statusCell = el("td");
+    statusCell.append(el("span", "chip eq-" + status,
+      status === "issue" ? "⚠ issue" : status === "healthy" ? "✓ healthy" : "— not evaluated"));
+    tr.append(statusCell);
+    const evidence = el("td");
+    if (!metric.evaluated) {
+      evidence.append(document.createTextNode("Missing: " + (metric.unmet_capabilities || []).join(", ")));
+    } else if (key === "context_bloat" && metric.violations) {
+      evidence.append(document.createTextNode(metric.violations + " generation(s) · peak "
+        + fmtCompact(metric.peak_input_tokens) + " input tokens"));
+    } else if (key === "latency" && metric.violations) {
+      evidence.append(document.createTextNode(metric.violations + " slow generation(s) · worst "
+        + fmtDuration(metric.max_generation_ms / 1000)));
+    } else if (key === "redundant_work" && metric.violations) {
+      evidence.append(document.createTextNode(metric.violations + " repeated action(s) · maximum separation "
+        + metric.max_calls_between + " calls"));
+    } else {
+      evidence.append(document.createTextNode("Evaluated; no violation detected."));
+    }
+    tr.append(evidence); table.append(tr);
+  }
+  card.append(table);
+  const findings = eq.findings || [];
+  if (findings.length) {
+    const titles = {
+      context_token_bloat: "Context bloat",
+      excess_latency: "Slow generations",
+      repeated_action_no_new_info: "Redundant work",
+    };
+    const list = el("div", "eq-findings");
+    for (const finding of findings) {
+      const facts = finding.structured_facts || [];
+      const item = el("details", "eq-finding");
+      const summary = el("summary");
+      summary.append(el("strong", null, titles[finding.detector] || finding.detector));
+      summary.append(document.createTextNode(" · " + facts.length + " event-level violation(s)"));
+      item.append(summary);
+      for (const fact of facts) {
+        let text = fact.event_id || (fact.events || []).join(" → ");
+        if (fact.type === "token_usage")
+          text += " · " + fmtCompact(fact.input_tokens) + " input tokens · " + fact.excess_ratio + "× threshold";
+        else if (fact.type === "generation_latency")
+          text += " · " + fmtDuration(fact.wall_ms / 1000) + " · threshold " + fmtDuration(fact.threshold_ms / 1000);
+        else if (fact.type === "repetition")
+          text += " · " + fact.calls_between + " call(s) between · equivalent captured outputs";
+        item.append(el("div", "eq-fact mono", text));
+      }
+      const inspect = el("button", "button subtle", "Inspect evidence");
+      inspect.addEventListener("click", () => {
+        const eventId = (finding.anchor_event_ids || [])[0];
+        const step = (forensic.steps || []).find(s => (s.event_ids || []).includes(eventId));
+        openTrace(step ? step.step_id : null);
+      });
+      item.append(inspect); list.append(item);
+    }
+    card.append(list);
+  }
+  return card;
 }
 
 // Final environment & artifacts (§4.5): the closing observed state of the run.

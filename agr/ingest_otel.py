@@ -71,7 +71,7 @@ from .span_tree import NormalizedSpan, flatten_span_tree
 # Provenance stamp written into every document this adapter emits. Bump when
 # the OTLP field mapping changes materially (spec §5.3 versioning rule: OTel
 # GenAI conventions are still evolving, so this pin matters).
-OTEL_ADAPTER_VERSION = "otel-adapter-0.1"
+OTEL_ADAPTER_VERSION = "otel-adapter-0.2"
 
 # GenAI semantic-convention operation names this adapter recognises, and the
 # normalized span kind each reduces to. Anything else falls through to
@@ -314,6 +314,7 @@ def _normalize(raw_spans: list[dict], warnings: list[str]) -> list[NormalizedSpa
             usage=usage,
             session_id=attrs.get("gen_ai.conversation.id"),
             timestamp=_ns_to_iso(sp.get("startTimeUnixNano")),
+            end_timestamp=_ns_to_iso(sp.get("endTimeUnixNano")),
             attributes=attrs,
         ))
 

@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from . import lessons, version, workflow
+from .execution_quality import generation_token_counts, generation_wall_ms
 from .schema import WATERMARKED_STATUSES
 from .store import InvalidRunId, Store, source_hash
 
@@ -973,6 +974,10 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         },
         "capabilities": capabilities,
         "outcome": _read(store, run_id, capture_id, "outcome.json", {}),
+        "execution_quality": _read(
+            store, run_id, capture_id, "execution_quality.json",
+            {"efficiency": {}, "findings": []},
+        ),
         # Closing observed state for the Outcome chapter (§4.5). Reads the
         # immutable source for the artifact declarations; derives no judgement.
         "final_state": _final_state(events, store.read_source(run_id, capture_id), capabilities),
@@ -1043,6 +1048,23 @@ def get_forensic(store: Store, run_id: str) -> dict:
     events = _read(store, run_id, capture_id, "events.json", [])
     checks = _read(store, run_id, capture_id, "checks.json", [])
     phases = _read(store, run_id, capture_id, "phases.json", [])
+    execution_quality = _read(
+        store, run_id, capture_id, "execution_quality.json",
+        {"efficiency": {}, "findings": []},
+    )
+    finding_by_event: dict[str, list[dict]] = {}
+    for finding in execution_quality.get("findings", []):
+        evidence_event_ids = list(finding.get("anchor_event_ids", []))
+        for fact in finding.get("structured_facts", []):
+            if fact.get("event_id"):
+                evidence_event_ids.append(fact["event_id"])
+            evidence_event_ids.extend(fact.get("result_event_ids", []))
+        for event_id in dict.fromkeys(evidence_event_ids):
+            finding_by_event.setdefault(event_id, []).append({
+                "candidate_id": finding.get("candidate_id"),
+                "detector": finding.get("detector"),
+                "severity": finding.get("severity"),
+            })
 
     events_by_step: dict[str, list[dict]] = {}
     for evt in events:
@@ -1095,6 +1117,11 @@ def get_forensic(store: Store, run_id: str) -> dict:
             },
             "verifier_checks": [c["check_id"] for c in checks
                                 if _pointers_reference_step(c, step_id)],
+            "execution_findings": [
+                finding
+                for event in step_events
+                for finding in finding_by_event.get(event["event_id"], [])
+            ],
         })
 
     return {
@@ -1109,6 +1136,7 @@ def get_forensic(store: Store, run_id: str) -> dict:
         "phases": phases,
         "steps": rows,
         "verifier": checks,
+        "execution_quality": execution_quality,
     }
 
 
@@ -1229,6 +1257,23 @@ def _panel_content(step: dict, event_type: Optional[str]) -> dict:
             content[key] = step[key]
     if event_type in ("tool_call", "tool_result"):
         content["direction"] = "call" if event_type == "tool_call" else "result"
+    if event_type == "model_output" or step.get("generation_event") is True:
+        input_tokens, output_tokens, total_tokens = generation_token_counts(step.get("cost"))
+        for target, value in (
+            ("input_tokens", input_tokens),
+            ("output_tokens", output_tokens),
+            ("total_tokens", total_tokens),
+        ):
+            if value is not None:
+                content[target] = value
+        for key in ("start_time", "end_time", "provider", "model"):
+            if key in step:
+                content[key] = step[key]
+        wall_ms = generation_wall_ms(
+            step.get("start_time", step.get("timestamp")), step.get("end_time")
+        )
+        if wall_ms is not None:
+            content["wall_ms"] = wall_ms
     return content
 
 

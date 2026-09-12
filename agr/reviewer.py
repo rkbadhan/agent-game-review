@@ -32,12 +32,14 @@ existing detector candidates, so the model reviewer drops in later with no rewir
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 from . import version
 from ._util import action_signature, is_mutation, is_tool_failure, paired_result, structured_input
+from .execution_quality import generation_token_counts, generation_wall_ms
 from .recovery import GOOD_RECOVERY, UNRECOVERED
 from .schema import (
     ATTRIBUTION_LEVELS,
@@ -269,6 +271,51 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
                 and not any_mutation
                 and _outputs_equivalent(ctx.events, evs)
             )
+        elif ftype == "token_usage":
+            ev = events_by_id.get(fact.get("event_id"))
+            recorded = generation_token_counts(ev.cost)[0] if ev is not None else None
+            threshold = fact.get("threshold")
+            valid_numbers = (
+                isinstance(recorded, (int, float)) and not isinstance(recorded, bool)
+                and recorded >= 0
+                and isinstance(threshold, (int, float)) and not isinstance(threshold, bool)
+                and threshold >= 0
+            )
+            recomputed = int(recorded) if valid_numbers else None
+            passed = bool(
+                ev is not None
+                and (ev.event_type == "model_output"
+                     or ev.payload.get("generation_event") is True)
+                and valid_numbers
+                and fact.get("input_tokens") == recomputed
+                and recomputed >= int(threshold)
+            )
+            if passed:
+                annotated["input_tokens"] = recomputed
+                annotated["threshold"] = int(threshold)
+        elif ftype == "generation_latency":
+            ev = events_by_id.get(fact.get("event_id"))
+            threshold = fact.get("threshold_ms")
+            wall_ms = generation_wall_ms(
+                ev.payload.get("start_time", ev.payload.get("timestamp")) if ev else None,
+                ev.payload.get("end_time") if ev else None,
+            )
+            valid_threshold = (
+                isinstance(threshold, (int, float)) and not isinstance(threshold, bool)
+                and threshold >= 0
+            )
+            recomputed = wall_ms
+            passed = bool(
+                ev is not None
+                and (ev.event_type == "model_output"
+                     or ev.payload.get("generation_event") is True)
+                and wall_ms is not None and valid_threshold
+                and fact.get("wall_ms") == wall_ms
+                and wall_ms >= int(threshold)
+            )
+            if passed:
+                annotated["wall_ms"] = wall_ms
+                annotated["threshold_ms"] = int(threshold)
         elif ftype == "state_transition":
             fev = fact.get("failure_event")
             ep = ep_by_failure.get(fev)
@@ -374,8 +421,18 @@ def _outputs_equivalent(events: list[DerivedEvent], event_ids: list[str]) -> boo
         if r is None:
             return False  # outputs not captured — the claim is unsupported
         results.append(r)
-    base = " ".join(results[0].text().split())
-    return all(" ".join(r.text().split()) == base for r in results[1:])
+    payload_keys = ("content", "data", "tool_use_result")
+    captured = [
+        {key: result.payload[key] for key in payload_keys if key in result.payload}
+        for result in results
+    ]
+    if any(not value for value in captured):
+        return False
+    canonical = [
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        for value in captured
+    ]
+    return all(value == canonical[0] for value in canonical[1:])
 
 
 # Canonical observed-status vocabulary (review 2026-09-07): the parser emits
@@ -485,6 +542,10 @@ def observability_for(candidate: Candidate, ctx: ReviewerContext) -> str:
             required[("filesystem", "checkpoint_only")] = None
         elif ftype == "termination":
             required[("messages", "complete")] = None
+        elif ftype == "token_usage":
+            required[("generation_usage", "complete")] = None
+        elif ftype == "generation_latency":
+            required[("generation_timestamps", "complete")] = None
     unmet = [f"{cap}<{minimum}" for cap, minimum in required
              if not profile.meets(cap, minimum)]
     if unmet:
@@ -691,6 +752,12 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
             "final_submission": "The agent submitted",
         }.get(expected, f"The run terminated via {expected}")
         return f"{label}."
+    if ftype == "token_usage":
+        return (f"Generation {fact.get('event_id')} used {fact.get('input_tokens')} input tokens "
+                f"(threshold {fact.get('threshold')}).")
+    if ftype == "generation_latency":
+        return (f"Generation {fact.get('event_id')} took {fact.get('wall_ms')} ms "
+                f"(threshold {fact.get('threshold_ms')} ms).")
     return fact.get("type", "candidate")
 
 
@@ -766,7 +833,9 @@ def _link_gate(m: "ReviewMoment") -> bool:
     if m.gate_results.get("contract_link") == "present":
         return True
     return (m.gate_results.get("contract_link") == "absent"
-            and m.gate_results.get("observation_basis") == "tool_evidence")
+            and m.gate_results.get("observation_basis") in {
+                "tool_evidence", "execution_evidence"
+            })
 
 
 def _observation_basis(cand: Candidate, validated: list[dict], ctx: ReviewerContext,
@@ -777,7 +846,8 @@ def _observation_basis(cand: Candidate, validated: list[dict], ctx: ReviewerCont
     exists) is selectable as a supported OBSERVATION only when a validated
     fact's evidence actually establishes the proposed negative *tool*
     behaviour — not merely because some fact validated and references
-    resolved. Returns ``tool_evidence`` | ``unsupported`` | ``n/a``.
+    resolved. Returns ``tool_evidence`` | ``execution_evidence`` |
+    ``unsupported`` | ``n/a``.
 
     Supported observation types and their required evidence:
       * ``state_transition`` — an observed failed tool: the named
@@ -809,6 +879,8 @@ def _observation_basis(cand: Candidate, validated: list[dict], ctx: ReviewerCont
                 return "tool_evidence"
         elif ftype == "repetition":
             return "tool_evidence"
+        elif ftype in ("token_usage", "generation_latency"):
+            return "execution_evidence"
         # event_support / absence / requirement_status / termination: a quote or
         # a bare status/termination does not establish a negative tool
         # behaviour, so it cannot carry an observation-scoped negative card.
@@ -854,6 +926,10 @@ def _fact_subject(m: ReviewMoment) -> str | None:
             ids = sorted(q.get("event_id", "") for q in f["quotes"] if isinstance(q, dict))
             if ids:
                 return "quote:" + ",".join(ids)
+        if t == "token_usage" and f.get("event_id"):
+            return f"token_usage:{f['event_id']}"
+        if t == "generation_latency" and f.get("event_id"):
+            return f"generation_latency:{f['event_id']}"
     return None
 
 
