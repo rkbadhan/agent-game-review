@@ -117,23 +117,279 @@ function renderFleetUsageSummaryCard(summary) {
   return card;
 }
 
+// A dimension's cell is its incidence over the runs that carried the telemetry
+// it needs. Runs that could not be evaluated are never folded into the score.
+// The one fact an outcome cell must convey is the score itself, so an
+// unevaluated bucket reads as a plain em dash instead of the old "Not
+// evaluated" repeated under every outcome — the row's Coverage column now
+// carries that story once, at the dimension level, with the missing capability
+// named. "no runs" still marks a bucket that never existed (commonly OTHER on
+// a pass/fail-only store).
+function eqCell(metric) {
+  const cell = el("td");
+  if (metric.eligible_runs) {
+    const score = el("span", null, metric.affected_percent + "% ("
+      + metric.affected_runs + "/" + metric.eligible_runs + ")");
+    // Runs measure incidence; tasks measure reach. A tooltip states both so a
+    // percentage over many runs of one task cannot read as many tasks.
+    if (metric.eligible_tasks !== undefined) {
+      score.title = metric.affected_runs + " of " + metric.eligible_runs
+        + " run(s) across " + metric.eligible_tasks + " task(s); "
+        + (metric.affected_tasks || 0) + " task(s) affected";
+    }
+    cell.append(score);
+  } else if (metric.unevaluated_runs) {
+    const dash = el("span", "vs-counts eq-not-evaluated", "—");
+    dash.title = "Not evaluated — " + metric.unevaluated_runs
+      + " run(s) here lacked the telemetry this dimension needs";
+    cell.append(dash);
+  } else {
+    cell.append(el("span", "vs-counts", "no runs"));
+  }
+  return cell;
+}
+
+// Coverage, read across every outcome bucket: of the runs that belong to this
+// dimension's row, how many were actually scored? A reader triaging a
+// dimension needs that denominator next to the scores, not buried in each
+// outcome cell — a 0% over 8 runs means something entirely different from
+// "nobody could be measured".
+function eqCoverage(byOutcome, key) {
+  let eligible = 0, unevaluated = 0;
+  for (const [outcome] of EQ_OUTCOMES) {
+    const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};
+    eligible += metric.eligible_runs || 0;
+    unevaluated += metric.unevaluated_runs || 0;
+  }
+  return { eligible, unevaluated, total: eligible + unevaluated };
+}
+
+// Group unevaluated runs by the EXACT set of capabilities they are missing, so
+// a dimension nothing could score states its one reason once ("missing
+// generation_usage · 12 runs") instead of repeating "not evaluated — missing
+// generation_usage" on a dozen rows. Grouping — rather than merging every run
+// under a union of reasons — keeps each capture's precise unmet capabilities
+// intact, so two differently-incomplete runs never inherit each other's gaps.
+function eqReasonGroups(unevaluated) {
+  const groups = new Map();
+  for (const run of (unevaluated || [])) {
+    const reasons = (run.reasons || []).slice();
+    const k = reasons.join(", ");
+    if (!groups.has(k)) groups.set(k, { reasons, runIds: [] });
+    groups.get(k).runIds.push(run.run_id);
+  }
+  return [...groups.values()].sort((a, b) => b.runIds.length - a.runIds.length);
+}
+// A missing-capability set reads as one unit ("generation_usage + generation_
+// timestamps"); the " + " keeps it from blurring into the " · " that separates
+// one reason-set from the next in the coverage note.
+function eqReasonText(reasons) {
+  return (reasons || []).join(" + ") || "required telemetry";
+}
+function eqMetricRuns(metric) {
+  // Compatibility with pre-migration payloads is intentionally read-only:
+  // new payloads always carry reasons per run in `unevaluated`.
+  return metric.unevaluated || (metric.unevaluated_run_ids || []).map(runId => ({
+    run_id: runId, reasons: metric.unevaluated_reasons || [],
+  }));
+}
+
+function eqCoverageCell(matrix, key) {
+  const byOutcome = matrix.by_outcome || {};
+  const cell = el("td", "eq-coverage");
+  const { eligible, unevaluated, total } = eqCoverage(byOutcome, key);
+  if (!total) {
+    // A bucket with no runs at all (commonly OTHER on a pass/fail-only store)
+    // has nothing to evaluate — never imply a missing capability on runs that
+    // do not exist.
+    cell.append(el("span", "vs-counts", "no runs"));
+    return cell;
+  }
+  const state = eligible === 0 ? "warn" : unevaluated ? "partial" : "ok";
+  cell.append(el("span", "eq-coverage-count " + state,
+    eligible + " of " + total + " evaluated"));
+  // The same coverage stated in distinct tasks: "8 of 12 runs" over 8 tasks
+  // and "8 of 12 runs" over 2 tasks are different stories, and only the second
+  // suggests a systemic gap. Repeated runs of one task count once.
+  const totals = (matrix.by_dimension || {})[key] || {};
+  if (totals.tasks) {
+    const t = el("div", "vs-counts eq-coverage-tasks",
+      (totals.eligible_tasks || 0) + " of " + totals.tasks + " task"
+      + (totals.tasks === 1 ? "" : "s") + " evaluated");
+    t.title = "Distinct tasks behind this row; repeated runs of one task count once";
+    cell.append(t);
+  }
+  if (unevaluated) {
+    const bar = el("div", "eq-coverage-bar");
+    const fill = el("i");
+    fill.style.width = (100 * eligible / total) + "%";
+    bar.append(fill);
+    bar.title = eligible + " of " + total + " runs carried the telemetry this dimension needs";
+    cell.append(bar);
+    const reasons = [];
+    for (const g of eqReasonGroups(eqAllUnevaluated(byOutcome, key))) {
+      reasons.push("missing " + eqReasonText(g.reasons)
+        + (g.runIds.length > 1 ? " (" + g.runIds.length + ")" : ""));
+    }
+    cell.append(el("div", "vs-counts eq-coverage-note", reasons.join(" · ")));
+  }
+  return cell;
+}
+
+// Every unevaluated run for one dimension, across all outcome buckets.
+function eqAllUnevaluated(byOutcome, key) {
+  const out = [];
+  for (const [outcome] of EQ_OUTCOMES) {
+    const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};
+    out.push(...eqMetricRuns(metric));
+  }
+  return out;
+}
+
+// The runs behind one dimension, split by outcome. Every run is a link that
+// opens its full trace: an affected run lands on the exact violating event,
+// while a healthy or unevaluated run lands on its first model generation. A
+// dimension with no findings still lets a reader open the runs it looked at —
+// previously only affected runs were links, so "Context bloat: not evaluated"
+// left nothing to click.
+// The same four buckets as the Runs chips and the pattern outcome splits
+// (queue.OUTCOME_BUCKETS) — pass / fail / undetermined / unverified — so a run
+// can never sit in one bucket here and a different one in the inbox.
+const EQ_OUTCOMES = [
+  ["pass", "Passing runs"],
+  ["fail", "Failing runs"],
+  ["undetermined", "Undetermined runs (verifier ran, no clean verdict)"],
+  ["unverified", "Unverified runs (no verifier evidence)"],
+];
+
+function eqRunRow(runId, eventIds, note) {
+  const row = el("div", "vs-pair eq-example-row");
+  const { task } = runIdParts(runId);
+  const first = (eventIds || [])[0] || null;
+  const b = el("button", "eq-example-link", task);
+  const target = "Open " + runId + (first ? " at " + first : " and its full trace");
+  b.title = target; b.setAttribute("aria-label", target);
+  b.addEventListener("click", () => openRunAtEvent(runId, first));
+  row.append(b);
+  const short = shortRunId(runId);
+  if (short) row.append(el("span", "mono eq-example-id", short));
+  // A run with several violating events keeps each one addressable.
+  for (const eventId of (eventIds || []).slice(1)) {
+    const ev = el("button", "eq-example-link mono", eventId);
+    ev.title = "Open " + runId + " at " + eventId;
+    ev.setAttribute("aria-label", ev.title);
+    ev.addEventListener("click", () => openRunAtEvent(runId, eventId));
+    row.append(ev);
+  }
+  if (note) row.append(el("span", "vs-counts", note));
+  return row;
+}
+
+// The list of unevaluated runs, collapsed under one heading per missing-
+// capability set. The heading carries the "why" once; each run is then just
+// its task name, short id, and an opening link.
+function eqUnevaluatedList(unevaluated) {
+  const list = el("div", "vs-pairs eq-examples");
+  for (const g of eqReasonGroups(unevaluated)) {
+    const head = el("div", "eq-reason");
+    head.append(el("span", "eq-reason-label", "Not evaluated — missing "
+      + eqReasonText(g.reasons)));
+    head.append(el("span", "vs-counts", g.runIds.length
+      + (g.runIds.length === 1 ? " run" : " runs")));
+    list.append(head);
+    for (const runId of g.runIds) list.append(eqRunRow(runId, null, null));
+  }
+  return list;
+}
+
+function eqDetail(byOutcome, key) {
+  const wrap = el("div", "eq-detail-body");
+  // When nothing in this dimension could be evaluated, splitting the runs by
+  // outcome would imply an outcome-by-outcome measurement that never happened
+  // (the old drill-down read "Passing runs / Failing runs" for a dimension that
+  // measured neither). State the one true finding and group the runs by what
+  // they were missing instead.
+  if (!eqCoverage(byOutcome, key).eligible) {
+    const block = el("div", "kv-block");
+    block.append(el("span", "kv-k", "Not evaluated"));
+    const v = el("span", "kv-v");
+    v.append(el("p", "eq-detail-lede",
+      "No run carried the telemetry this dimension needs, so there is no score "
+      + "to report. The runs and their missing capabilities are listed below."));
+    v.append(eqUnevaluatedList(eqAllUnevaluated(byOutcome, key)));
+    block.append(v);
+    wrap.append(block);
+    return wrap;
+  }
+  for (const [outcome, label] of EQ_OUTCOMES) {
+    const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};
+    const block = el("div", "kv-block");
+    block.append(el("span", "kv-k", label));
+    const v = el("span", "kv-v");
+    const affected = metric.affected || [];
+    const healthyIds = metric.healthy_run_ids || [];
+    const unevaluated = eqMetricRuns(metric);
+    if (!affected.length && !healthyIds.length && !unevaluated.length) {
+      v.append(el("span", "vs-counts", "no runs"));
+    } else {
+      if (affected.length || healthyIds.length) {
+        const list = el("div", "vs-pairs eq-examples");
+        for (const a of affected)
+          list.append(eqRunRow(a.run_id, a.event_ids, a.violations + " violation(s)"));
+        for (const runId of healthyIds)
+          list.append(eqRunRow(runId, null, "evaluated, no violation"));
+        v.append(list);
+      }
+      if (unevaluated.length) v.append(eqUnevaluatedList(unevaluated));
+    }
+    block.append(v);
+    wrap.append(block);
+  }
+  return wrap;
+}
+
 function renderFleetExecutionQuality(matrix) {
   const card = el("div", "card card-pad");
   card.append(el("p", "eyebrow", "Execution quality"));
-  const t = el("table", "vs-table");
-  t.append(rowEls("tr", ["Dimension", "PASS", "FAIL"], "th"));
+  card.append(el("p", "chapter-lede",
+    "Per-dimension incidence by outcome. A dimension is scored only on the runs "
+    + "that carried the telemetry it needs; Coverage tells you how many that was "
+    + "and names what the rest were missing. Expand a row to see the runs behind it."));
+  const t = el("table", "vs-table eq-table");
+  t.append(rowEls("tr", ["", "Dimension", "Coverage", "PASS", "FAIL",
+                          "UNDETERMINED", "UNVERIFIED"], "th"));
   const labels = {
     context_bloat: "Context bloat", latency: "Slow generation", redundant_work: "Redundant work",
   };
   const byOutcome = matrix.by_outcome || {};
   for (const [key, label] of Object.entries(labels)) {
-    const tr = el("tr"); tr.append(td(label));
-    for (const outcome of ["pass", "fail"]) {
+    const detail = el("details", "eq-detail");
+    const tr = el("tr", "eq-row");
+    const detailRow = el("tr", "eq-detail-row");
+    const toggleCell = el("td", "eq-toggle");
+    const toggleBtn = el("button", "eq-toggle-btn", "▸");
+    toggleBtn.setAttribute("aria-label", "Show the runs behind " + label);
+    toggleBtn.setAttribute("aria-expanded", "false");
+    toggleBtn.addEventListener("click", () => { detail.open = !detail.open; });
+    detail.addEventListener("toggle", () => {
+      toggleBtn.textContent = detail.open ? "▾" : "▸";
+      toggleBtn.setAttribute("aria-expanded", detail.open ? "true" : "false");
+      detailRow.classList.toggle("open", detail.open);
+    });
+    toggleCell.append(toggleBtn);
+    tr.append(toggleCell, td(label));
+    tr.append(eqCoverageCell(matrix, key));
+    for (const [outcome] of EQ_OUTCOMES) {
       const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};
-      tr.append(td(metric.affected_percent == null ? "Not evaluated"
-        : metric.affected_percent + "% (" + metric.affected_runs + "/" + metric.eligible_runs + ")"));
+      tr.append(eqCell(metric));
     }
     t.append(tr);
+    const detailCell = el("td"); detailCell.colSpan = 8;
+    detail.append(el("summary", null, "Runs behind " + label));
+    detail.append(eqDetail(byOutcome, key));
+    detailCell.append(detail);
+    detailRow.append(detailCell);
+    t.append(detailRow);
   }
   card.append(t); return card;
 }
@@ -235,8 +491,10 @@ function renderFleetTable(groups) {
   const card = el("div", "card card-pad");
   card.append(el("p", "eyebrow", groups.length + " pattern(s)"));
   card.append(el("p", "chapter-lede",
-    "Sorted by group size — the most-repeated failure first. Every number is a "
-    + "re-read of persisted recovery episodes; nothing here is recomputed."));
+    "Ranked to lead with recurring behaviours: recurring before one-off, then "
+    + "reach (distinct tasks, then runs), evidence strength, and measured tokens. "
+    + "The order is explainable from each row — there is no single blended score. "
+    + "Every number is a re-read of persisted recovery episodes; nothing is recomputed."));
   const t = el("table", "vs-table fleet-table");
   t.append(rowEls("tr", ["", "Pattern", "Affected runs", "Episodes", "Recovery", "Recorded usage"], "th"));
   for (const g of groups) {
@@ -269,9 +527,19 @@ function renderFleetTable(groups) {
       raw.append(el("span", null, "raw: "), el("span", "mono", title.raw));
       patternCell.append(raw);
     }
+    // The two ranking inputs a reader cannot read off the numeric columns:
+    // whether this is a pattern at all, and how well its signature is supported.
+    const meta = [g.recurring ? "recurring" : "one-off"];
+    if (g.evidence_strength && g.evidence_strength !== "observed")
+      meta.push(g.evidence_strength + " signature");
+    patternCell.append(el("div", "fleet-pattern-meta", meta.join(" · ")));
     tr.append(patternCell);
 
-    tr.append(td(String(g.runs)));
+    // §12.1: a run count without its task count cannot show whether a pattern
+    // spans many tasks or repeats within a few.
+    const runsCell = td(String(g.runs));
+    if (g.tasks != null) runsCell.append(el("div", "vs-counts", g.tasks + (g.tasks === 1 ? " task" : " tasks")));
+    tr.append(runsCell);
     tr.append(td(String(g.count)));
     tr.append(resolutionBreakdownCell(g));
 
@@ -288,8 +556,14 @@ function renderFleetTable(groups) {
     t.append(tr);
 
     const detailCell = el("td"); detailCell.colSpan = 6;
-    detail.append(el("summary", null, "Details — avg turns, wall time, argument shapes, examples"));
+    detail.append(el("summary", null, "Details — task outcome, avg turns, wall time, argument shapes, examples"));
     const body = el("div", "fleet-detail-body");
+    const ocBlock = el("div", "kv-block");
+    ocBlock.append(el("span", "kv-k", "Task outcome"));
+    const ocV = el("span", "kv-v");
+    ocV.append(outcomeSplitBlock(g));
+    ocBlock.append(ocV);
+    body.append(ocBlock);
     // AGR-06: repeat_rate is affected_runs_with_>1_episode / affected_runs;
     // an empty denominator is `null` (unavailable), never a misleading 0.00.
     const rate = kvBlock("Repeat rate", g.repeat_rate != null ? Math.round(g.repeat_rate * 100) + "%" : "unavailable");
@@ -314,6 +588,36 @@ function renderFleetTable(groups) {
   scroll.append(t);
   card.append(scroll);
   return card;
+}
+
+// P3-B: how the group's AFFECTED runs ended, in the shared outcome vocabulary
+// so Patterns cannot disagree with the Runs chips. A passing run alongside
+// failing ones is shown, but never as the answer: the caveat states it proves
+// the behaviour survivable, not that its approach is correct.
+function outcomeSplitBlock(g) {
+  const wrap = el("div", "outcome-split");
+  const split = g.outcome_split || {};
+  const order = [["fail", "failed"], ["pass", "passed"],
+                 ["undetermined", "undetermined"], ["unverified", "unverified"]];
+  const present = order.filter(([k]) => split[k]);
+  if (!present.length) {
+    wrap.append(el("span", "vs-counts", "none recorded"));
+    return wrap;
+  }
+  const line = el("div", "vs-counts outcome-split-line");
+  line.append(document.createTextNode("Affected runs: "));
+  present.forEach(([k, label], i) => {
+    if (i) line.append(document.createTextNode(" · "));
+    line.append(el("span", "outcome-" + k, split[k] + " " + label));
+  });
+  wrap.append(line);
+  if (g.outcome_mixed) {
+    wrap.append(el("p", "outcome-caveat",
+      "A passing run with the same behaviour shows the behaviour is survivable — "
+      + "it does not establish that its approach is the correct alternative. "
+      + "This compares task outcomes, not the traces behind them."));
+  }
+  return wrap;
 }
 
 // U3: a drilldown onto this group's sample episodes (up to _MAX_ANCHORS,
@@ -342,6 +646,16 @@ function representativeEpisodesBlock(g) {
     row.append(el("span", "vs-counts", (a.classification || "?").replace(/_/g, " ")
       + (a.error_signature_basis === "fallback_last_nonempty" ? " · fallback signature" : "")));
     list.append(row);
+    // P2 (§B1): what THIS episode does not establish, stated beside it — the
+    // classification is never shown without its evidence limits.
+    if (a.limits && a.limits.length) {
+      const limits = el("div", "fleet-example-limits");
+      limits.append(el("span", "fleet-example-limits-label", "Limits"));
+      const ul = el("ul");
+      for (const limit of a.limits) ul.append(el("li", null, limit));
+      limits.append(ul);
+      list.append(limits);
+    }
   }
   wrap.append(list);
   return wrap;
@@ -424,9 +738,18 @@ async function openRunAtEvent(runId, eventId) {
   state.view = "review";
   try { await selectRun(runId); }
   catch (e) { toast("That run is not in this store."); return; }
-  if (!eventId) return;
-  const f = state.forensic || {};
-  const step = (f.steps || []).find(s => (s.event_ids || []).includes(eventId));
+  const steps = (state.forensic || {}).steps || [];
+  let step = null;
+  if (eventId) {
+    step = steps.find(s => (s.event_ids || []).includes(eventId));
+    if (!step) { toast("Could not locate that event in the run's trace."); return; }
+  } else {
+    // No specific event (a healthy or unevaluated execution-quality run): still
+    // open the trace, landing on the first model generation — the step these
+    // dimensions are measured over.
+    step = steps.find(s => s.kind === "model_output" || s.event_type === "model_output")
+      || steps.find(s => s.kind === "tool_call" || s.event_type === "tool_call")
+      || steps[0];
+  }
   if (step) openTrace(step.step_id);
-  else toast("Could not locate that event in the run's trace.");
 }

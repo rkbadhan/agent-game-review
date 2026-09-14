@@ -517,6 +517,9 @@ class Candidate:
     affected_checks: list[str] = field(default_factory=list)
     affected_contract_items: list[str] = field(default_factory=list)
     structured_facts: list[dict] = field(default_factory=list)
+    # P2 (§B1): what this finding's evidence does NOT establish, stated beside
+    # the finding. Derived from deterministic fields only, never a judgement.
+    limits: list[str] = field(default_factory=list)
     detector_version: str = ""
 
     def to_dict(self) -> dict:
@@ -557,6 +560,9 @@ class ReviewMoment:
     affected_contract_items: list[str] = field(default_factory=list)
     validated_facts: list[dict] = field(default_factory=list)
     attribution_ceiling: str = "hypothesized"
+    # P2 (§B1): the candidate's evidence limits, carried through the envelope so
+    # a published card never shows a claim without what it does not establish.
+    limits: list[str] = field(default_factory=list)
     rendered_statement: str = ""
     gate_results: dict = field(default_factory=dict)
     sequence: Optional[int] = None

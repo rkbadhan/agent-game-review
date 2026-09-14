@@ -538,6 +538,22 @@ def cmd_argument_shapes(args) -> int:
     return 0
 
 
+def cmd_backfill_execution_quality(args) -> int:
+    """Provision execution_quality.json for captures ingested before it existed.
+
+    One-time (idempotent) migration: a whole pre-feature store would otherwise
+    recompute its execution-quality summary on every read.
+    """
+    from .execution_quality import backfill_execution_quality
+    store = Store(args.store)
+    written = backfill_execution_quality(store)
+    if written:
+        print(f"wrote execution_quality.json for {written} capture(s) in {args.store!r}")
+    else:
+        print(f"every capture in {args.store!r} already has execution_quality.json")
+    return 0
+
+
 def _selector_arg(raw: str) -> dict:
     field, _, value = raw.partition("=")
     if not field or not value:
@@ -1268,6 +1284,12 @@ def build_parser() -> argparse.ArgumentParser:
     pas.add_argument("--min-group-size", type=int, default=1,
                      help="only show groups with at least this many failing calls (default: 1)")
     pas.set_defaults(func=cmd_argument_shapes)
+
+    pbeq = sub.add_parser(
+        "backfill-execution-quality",
+        help="write execution_quality.json for captures ingested before the detectors existed",
+    )
+    pbeq.set_defaults(func=cmd_backfill_execution_quality)
 
     pd = sub.add_parser("disposition", help="record a human review disposition on a run (§4.3.4)")
     pd.add_argument("run_id", help="logical run id")

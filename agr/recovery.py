@@ -740,3 +740,37 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
         ep.nth_occurrence_in_run = signature_counts[key]
 
     return episodes
+
+
+def episode_limits(ep: dict) -> list[str]:
+    """What ONE recovery episode's evidence does NOT establish (§B1).
+
+    A read-model projection over fields the episode already carries — no new
+    judgement, and nothing inferred. Kept per-episode (never merged into a
+    fleet aggregate): two episodes in one group can be limited differently —
+    one may lack usage while the other was instrumented, or one may be a
+    plausible (not confirmed) link. Every surfaced finding states its limits
+    beside its observation so a confident headline cannot outrun its evidence.
+    """
+    limits: list[str] = []
+    usage = ep.get("usage_completeness")
+    if usage == "unavailable":
+        limits.append("Usage was never instrumented in this episode's window; no token "
+                      "cost is attributed to it.")
+    elif usage == "partial":
+        limits.append("Only part of this episode's window carried usage records; any "
+                      "measured total undercounts.")
+    if ep.get("attribution_ceiling") == "hypothesized":
+        limits.append("The failure-to-resolution link is plausible, not confirmed.")
+    classification = ep.get("classification")
+    if classification == "retry_succeeded_without_strategy_change":
+        limits.append("The retry succeeded without a strategy change — a retry, not a "
+                      "demonstrated recovery.")
+    if classification == "unrecovered_failure":
+        if ep.get("expected_probe"):
+            limits.append("The failed call was a read-only probe; the failure may be the "
+                          "target being absent, not a mistake.")
+        else:
+            limits.append("No resolution was observed; whether this failure mattered to "
+                          "the task is not established here.")
+    return limits

@@ -230,6 +230,49 @@ def test_outcome_and_review_status_filters_are_explicit(tmp_path):
         queue.queue_view(store, sort="nope")
 
 
+def _store_with_verifier_split(tmp_path):
+    """One verifier-bearing run and one trace with no verifier at all."""
+    store = Store(str(tmp_path / "store"))
+    with open(os.path.join(FIXTURES, "clean_pass.atif.json"), encoding="utf-8") as fh:
+        analyze(json.load(fh), store)
+    with open(os.path.join(FIXTURES, "clean_pass.atif.json"), encoding="utf-8") as fh:
+        trace = json.load(fh)
+    trace["run"]["logical_run_id"] = "trace_only"
+    trace.pop("verifier", None)
+    trace["capabilities"]["verifier_code"] = "unavailable"
+    analyze(trace, store)
+    return store
+
+
+def test_outcome_bucket_keeps_undetermined_and_unverified_distinct():
+    """P1: the one classification every surface shares. UNDETERMINED (a verifier
+    ran, no clean verdict) and UNVERIFIED (no verifier evidence) must never
+    collapse into one bucket."""
+    assert queue.outcome_bucket("PASSED") == "pass"
+    assert queue.outcome_bucket("FAILED") == "fail"
+    assert queue.outcome_bucket("ERROR") == "fail"
+    assert queue.outcome_bucket("UNDETERMINED") == "undetermined"
+    assert queue.outcome_bucket("UNVERIFIED") == "unverified"
+    assert queue.outcome_bucket(None) == "unverified"
+
+
+def test_verifier_evidence_is_a_filter_and_a_grouping(tmp_path):
+    store = _store_with_verifier_split(tmp_path)
+    assert queue.queue_view(store, filters=["ground_truth"])["run_ids"] == [
+        "greeting_file__clean_pass"]
+    assert queue.queue_view(store, filters=["analysis_only"])["run_ids"] == ["trace_only"]
+    groups = {g["key"]: g["run_ids"]
+              for g in queue.queue_view(store, grouping="verification")["groups"]}
+    assert groups == {"verified": ["greeting_file__clean_pass"], "analysis-only": ["trace_only"]}
+
+
+def test_unverified_chip_does_not_return_verifier_bearing_runs(tmp_path):
+    store = _store_with_verifier_split(tmp_path)
+    assert queue.queue_view(store, filters=["unverified"])["run_ids"] == ["trace_only"]
+    # A verifier-bearing run is never "undetermined" or "unverified" by accident.
+    assert queue.queue_view(store, filters=["undetermined"])["run_ids"] == []
+
+
 def test_next_unhandled_walks_frozen_order(tmp_path):
     store = _store(tmp_path)
     order = queue.queue_view(store, sort="triage")["run_ids"]

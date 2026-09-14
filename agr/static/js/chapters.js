@@ -357,6 +357,12 @@ function renderExecutionQuality(rv, forensic) {
     } else {
       evidence.append(document.createTextNode("Evaluated; no violation detected."));
     }
+    // P2 (§B1): the dimension states what its evidence does not establish.
+    if ((metric.limits || []).length) {
+      const lim = el("div", "eq-limits");
+      for (const limit of metric.limits) lim.append(el("div", null, limit));
+      evidence.append(lim);
+    }
     tr.append(evidence); table.append(tr);
   }
   card.append(table);

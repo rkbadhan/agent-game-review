@@ -82,12 +82,149 @@ def test_example_anchors_point_back_to_the_run(tmp_path):
     assert anchor["classification"] == "good_recovery"
 
 
-def test_groups_sorted_largest_first(tmp_path):
+def test_representative_episodes_carry_their_evidence_limits(tmp_path):
+    """P2 (§B1): a surfaced episode states what it does NOT establish. An
+    unrecovered failure never reads as a confirmed problem without its limit."""
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    anchor = fleet.fleet_episodes(store)[0].example_anchors[0]
+    assert anchor["classification"] == "unrecovered_failure"
+    assert any("No resolution was observed" in limit for limit in anchor["limits"])
+
+
+def test_episode_limits_are_per_episode_not_shared():
+    """Limits are derived from each episode's own fields, so two episodes in
+    one group are limited differently when their evidence differs."""
+    from agr.recovery import episode_limits
+
+    clean = {"classification": "good_recovery", "usage_completeness": "complete",
+             "attribution_ceiling": "dependency_linked"}
+    assert episode_limits(clean) == []
+
+    partial = {**clean, "usage_completeness": "partial"}
+    assert any("undercounts" in limit for limit in episode_limits(partial))
+
+    plausible = {"classification": "plausibly_resolved", "usage_completeness": "unavailable",
+                 "attribution_ceiling": "hypothesized"}
+    limits = episode_limits(plausible)
+    assert any("plausible, not confirmed" in limit for limit in limits)
+    assert any("never instrumented" in limit for limit in limits)
+
+    retry = {**clean, "classification": "retry_succeeded_without_strategy_change"}
+    assert any("retry, not a" in limit for limit in episode_limits(retry))
+
+    probe = {"classification": "unrecovered_failure", "usage_completeness": "complete",
+             "attribution_ceiling": "dependency_linked", "expected_probe": True}
+    assert any("read-only probe" in limit for limit in episode_limits(probe))
+
+
+def test_group_reports_the_distinct_task_count(tmp_path):
+    """§12.1: a run count without its task count cannot show whether a pattern
+    spans many tasks or repeats within a few."""
+    store = _store(tmp_path, "stuck_retry.atif.json", "tool_failure_recovery.atif.json")
+    groups = fleet.fleet_episodes(store)
+    assert all(g.task_count >= 1 for g in groups)
+    assert all(g.to_dict()["tasks"] == g.task_count for g in groups)
+
+
+def test_group_outcome_split_reads_each_affected_runs_outcome(tmp_path):
+    """P3-B: the task outcome of the group's AFFECTED RUNS, in the shared
+    bucket vocabulary — and a passing sibling is flagged as mixed (evidence the
+    behaviour is survivable), never as the correct approach."""
+    from agr.pipeline import analyze
+
+    store = Store(str(tmp_path / "store"))
+    analyses = []
+    for suffix in ("p", "f", "u"):
+        with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"),
+                  encoding="utf-8") as fh:
+            doc = json.load(fh)
+        doc["run"]["logical_run_id"] += "__" + suffix
+        analyses.append(analyze(doc, store))
+    for analysis, status in zip(analyses, ("PASSED", "FAILED", "UNVERIFIED")):
+        src = analysis.run_source
+        store.write_derived(src.run_id, src.source_capture_id, "outcome.json",
+                            {"status": status, "passed": 0, "total": 0,
+                             "failed_checks": []})
+
+    g = fleet.fleet_episodes(store)[0]
+    assert g.outcome_split == {"pass": 1, "fail": 1, "unverified": 1}
+    assert g.outcome_mixed is True
+    d = g.to_dict()
+    # Every bucket is present in the payload, even at zero.
+    assert d["outcome_split"] == {"pass": 1, "fail": 1,
+                                 "undetermined": 0, "unverified": 1}
+    assert d["outcome_mixed"] is True
+
+
+def test_group_outcome_not_mixed_when_all_runs_agree(tmp_path):
+    from agr.pipeline import analyze
+
+    store = Store(str(tmp_path / "store"))
+    for suffix in ("a", "b"):
+        with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"),
+                  encoding="utf-8") as fh:
+            doc = json.load(fh)
+        doc["run"]["logical_run_id"] += "__" + suffix
+        analysis = analyze(doc, store)
+        src = analysis.run_source
+        store.write_derived(src.run_id, src.source_capture_id, "outcome.json",
+                            {"status": "PASSED", "passed": 0, "total": 0,
+                             "failed_checks": []})
+    g = fleet.fleet_episodes(store)[0]
+    assert g.outcome_split == {"pass": 2}
+    assert g.outcome_mixed is False
+
+
+def test_groups_are_returned_in_rank_key_order(tmp_path):
     store = _store(tmp_path, "stuck_retry.atif.json", "tool_failure_recovery.atif.json",
                    "ignored_failure.atif.json")
     groups = fleet.fleet_episodes(store, group_by=["tool"])
-    counts = [g.count for g in groups]
-    assert counts == sorted(counts, reverse=True)
+    keys = [g.rank_key() for g in groups]
+    assert keys == sorted(keys, reverse=True)
+    # And recurring groups (if any) always precede one-offs.
+    flags = [g.is_recurring for g in groups]
+    assert flags == sorted(flags, reverse=True)
+
+
+def _group(**kw):
+    base = dict(key=("shell", "X"), group_by=["tool", "error_signature"])
+    base.update(kw)
+    return fleet.EpisodeGroup(**base)
+
+
+def test_evidence_strength_reads_the_signature_basis():
+    assert _group(count=1, fallback_basis_count=0).evidence_strength == "observed"
+    # Some anchors fell back to the last-line heuristic.
+    assert _group(count=2, fallback_basis_count=1).evidence_strength == "mixed"
+    # EVERY anchor is an opaque fallback — the key is not a real diagnostic.
+    weak = _group(count=2, fallback_basis_count=2)
+    assert weak.all_fallback_basis is True
+    assert weak.evidence_strength == "weak"
+
+
+def test_rank_key_leads_with_recurring_then_reach_then_evidence_then_impact():
+    one_off = _group(count=1, run_ids=["r1"], task_count=1)
+    recurring = _group(count=2, run_ids=["r1", "r2"], task_count=2)
+    assert one_off.is_recurring is False
+    assert recurring.is_recurring is True
+    assert recurring.rank_key() > one_off.rank_key()
+
+    # Reach: two tasks beats nine episodes all inside one task.
+    broad = _group(count=2, run_ids=["r1", "r2"], task_count=2)
+    deep = _group(count=9, run_ids=["r1"], task_count=1)
+    assert broad.rank_key() > deep.rank_key()
+
+    # Same recurrence: the stronger signature ranks first.
+    observed = _group(count=2, run_ids=["r1", "r2"], task_count=2)
+    weak = _group(count=2, run_ids=["r1", "r2"], task_count=2,
+                  fallback_basis_count=2)
+    assert observed.rank_key() > weak.rank_key()
+
+    # Same recurrence and evidence: measured impact breaks the tie, and an
+    # unmeasured group (0 tokens) never outranks a measured one.
+    high = _group(count=2, run_ids=["r1", "r2"], task_count=2, total_tokens=500)
+    low = _group(count=2, run_ids=["r1", "r2"], task_count=2, total_tokens=0)
+    assert high.rank_key() > low.rank_key()
 
 
 def test_empty_store_produces_no_groups(tmp_path):
@@ -269,7 +406,9 @@ def test_to_dict_shape(tmp_path):
     g = fleet.fleet_episodes(store)[0]
     d = g.to_dict()
     assert set(d) == {
-        "key", "group_by", "count", "runs", "repeat_rate", "unrecovered_count",
+        "key", "group_by", "count", "runs", "tasks", "repeat_rate", "unrecovered_count",
+        # P3: the two ranking inputs that are not numeric columns.
+        "recurring", "evidence_strength",
         "unrecovered_share",
         # AGR-04: confirmed/plausible recovery are explicit, separate counts —
         # never silently folded into "unrecovered" or each other.
@@ -288,6 +427,8 @@ def test_to_dict_shape(tmp_path):
         # AGR-07 (review 82cc113): whether this group's episodes selected
         # error_signature via the opaque fallback tier.
         "fallback_basis_count", "all_fallback_basis",
+        # P3-B: the outcome split of the group's affected runs.
+        "outcome_split", "outcome_mixed",
         "example_anchors",
     }
 

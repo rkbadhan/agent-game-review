@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import read
+from .execution_quality import execution_quality_record
+from .queue import OUTCOME_BUCKETS, outcome_bucket
+from .recovery import episode_limits
 from .store import Store
 
 # Accepted --group-by tokens -> the RecoveryEpisode field each one reads.
@@ -53,6 +56,9 @@ class EpisodeGroup:
     key: tuple
     group_by: list[str]
     count: int
+    # §12.1: distinct tasks behind the group — "6 runs" cannot distinguish one
+    # duplicated task from six when the task count is left implicit.
+    task_count: int = 0
     run_ids: list[str] = field(default_factory=list)
     unrecovered_count: int = 0
     # AGR-04: confirmed (good_recovery / retry_succeeded_without_strategy_
@@ -101,7 +107,20 @@ class EpisodeGroup:
     # confident traceback/diagnostic-derived signature, which the UI should
     # not present identically.
     fallback_basis_count: int = 0
+    # P3-B: how this group's AFFECTED runs ended, keyed by the shared outcome
+    # classifier (§4.3.2) so Patterns can never disagree with the Runs chips.
+    # A behaviour seen in both a passing and a failing run shows it is
+    # survivable — NOT that the failing runs should adopt the passing run's
+    # approach. This compares outcomes, not the traces behind them.
+    outcome_split: dict = field(default_factory=dict)
     example_anchors: list[dict] = field(default_factory=list)
+
+    @property
+    def outcome_mixed(self) -> bool:
+        """True when the affected runs both passed and did not — the case
+        where a passing sibling could be mistaken for the correct approach."""
+        passing = self.outcome_split.get("pass", 0)
+        return passing > 0 and (self.distinct_runs - passing) > 0
 
     @property
     def all_fallback_basis(self) -> bool:
@@ -166,6 +185,54 @@ class EpisodeGroup:
     def plausible_share(self) -> float:
         return (self.plausible_count / self.count) if self.count else 0.0
 
+    @property
+    def is_recurring(self) -> bool:
+        """True when the behaviour was seen more than once — across several
+        tasks, or repeatedly within the corpus (including several times inside
+        one run). One episode in one task is a one-off, not a pattern."""
+        return self.task_count > 1 or self.count > 1
+
+    @property
+    def evidence_strength(self) -> str:
+        """How well the group's error signature itself is supported:
+        ``observed`` (every anchor's signature was read from the trace),
+        ``mixed`` (some anchors fell back to the last-line heuristic), or
+        ``weak`` (every anchor is the opaque fallback — the key is a best
+        effort, not an established diagnostic)."""
+        if self.all_fallback_basis:
+            return "weak"
+        if self.fallback_basis_count:
+            return "mixed"
+        return "observed"
+
+    @property
+    def evidence_strength_rank(self) -> int:
+        return {"observed": 2, "mixed": 1, "weak": 0}[self.evidence_strength]
+
+    def rank_key(self) -> tuple:
+        """The ordering that leads with the most investigable behaviours.
+
+        Lexicographic, and every component is DISPLAYED — deliberately not a
+        single blended score, which would let weak evidence borrow precision
+        from a strong recurrence count. In order:
+
+          1. recurring before one-off (a one-off never outranks a pattern),
+          2. reach: distinct tasks, then distinct runs, then episodes,
+          3. evidence strength of the error signature,
+          4. measured tokens (0 where usage was never instrumented).
+
+        Missing resource coverage therefore never *raises* a group: it sorts
+        last on the impact key and stays visibly "unavailable".
+        """
+        return (
+            1 if self.is_recurring else 0,
+            self.task_count,
+            self.distinct_runs,
+            self.count,
+            self.evidence_strength_rank,
+            self.total_tokens,
+        )
+
     def to_dict(self) -> dict:
         rate = self.repeat_rate
         return {
@@ -173,6 +240,11 @@ class EpisodeGroup:
             "group_by": self.group_by,
             "count": self.count,
             "runs": self.distinct_runs,
+            "tasks": self.task_count,
+            # P3: the two other ranking inputs, exposed so the list order is
+            # explainable from the row itself, not a hidden score.
+            "recurring": self.is_recurring,
+            "evidence_strength": self.evidence_strength,
             # None (JSON null) when unavailable — the caller renders that as
             # "unavailable", never a misleading 0%.
             "repeat_rate": round(rate, 3) if rate is not None else None,
@@ -207,17 +279,30 @@ class EpisodeGroup:
             "total_wall_ms": self.total_wall_ms,
             "fallback_basis_count": self.fallback_basis_count,
             "all_fallback_basis": self.all_fallback_basis,
+            # P3-B: the outcome split of this group's affected runs, in the
+            # shared bucket vocabulary, plus whether it is genuinely mixed.
+            "outcome_split": {b: self.outcome_split.get(b, 0) for b in OUTCOME_BUCKETS},
+            "outcome_mixed": self.outcome_mixed,
             "example_anchors": self.example_anchors,
         }
 
 
 def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[EpisodeGroup]:
     """Group every run's persisted recovery episodes by ``group_by``
-    (default: tool + error_signature together), sorted by group size
-    (largest — the most repeated failure — first).
+    (default: tool + error_signature together), ordered so the most
+    investigable behaviours lead: recurring before one-off, then by reach
+    (distinct tasks, runs, episodes), evidence strength, and measured tokens.
+    See :meth:`EpisodeGroup.rank_key`.
     """
     dims = _resolve_dims(group_by)
     runs = read.list_runs(store)
+    task_of = {r["run_id"]: r.get("task_id") for r in runs}
+    # P3-B: one shared classifier for every run's task outcome, so the
+    # Patterns outcome split cannot disagree with the Runs chips.
+    bucket_of = {
+        r["run_id"]: outcome_bucket((r.get("outcome") or {}).get("status"))
+        for r in runs
+    }
     buckets: dict[tuple, list[dict]] = {}
     for r in runs:
         run_id = r["run_id"]
@@ -242,6 +327,10 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
                 # AGR-07: which tier actually selected error_signature for
                 # THIS episode — preserved through to the UI's drill-in.
                 "error_signature_basis": e.get("error_signature_basis"),
+                # P2 (§B1): each representative episode carries its own
+                # evidence limits, so the drill-in never shows a confident
+                # classification without what it does not establish.
+                "limits": episode_limits(e),
             }
             for e in eps[:_MAX_ANCHORS]
         ]
@@ -250,6 +339,12 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
             group_by=dims,
             count=len(eps),
             run_ids=[e["run_id"] for e in eps],
+            task_count=len({task_of.get(e["run_id"]) for e in eps if task_of.get(e["run_id"])}),
+            # Distinct affected runs only — an episode is one behaviour, not
+            # one run, so two episodes in the same run still count that run once.
+            outcome_split=dict(Counter(
+                bucket_of.get(run_id, "unverified") for run_id in {e["run_id"] for e in eps}
+            )),
             unrecovered_count=sum(1 for e in eps if e.get("classification") == "unrecovered_failure"),
             confirmed_count=sum(
                 1 for e in eps
@@ -269,7 +364,7 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
                 1 for e in eps if e.get("error_signature_basis") == "fallback_last_nonempty"),
             example_anchors=anchors,
         ))
-    groups.sort(key=lambda g: g.count, reverse=True)
+    groups.sort(key=lambda g: g.rank_key(), reverse=True)
     return groups
 
 
@@ -395,36 +490,136 @@ def fleet_usage_summary(store: Store) -> FleetUsageSummary:
     )
 
 
+# Efficiency dimension -> the detector whose finding anchors its evidence.
+_DIMENSION_DETECTOR = {
+    "context_bloat": "context_token_bloat",
+    "latency": "excess_latency",
+    "redundant_work": "repeated_action_no_new_info",
+}
+
+
+def _anchor_events(record: dict, detector: str) -> list[str]:
+    """Every event that anchors this detector's finding (all violations).
+
+    Returning only the first anchor made a run's other violating events
+    unreachable from the card. An aggregate finding lists all of them in
+    ``anchor_event_ids``, so preserve the whole set.
+    """
+    for finding in record.get("findings", []) or []:
+        if finding.get("detector") == detector:
+            return [e for e in (finding.get("anchor_event_ids") or []) if e]
+    return []
+
+
 def fleet_execution_quality(store: Store) -> dict:
-    """Execution issue incidence by outcome, using evaluated runs only."""
+    """Execution issue incidence by outcome, using evaluated runs only.
+
+    Every outcome-bearing run is represented. A run with no persisted
+    ``execution_quality.json`` (ingested before the detectors existed) is
+    derived from its own persisted events rather than dropped; a run with no
+    usable telemetry at all stays in the run set but is counted as
+    *unevaluated* with the missing capability named, so the card reports
+    "N of M runs not evaluated" instead of an unexplained "No results".
+
+    Each dimension also carries the runs behind its numbers — the affected
+    runs (with the event that anchors the finding) and the unevaluated runs
+    (with their missing capabilities) — so a reader can see the incidents
+    separately instead of only a percentage. Distinct task counts ride beside
+    the run counts (per bucket and, in ``by_dimension``, across the whole row)
+    so repeated runs of one task cannot read as a pattern spanning many.
+    """
     dimensions = ("context_bloat", "latency", "redundant_work")
-    groups = {"pass": [], "fail": []}
+    # Execution quality is independent of outcome, so a run whose result is
+    # undetermined or unverified must still be counted — never dropped. Its
+    # bucket comes from queue.outcome_bucket, the SAME classifier behind the
+    # Runs chips and the pattern outcome splits, so a run can never land in one
+    # bucket here and a different one there. (The old single "other" bucket
+    # both hid the difference between "a verifier ran, no clean verdict" and
+    # "no verifier at all", and could disagree with the inbox.)
+    groups: dict[str, list[tuple[str, str | None, dict]]] = {
+        bucket: [] for bucket in OUTCOME_BUCKETS
+    }
     for run in read.list_runs(store):
-        status = (run.get("outcome") or {}).get("status")
-        label = "pass" if status == "PASSED" else "fail" if status == "FAILED" else None
-        if label is None:
-            continue
+        label = outcome_bucket((run.get("outcome") or {}).get("status"))
         run_id, capture_id = run["run_id"], run.get("capture_id")
-        if not capture_id or not store.has_derived(run_id, capture_id, "execution_quality.json"):
+        if not capture_id:
             continue
-        groups[label].append(
-            store.read_derived(run_id, capture_id, "execution_quality.json") or {}
-        )
-    result = {"by_outcome": {}}
+        groups[label].append((
+            run_id, run.get("task_id"),
+            execution_quality_record(store, run_id, capture_id),
+        ))
+    # Distinct tasks, tracked per dimension ACROSS outcome buckets: a task with
+    # both a passing and a failing run must not be counted twice. Runs measure
+    # how often something was observed; tasks measure how far it spread (§12.1).
+    task_sets: dict[str, dict[str, set]] = {
+        dimension: {"eligible": set(), "affected": set(), "unevaluated": set()}
+        for dimension in dimensions
+    }
+    result = {"by_outcome": {}, "by_dimension": {}}
     for label, records in groups.items():
         metrics = {}
         for dimension in dimensions:
-            values = [
-                record.get("efficiency", {}).get(dimension, {}) for record in records
-            ]
-            evaluated = [value for value in values if value.get("evaluated")]
-            affected = [value for value in evaluated if value.get("violations", 0) > 0]
+            detector = _DIMENSION_DETECTOR[dimension]
+            evaluated, affected, healthy, unevaluated = [], [], [], []
+            bucket_tasks = {"eligible": set(), "affected": set(), "unevaluated": set()}
+            for run_id, task_id, record in records:
+                value = (record.get("efficiency") or {}).get(dimension) or {}
+                if not value.get("evaluated"):
+                    # Missing telemetry belongs to this capture, not to the
+                    # outcome bucket. Keeping the reasons beside the run stops
+                    # two differently-incomplete runs from inheriting each
+                    # other's missing capabilities in the drill-down.
+                    unevaluated.append({
+                        "run_id": run_id,
+                        "reasons": sorted(value.get("unmet_capabilities") or []),
+                    })
+                    if task_id:
+                        bucket_tasks["unevaluated"].add(task_id)
+                        task_sets[dimension]["unevaluated"].add(task_id)
+                    continue
+                evaluated.append(value)
+                if task_id:
+                    bucket_tasks["eligible"].add(task_id)
+                    task_sets[dimension]["eligible"].add(task_id)
+                if value.get("violations", 0) > 0:
+                    event_ids = _anchor_events(record, detector)
+                    affected.append({
+                        "run_id": run_id,
+                        "event_id": event_ids[0] if event_ids else None,
+                        "event_ids": event_ids,
+                        "violations": value.get("violations", 0),
+                    })
+                    if task_id:
+                        bucket_tasks["affected"].add(task_id)
+                        task_sets[dimension]["affected"].add(task_id)
+                else:
+                    healthy.append(run_id)
             metrics[dimension] = {
                 "eligible_runs": len(evaluated),
+                "eligible_tasks": len(bucket_tasks["eligible"]),
                 "affected_runs": len(affected),
+                "affected_tasks": len(bucket_tasks["affected"]),
                 "affected_percent": (
                     round(100 * len(affected) / len(evaluated), 2) if evaluated else None
                 ),
+                "unevaluated_runs": len(unevaluated),
+                "unevaluated_tasks": len(bucket_tasks["unevaluated"]),
+                "affected": affected,
+                # Every run is addressable from the card — an evaluated run with
+                # no violation and an unevaluated run were previously listed as
+                # plain text, so a dimension with zero findings had no run you
+                # could open to inspect at all.
+                "healthy_run_ids": healthy,
+                "unevaluated": unevaluated,
             }
         result["by_outcome"][label] = {"runs": len(records), "dimensions": metrics}
+    for dimension, sets in task_sets.items():
+        # A task counted in two buckets appears once here; the coverage column
+        # reads this, not the sum of per-bucket task counts.
+        result["by_dimension"][dimension] = {
+            "eligible_tasks": len(sets["eligible"]),
+            "affected_tasks": len(sets["affected"]),
+            "unevaluated_tasks": len(sets["unevaluated"]),
+            "tasks": len(sets["eligible"] | sets["unevaluated"]),
+        }
     return result

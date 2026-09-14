@@ -248,8 +248,11 @@ def test_run_task_survives_a_failed_setup_command(tmp_path):
 def test_setup_commands_run_before_the_prompt(tmp_path):
     store = Store(str(tmp_path / "store"))
     marker = tmp_path / "marker.txt"
+    # Quote the path: setup commands run through a shell (sh and cmd.exe both
+    # accept this form) and an unquoted marker path breaks wherever the temp
+    # directory contains a space.
     task = runner.Task(task_id="t1", prompt="do it", verifier="./verify.sh",
-                       setup=[f"echo hello > {marker}"])
+                       setup=[f'echo hello > "{marker}"'])
     seen = {}
 
     def claude_runner(prompt, workdir, timeout_s):
