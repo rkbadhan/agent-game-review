@@ -7,13 +7,17 @@ event records returned here and never read provider-specific payloads.
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from .schema import DerivedEvent, DetectorResult
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
+    from .store import Store
 
 _CACHE_INPUT_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens")
 
@@ -235,7 +239,7 @@ def execution_quality_summary(
         for detector_result in (context, latency, redundant)
         for candidate in detector_result.candidates
     ]
-    return {
+    return with_efficiency_limits({
         "efficiency": {
             "context_bloat": {
                 "evaluated": context.evaluated,
@@ -274,9 +278,15 @@ def execution_quality_summary(
                 "status": state(redundant),
                 "unmet_capabilities": redundant.unmet_capabilities,
                 "violations": len(redundant_facts),
-                "unique_signatures": len(
-                    {tuple(fact["signature"]) for fact in redundant_facts}
-                ),
+                # A signature is ``(tool, content_key, input_identity)`` and either
+                # element may be a structured argument (an ATIF ``data`` object),
+                # so it is canonicalized to JSON before de-duplicating rather than
+                # put straight into a set — a dict is not hashable and would take
+                # the whole summary down.
+                "unique_signatures": len({
+                    json.dumps(fact["signature"], sort_keys=True, default=str)
+                    for fact in redundant_facts
+                }),
                 "max_calls_between": max(
                     (fact.get("calls_between", 0) for fact in redundant_facts),
                     default=None,
@@ -284,4 +294,210 @@ def execution_quality_summary(
             },
         },
         "findings": findings,
-    }
+    })
+
+
+def _empty_execution_quality() -> dict:
+    return {"efficiency": {}, "findings": []}
+
+
+def execution_quality_from_records(
+    raw_events: Iterable[Any],
+    capabilities: Optional[dict],
+    source: Any = None,
+    *,
+    run_id: Optional[str] = None,
+    capture_id: Optional[str] = None,
+) -> dict:
+    """Run the three execution detectors over already-loaded records.
+
+    The pure core of the derive-on-read fallback: it takes the events (raw
+    ``events.json`` dicts or :class:`DerivedEvent` instances), the capability
+    map, and the immutable source document, and does no store I/O. A caller
+    that has already loaded any of these (e.g. the forensic read) passes them
+    in rather than paying for a second read and re-parse.
+
+    Returns an empty summary when there are no events to evaluate; every
+    dimension then reports unevaluated rather than a fabricated pass.
+    """
+    # Imported lazily: detectors.py imports this module.
+    from .detectors import (
+        ContextTokenBloat,
+        DetectorContext,
+        ExcessLatency,
+        RepeatedActionNoNewInfo,
+    )
+    from .schema import CapabilityProfile
+
+    events = [
+        evt if isinstance(evt, DerivedEvent) else DerivedEvent(**evt)
+        for evt in raw_events
+    ]
+    if not events:
+        return _empty_execution_quality()
+    if run_id is None:
+        run_id = events[0].run_id
+        capture_id = events[0].source_capture_id
+    profile = CapabilityProfile(
+        run_id=run_id or "",
+        source_capture_id=capture_id or "",
+        capabilities=dict(capabilities or {}),
+    )
+    # The thresholds are the capture's own when the immutable source declares
+    # them; otherwise the module defaults apply, exactly as at ingest time.
+    doc = {"execution_quality": source.get("execution_quality", {})} \
+        if isinstance(source, dict) else {}
+    ctx = DetectorContext(
+        run_id=run_id or "",
+        capture_id=capture_id or "",
+        events=events,
+        checks=[],
+        doc=doc,
+        profile=profile,
+    )
+    results = [detector().run(ctx) for detector in (
+        ContextTokenBloat, ExcessLatency, RepeatedActionNoNewInfo,
+    )]
+    return execution_quality_summary(results, events)
+
+
+def derive_execution_quality(
+    store: "Store",
+    run_id: str,
+    capture_id: str,
+    *,
+    raw_events: Optional[list] = None,
+    capabilities: Optional[dict] = None,
+    source: Any = None,
+) -> dict:
+    """Recompute a run's execution-quality summary from persisted records.
+
+    A capture ingested before the execution-quality detectors existed has no
+    ``execution_quality.json``. Rather than silently dropping that run (which
+    made the whole fleet card read "No results"), run the three deterministic
+    detectors against the already-persisted events/capabilities here. This is
+    the same accounting boundary the pipeline uses — only the invocation point
+    differs — so an old store and a freshly ingested one agree.
+
+    Callers that have already loaded ``events`` / ``capabilities`` / ``source``
+    (the forensic read) pass them via the keyword arguments; the rest are read
+    here. Every optional read is guarded — a capture can legitimately have
+    ``events.json`` without ``capabilities.json``, and a missing file must
+    report unevaluated, never raise and take the page down.
+
+    Returns an empty summary when the capture has no persisted events at all
+    (there is nothing to evaluate): those dimensions are reported unevaluated.
+    """
+    if raw_events is None:
+        if not store.has_derived(run_id, capture_id, "events.json"):
+            return _empty_execution_quality()
+        raw_events = store.read_derived(run_id, capture_id, "events.json") or []
+    if capabilities is None:
+        capabilities = {}
+        if store.has_derived(run_id, capture_id, "capabilities.json"):
+            capabilities = (
+                store.read_derived(run_id, capture_id, "capabilities.json") or {}
+            ).get("capabilities", {})
+    if source is None:
+        try:
+            source = store.read_source(run_id, capture_id)
+        except (OSError, ValueError):
+            source = {}
+    return execution_quality_from_records(
+        raw_events, capabilities, source, run_id=run_id, capture_id=capture_id,
+    )
+
+
+def execution_quality_record(
+    store: "Store",
+    run_id: str,
+    capture_id: str,
+    *,
+    raw_events: Optional[list] = None,
+    capabilities: Optional[dict] = None,
+    source: Any = None,
+) -> dict:
+    """The persisted execution-quality summary, or a derived one for old captures.
+
+    Provisioning for a whole old store is done once by
+    :func:`backfill_execution_quality`; this fallback keeps a single un-migrated
+    capture correct in the meantime.
+    """
+    if store.has_derived(run_id, capture_id, "execution_quality.json"):
+        record = store.read_derived(run_id, capture_id, "execution_quality.json") \
+            or _empty_execution_quality()
+    else:
+        record = derive_execution_quality(
+            store, run_id, capture_id,
+            raw_events=raw_events, capabilities=capabilities, source=source,
+        )
+    return with_efficiency_limits(record)
+
+
+def efficiency_limits(value: dict) -> list[str]:
+    """What one execution-quality dimension does NOT establish (§B1).
+
+    A deterministic restatement of the dimension's own evidence status — never
+    a judgement about whether the run *should* have spent less. Kept per
+    dimension so a reader sees, beside the number, that a violation is a
+    candidate for review rather than proven waste.
+    """
+    if not value.get("evaluated"):
+        caps = ", ".join(sorted(value.get("unmet_capabilities") or []))
+        return ["No opportunity to evaluate — the capture lacked "
+                + (caps or "the required telemetry")
+                + "; a coverage gap, not a clean result."]
+    limits = [
+        "Execution quality is independent of the task outcome; a violation here does "
+        "not by itself establish a task failure.",
+        "Measured usage is associated with the run, not a validated avoidable cost or "
+        "projected saving.",
+    ]
+    if value.get("violations"):
+        limits.append("The threshold defines a boundary, not a target; exceeding it is a "
+                      "candidate for review, not proof of waste.")
+    return limits
+
+
+def with_efficiency_limits(record: dict) -> dict:
+    """Return ``record`` with a ``limits`` list on every efficiency dimension.
+
+    A read-time projection so it applies uniformly to captures persisted before
+    this existed and to freshly derived ones — no backfill required.
+    """
+    out = dict(record or {})
+    efficiency = out.get("efficiency")
+    if isinstance(efficiency, dict):
+        out["efficiency"] = {
+            dimension: {**value, "limits": efficiency_limits(value)}
+            for dimension, value in efficiency.items()
+        }
+    return out
+
+
+def backfill_execution_quality(store: "Store") -> int:
+    """Persist an execution-quality summary for every capture missing one.
+
+    The derive-on-read fallback is correct but recomputes on every request (the
+    redundancy detector walks the event list per pair), so a large pre-feature
+    store should be provisioned once instead. Idempotent: captures that already
+    have the record are left untouched. Returns the number written.
+    """
+    from . import read
+
+    written = 0
+    for run in read.list_runs(store):
+        run_id = run["run_id"]
+        # list_runs deliberately collapses capture revisions into one logical
+        # run. The migration must expand that run's immutable capture index so
+        # an older revision is not silently left unprovisioned.
+        for entry in store.read_index(run_id):
+            capture_id = entry.get("capture_id")
+            if not capture_id or store.has_derived(
+                run_id, capture_id, "execution_quality.json"
+            ):
+                continue
+            record = derive_execution_quality(store, run_id, capture_id)
+            store.write_derived(run_id, capture_id, "execution_quality.json", record)
+            written += 1
+    return written

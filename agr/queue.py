@@ -29,16 +29,44 @@ from typing import Any, Callable, Optional
 from . import read
 from .store import Store
 
+# One classification of an outcome status, shared by every surface (Runs,
+# Patterns, Compare) so they can never disagree about what a status means:
+#   pass         — a verifier was present and every check passed
+#   fail         — a verifier was present and a check failed (or errored)
+#   undetermined — a verifier ran and reached no clean verdict
+#   unverified   — no verifier evidence at all
+# ``UNDETERMINED`` and ``UNVERIFIED`` are genuinely different states and must
+# never collapse into one bucket (an earlier chip matched both).
+OUTCOME_BUCKETS = ("pass", "fail", "undetermined", "unverified")
+
+
+def outcome_bucket(status: Optional[str]) -> str:
+    s = (status or "").upper()
+    if s == "PASSED":
+        return "pass"
+    if s in ("FAILED", "ERROR"):
+        return "fail"
+    if s == "UNDETERMINED":
+        return "undetermined"
+    return "unverified"
+
+
 # §4.3.2 — the primary visible filter chips, each a predicate over a run card.
 # U2: "passed", "undetermined", "in_progress", and "handled" round the outcome
 # and review-status axes out explicitly (previously outcome had no PASSED
 # filter and review status only distinguished "unreviewed" from everything
 # else) rather than leaving them reachable only through a sort order.
+# P1: ``UNDETERMINED`` (a verifier ran, no clean verdict) and ``UNVERIFIED`` (no
+# verifier evidence at all) are now separate chips, and verifier evidence itself
+# is filterable — a run can be judged only when it carries it (§6.2).
 FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
-    "failed": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "ERROR"),
-    "passed": lambda r: (r["outcome"].get("status") or "").upper() == "PASSED",
-    "undetermined": lambda r: (r["outcome"].get("status") or "").upper() in ("UNDETERMINED", "UNVERIFIED"),
-    "needs_attention": lambda r: (r["outcome"].get("status") or "").upper() in ("FAILED", "WARNING", "ERROR"),
+    "failed": lambda r: outcome_bucket(_status(r)) == "fail",
+    "passed": lambda r: outcome_bucket(_status(r)) == "pass",
+    "undetermined": lambda r: outcome_bucket(_status(r)) == "undetermined",
+    "unverified": lambda r: outcome_bucket(_status(r)) == "unverified",
+    "needs_attention": lambda r: _status(r) in ("FAILED", "WARNING", "ERROR"),
+    "ground_truth": lambda r: bool((r.get("verification") or {}).get("has_verifier")),
+    "analysis_only": lambda r: not (r.get("verification") or {}).get("has_verifier"),
     "recovered": lambda r: bool(r.get("recovered")),
     # AGR-04: a plausible (not confirmed) resolution is its own visible
     # filter — it must never be silently folded into "recovered".
@@ -54,7 +82,8 @@ FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
 SORTS = ("triage", "outcome", "review_progress", "cost", "duration", "recently_updated")
 
 # §4.3.2 — group-by dimensions (the MVP subset over available card fields).
-GROUPINGS = ("none", "outcome", "task_family", "review_progress", "disposition", "review_mode")
+GROUPINGS = ("none", "outcome", "task_family", "review_progress", "disposition",
+            "review_mode", "verification")
 
 # Deterministic outcome order for sorting / grouping.
 _OUTCOME_RANK = {"ERROR": 0, "FAILED": 1, "WARNING": 2, "PASSED": 3}
@@ -127,6 +156,8 @@ def _group_of(r: dict, grouping: str) -> str:
         return r["workflow"].get("disposition") or "none"
     if grouping == "review_mode":
         return r.get("review_mode") or "deterministic_only"
+    if grouping == "verification":
+        return "verified" if (r.get("verification") or {}).get("has_verifier") else "analysis-only"
     return "all"
 
 

@@ -20,6 +20,25 @@ def test_ignored_tool_failure_fires_when_unresolved(tmp_path, load_fixture):
     assert d.candidates[0].anchor_event_ids[0] == "evt_003"  # the failing tool_result
 
 
+def test_ignored_tool_failure_states_its_evidence_limits(tmp_path, load_fixture):
+    """P2 (§B1): the unresolved-failure finding carries what it does not
+    establish — in particular that it is not linked to a verifier check, the
+    gap behind the historical 1-of-5 precision on this detector."""
+    a = _analyze(tmp_path, load_fixture, "ignored_failure.atif.json")
+    limits = _by_name(a)["ignored_tool_failure"].candidates[0].limits
+    assert any("Not linked to a verifier check" in limit for limit in limits)
+    assert any("No resolution was observed" in limit for limit in limits)
+
+
+def test_published_moments_carry_their_limits(tmp_path, load_fixture):
+    """The envelope carries the candidate's limits onto the published card,
+    plus the attribution ceiling when it licenses no more than a hypothesis."""
+    a = _analyze(tmp_path, load_fixture, "ignored_failure.atif.json")
+    moments = [m for m in a.review_moments if m.detector == "ignored_tool_failure"]
+    assert moments
+    assert any("Not linked to a verifier check" in limit for limit in moments[0].limits)
+
+
 def test_ignored_tool_failure_silent_when_recovered(tmp_path, load_fixture):
     a = _analyze(tmp_path, load_fixture, "tool_failure_recovery.atif.json")
     assert _by_name(a)["ignored_tool_failure"].candidates == []

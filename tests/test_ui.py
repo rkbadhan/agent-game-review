@@ -304,6 +304,9 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         assert not page.is_visible(".queue")
         assert not page.is_visible(".evidence-panel")
         assert page.evaluate("() => document.body.classList.contains('workspace-mode')")
+        # The app shell owns scrolling through #main; the document itself must
+        # not add a second, competing vertical scrollbar around it.
+        assert page.evaluate("() => getComputedStyle(document.body).overflowY") == "hidden"
 
         # U2 columns. Runs §item "simpler controls": Cost is hidden here since
         # neither fixture run in this store captured a cost value — a column
@@ -313,19 +316,65 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         rows = page.query_selector_all(".runs-row")
         assert len(rows) == 2
 
+        # Secondary behavioural filters live in a real popover: opening it
+        # does not push the table down, and keyboard users can dismiss it.
+        toolbar_height = page.eval_on_selector(
+            ".runs-controls-row", "el => el.getBoundingClientRect().height")
+        page.click(".runs-controls-row .more-filters summary")
+        page.wait_for_selector(".runs-controls-row .more-filter-panel")
+        assert "more filters" in page.query_selector(
+            ".runs-controls-row .more-filter-panel").inner_text().lower()
+        assert page.eval_on_selector(
+            ".runs-controls-row", "el => el.getBoundingClientRect().height") == toolbar_height
+        page.press(".runs-controls-row .more-filters summary", "Escape")
+        assert not page.is_visible(".runs-controls-row .more-filter-panel")
+
         # Search matches task name and run id.
         page.fill(".runs-search", "chess")
         page.wait_for_function("() => document.querySelectorAll('.runs-row').length === 1")
         assert "chess" in page.query_selector(".runs-row").inner_text().lower()
         assert _query(page.url).get("q") == ["chess"]
+        assert page.is_visible(".runs-clear")
 
-        # Filters are explicit for outcome (failed/passed/undetermined) and
-        # review status (unreviewed/in_progress/handled), not just a sort
-        # order — grouped under labelled Outcome/Review status headings now
-        # rather than one flat chip row.
+        # A zero-result search explains the state and provides an immediate
+        # recovery action instead of leaving a large, inert empty card.
+        page.fill(".runs-search", "does-not-exist")
+        page.wait_for_selector(".runs-empty")
+        assert "no runs match that search" in page.query_selector(".runs-empty").inner_text().lower()
+        page.click('.runs-empty button:has-text("Clear search")')
+        page.wait_for_function("() => document.querySelectorAll('.runs-row').length === 2")
+
+        # Filters are explicit for outcome (failed/passed/undetermined/
+        # unverified) and review status (unreviewed/in_progress/handled), not
+        # just a sort order — grouped under labelled Outcome/Review status
+        # headings now rather than one flat chip row. UNDETERMINED and
+        # UNVERIFIED are separate chips, not one fused "Undetermined /
+        # Unverified".
         chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip")}
-        assert {"Failed", "Passed", "Undetermined / Unverified", "Unreviewed", "In progress", "Handled"} <= chip_labels
-        page.fill(".runs-search", "")
+        assert {"Failed", "Passed", "Undetermined", "Unverified",
+                "Unreviewed", "In progress", "Handled"} <= chip_labels
+        # Regression: at the default 1280px viewport the grouped chips used to
+        # shrink below their content and spill over each other and the sort
+        # block (an unreadable overlap of the labels). Every chip must now stay
+        # inside the toolbar and share no area with any other chip.
+        overlaps = page.evaluate("""() => {
+            const row = document.querySelector('.runs-controls-row').getBoundingClientRect();
+            const chips = [...document.querySelectorAll('.runs-controls-row .fchip')]
+                .map(c => c.getBoundingClientRect());
+            const out = [];
+            for (let i = 0; i < chips.length; i++) {
+                const a = chips[i];
+                if (a.left < row.left || a.right > row.right) out.push('clipped');
+                for (let j = i + 1; j < chips.length; j++) {
+                    const b = chips[j];
+                    const dx = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+                    const dy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+                    if (dx > 0.5 && dy > 0.5) out.push('overlap');
+                }
+            }
+            return out;
+        }""")
+        assert overlaps == [], overlaps
         page.click('.runs-controls-row .fchip:has-text("Failed")')
         page.wait_for_function("() => location.search.includes('filter=failed')")
         failed_rows = page.query_selector_all(".runs-row")
@@ -512,6 +561,56 @@ def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_s
         browser.close()
 
 
+def test_execution_quality_matrix_expands_to_the_runs_behind_it(patterns_server):
+    """Execution quality is shown per dimension AND per run: an aggregate
+    percentage with no way to see which runs (or why a run was skipped) was
+    not auditable, so each dimension row expands to its affected/unevaluated
+    runs, exactly like the Patterns rows expand to their episodes."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(patterns_server)
+        page.wait_for_selector(".run-header")
+
+        page.click("#fleet-button")
+        page.wait_for_selector(".eq-table")
+        headers = [h.inner_text().upper() for h in page.query_selector_all(".eq-table th")]
+        assert "DIMENSION" in headers and "PASS" in headers and "FAIL" in headers
+        # Coverage qualifies every score: a reader can see at the dimension
+        # level how many runs were actually measurable, rather than reading
+        # an outcome cell that says nothing about its denominator.
+        assert "COVERAGE" in headers
+        assert len(page.query_selector_all(".eq-table tr.eq-row .eq-coverage")) == 3
+        for cell in page.query_selector_all(".eq-table tr.eq-row .eq-coverage"):
+            cell_text = cell.inner_text().lower()
+            assert "evaluated" in cell_text or "no runs" in cell_text, cell_text
+
+        # Every dimension row carries its own expandable detail.
+        assert len(page.query_selector_all(".eq-table tr.eq-row")) == 3
+        page.query_selector(".eq-table tr.eq-row .eq-toggle-btn").click()
+        detail = page.wait_for_selector(".eq-detail-body")
+        text = detail.inner_text().lower()
+        # A run is either named behind an incidence link, counted as evaluated
+        # with no violation, or named as not evaluated with the missing
+        # capability — never an unexplained blank. A dimension nothing could
+        # evaluate states that once under a single "Not evaluated" block
+        # (grouped by the missing capability) rather than splitting runs by
+        # an outcome that was never measured.
+        assert ("not evaluated" in text or "no violation" in text
+                or detail.query_selector(".eq-example-link") is not None)
+        if detail.query_selector(".eq-reason"):
+            assert "not evaluated" in detail.query_selector(".eq-reason").inner_text().lower()
+
+        # Even a run with no finding is openable: the link lands on the run's
+        # full trace (the first generation for a healthy/unevaluated run), so a
+        # reviewer can inspect it rather than being told only a percentage.
+        detail.query_selector(".eq-example-link").click()
+        page.wait_for_selector("#trace-drawer.open")
+        assert _query(page.url)["run"]
+
+        browser.close()
+
+
 def test_patterns_regrouping_mid_load_lands_on_the_latest_choice(patterns_server):
     """U3 regression: switching the Patterns group-by while the PREVIOUS
     grouping's fetch is still in flight used to leave the screen stuck on
@@ -661,7 +760,9 @@ def test_workspace_and_full_trace(server):
         # Open the full-trace slide-over (§4.12): synchronized forensic panels.
         page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
-        assert len(page.query_selector_all("#trace-body .caps .cap")) == 10
+        # 12 capabilities: the ten observability axes plus the execution-quality
+        # generation_usage / generation_timestamps added alongside the detectors.
+        assert len(page.query_selector_all("#trace-body .caps .cap")) == 12
         assert len(page.query_selector_all("#trace-body .fsteps .step")) == 9
 
         # Selecting the artifact step lights the artifact panel (synchronization).

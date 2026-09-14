@@ -49,6 +49,16 @@ function renderMomentCard(rv, f, moment) {
     row.append(evidenceCell(anchors, f));
     summary.append(row);
   }
+  // P2 (§B1): the finding states what its evidence does not establish, on the
+  // card itself rather than only inside the expanded breakdown.
+  if ((moment.limits || []).length) {
+    const row = el("div", "moment-limits");
+    row.append(el("span", "moment-anchors-label", "Limits"));
+    const list = el("ul");
+    for (const limit of moment.limits) list.append(el("li", null, limit));
+    row.append(list);
+    summary.append(row);
+  }
   card.append(summary);
 
   const detail = el("details", "moment-detail");

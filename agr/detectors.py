@@ -23,7 +23,7 @@ from .execution_quality import (
     nearest_rank,
     normalized_generation_usage,
 )
-from .recovery import GOOD_RECOVERY, UNRECOVERED
+from .recovery import GOOD_RECOVERY, UNRECOVERED, episode_limits
 from .schema import (
     Candidate,
     CapabilityProfile,
@@ -313,9 +313,18 @@ class IgnoredToolFailure(Detector):
             # (1/5 precision on this detector), just inverted.
             if ep.expected_probe:
                 continue
+            # P2 (§B1): this finding states its own evidence limits. The
+            # historical audit's unresolved-failure precision (1 of 5) came
+            # from flagging failures that never touched a stated requirement;
+            # the failure is still surfaced — it is real — but it is now read
+            # as a candidate for review, not a confirmed problem.
+            limits = list(episode_limits(ep.to_dict()))
+            limits.append("Not linked to a verifier check; its effect on the task "
+                          "outcome is not established.")
             anchor = [ep.failure_event_id] + ([submit.event_id] if submit else [])
             out.append(self._candidate(
                 ctx, ep.failure_event_id, kind="behaviour", anchor_event_ids=anchor,
+                limits=limits,
                 structured_facts=[{
                     "type": "state_transition", "failure_event": ep.failure_event_id,
                     "resolved_before_submission": False,
@@ -469,6 +478,9 @@ class SuccessfulRecoveryViaStrategyChange(Detector):
             out.append(self._candidate(
                 ctx, ep.failure_event_id, kind="recovery", polarity="positive",
                 anchor_event_ids=anchor,
+                # A positive recovery states its limits too (e.g. usage never
+                # instrumented) so it is never read as a measured saving.
+                limits=list(episode_limits(ep.to_dict())),
                 structured_facts=[{
                     "type": "state_transition", "failure_event": ep.failure_event_id,
                     "resolution_event": ep.resolution_event_id,

@@ -1300,6 +1300,12 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             affected_contract_items=list(cand.affected_contract_items),
             validated_facts=validated,
             attribution_ceiling=ceiling,
+            # P2 (§B1): the candidate's own limits, plus the attribution ceiling
+            # when it licenses no more than a hypothesis, so a published card
+            # always states what it does not establish.
+            limits=list(cand.limits) + (
+                ["Causal attribution is hypothesized, not established."]
+                if ceiling == "hypothesized" else []),
             rendered_statement=statement,
             gate_results=gate_results,
             sequence=seq_of.get(anchor),

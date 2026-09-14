@@ -27,7 +27,11 @@ from datetime import datetime
 from typing import Any, Optional
 
 from . import lessons, version, workflow
-from .execution_quality import generation_token_counts, generation_wall_ms
+from .execution_quality import (
+    execution_quality_record,
+    generation_token_counts,
+    generation_wall_ms,
+)
 from .schema import WATERMARKED_STATUSES
 from .store import InvalidRunId, Store, source_hash
 
@@ -173,6 +177,8 @@ def _review_moment_view(m: dict) -> dict:
         "affected_checks": m.get("affected_checks", []),
         "affected_contract_items": m.get("affected_contract_items", []),
         "attribution_ceiling": m.get("attribution_ceiling"),
+        # P2 (§B1): what this finding's evidence does not establish.
+        "limits": m.get("limits", []),
         "summary": m.get("rendered_statement"),
         "rendered_statement": m.get("rendered_statement"),
         # Model reviewer enrichment (Stage F); None/empty on deterministic-only runs.
@@ -236,6 +242,8 @@ def _moments(events: list[dict], detector_results: list[dict]) -> list[dict]:
                 "affected_checks": c.get("affected_checks", []),
                 "affected_contract_items": c.get("affected_contract_items", []),
                 "summary": _moment_summary(c),
+                # P2 (§B1): the fallback projection states limits too.
+                "limits": c.get("limits", []),
                 "facts": c.get("structured_facts", []),
             })
     moments.sort(key=lambda m: (m["sequence"] is None, m["sequence"] or 0))
@@ -659,6 +667,31 @@ def _final_state(events: list[dict], source: dict, capabilities: dict) -> dict:
 # --- public read-model views -------------------------------------------------
 
 
+def _verification_summary(capabilities: dict, outcome: dict) -> dict:
+    """How much of a task verdict this capture actually supports.
+
+    Verifier *evidence* — not the outcome string — decides whether a run can be
+    evaluated. The §6.2 capability profile is the normative source
+    (``verifier_results`` / ``verifier_code``); ``outcome.total`` is the fallback
+    for captures persisted before adapters declared it. Kept separate from the
+    outcome so a verdict can never be inferred from an import or review error.
+    """
+    capabilities = capabilities or {}
+    results = capabilities.get("verifier_results")
+    code = capabilities.get("verifier_code")
+    checks = outcome.get("total") or 0
+    return {
+        "has_verifier": bool(results and results != "unavailable") or checks > 0,
+        "results": results,
+        "code": code,
+        "checks": checks,
+        # ``checks > 1`` usually means per-test results (e.g. Harbor's
+        # ``ctrf.json``) rather than only the aggregate reward — a proxy, not a
+        # capability, so it is named as one.
+        "atomic": checks > 1,
+    }
+
+
 def list_runs(store: Store) -> list[dict]:
     """Summarise every logical run in the store, ordered by run id.
 
@@ -703,6 +736,8 @@ def list_runs(store: Store) -> list[dict]:
         entry = _index_entry(store, run_id, capture_id)
         rs = _read(store, run_id, capture_id, "run_source.json", {})
         outcome = _read(store, run_id, capture_id, "outcome.json", {})
+        capabilities = _read(store, run_id, capture_id, "capabilities.json", {}).get(
+            "capabilities", {})
         contract = _read(store, run_id, capture_id, "contract.json", {})
         events = _read(store, run_id, capture_id, "events.json", [])
         detector_results = _read(store, run_id, capture_id, "detector_results.json", [])
@@ -775,6 +810,10 @@ def list_runs(store: Store) -> list[dict]:
                 "passed": outcome.get("passed"),
                 "total": outcome.get("total"),
             },
+            # Whether a task verdict is even possible for this capture, kept
+            # separate from the outcome itself (§6.2). A caller can filter or
+            # annotate on this without re-deriving it from the status string.
+            "verification": _verification_summary(capabilities, outcome),
             "review_mode": _review_mode(review_moments, entry.get("capture_completeness")),
             "main_finding": (main_finding_moment or {}).get("summary"),
             "main_finding_polarity": (main_finding_moment or {}).get("polarity"),
@@ -961,6 +1000,7 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
     opportunities = _read(store, run_id, capture_id, "opportunities.json", [])
     signature = _read(store, run_id, capture_id, "signature.json", [])
     capabilities = _read(store, run_id, capture_id, "capabilities.json", {}).get("capabilities", {})
+    source = store.read_source(run_id, capture_id)
     return {
         "read_model_version": version.READ_MODEL_VERSION,
         "run": _read(store, run_id, capture_id, "run_source.json", {}),
@@ -974,13 +1014,17 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         },
         "capabilities": capabilities,
         "outcome": _read(store, run_id, capture_id, "outcome.json", {}),
-        "execution_quality": _read(
-            store, run_id, capture_id, "execution_quality.json",
-            {"efficiency": {}, "findings": []},
+        # Captures ingested before the execution-quality detectors existed have
+        # no persisted summary; recompute it from their own events so an old
+        # store shows the same evaluated/unevaluated states as a fresh one.
+        # The events/capabilities/source are already loaded above — no re-read.
+        "execution_quality": execution_quality_record(
+            store, run_id, capture_id,
+            raw_events=events, capabilities=capabilities, source=source,
         ),
         # Closing observed state for the Outcome chapter (§4.5). Reads the
         # immutable source for the artifact declarations; derives no judgement.
-        "final_state": _final_state(events, store.read_source(run_id, capture_id), capabilities),
+        "final_state": _final_state(events, source, capabilities),
         "watermark": _watermark(contract),
         "contract": contract,
         "contract_observations": _read(store, run_id, capture_id, "contract_observations.json", []),
@@ -1048,9 +1092,9 @@ def get_forensic(store: Store, run_id: str) -> dict:
     events = _read(store, run_id, capture_id, "events.json", [])
     checks = _read(store, run_id, capture_id, "checks.json", [])
     phases = _read(store, run_id, capture_id, "phases.json", [])
-    execution_quality = _read(
-        store, run_id, capture_id, "execution_quality.json",
-        {"efficiency": {}, "findings": []},
+    execution_quality = execution_quality_record(
+        store, run_id, capture_id,
+        raw_events=events, capabilities=capabilities, source=source,
     )
     finding_by_event: dict[str, list[dict]] = {}
     for finding in execution_quality.get("findings", []):

@@ -13,20 +13,32 @@
 // agr/queue.py's FILTER_CHIPS one-for-one) since state.js's URL parsing and
 // the queue API both need the flat set, not the grouping.
 //
-// The "undetermined" chip matches BOTH the UNDETERMINED and UNVERIFIED
-// outcome statuses (agr/queue.py) — two genuinely different situations (a
-// verifier ran and could not reach a verdict, vs. no verifier ran at all).
-// The label says so rather than picking one and leaving the other looking
-// mislabelled; the per-run badge always shows the exact status.
+// UNDETERMINED (a verifier ran but reached no clean verdict) and UNVERIFIED (no
+// verifier evidence at all) are two different situations and now get their own
+// chips (agr/queue.py's outcome_bucket). "Ground truth" / "Analysis only"
+// filter on the §6.2 verifier-evidence capability, not on the status string, so
+// a run that carries a verifier can still be evaluated even if it is not clean.
 const FILTER_GROUPS = [
-  ["Outcome", [["failed", "Failed"], ["passed", "Passed"], ["undetermined", "Undetermined / Unverified"]]],
+  ["Outcome", [["failed", "Failed"], ["passed", "Passed"],
+    ["undetermined", "Undetermined"], ["unverified", "Unverified"]]],
   ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Handled"]]],
 ];
 const MORE_FILTER_CHIPS = [["needs_attention", "Needs attention"], ["recovered", "Recovered"],
-  ["plausible_recovery", "Plausible recovery"], ["verifier_concern", "Verifier concern"]];
+  ["plausible_recovery", "Plausible recovery"], ["verifier_concern", "Verifier concern"],
+  ["ground_truth", "Ground truth"], ["analysis_only", "Analysis only"]];
+const MORE_FILTER_DESCRIPTIONS = {
+  needs_attention: "Explicitly flagged for manual review.",
+  recovered: "Marked as recovered during the run.",
+  plausible_recovery: "Shows a possible, unconfirmed recovery.",
+  verifier_concern: "Has a verifier result worth inspecting.",
+  ground_truth: "A verifier or gold check ran — the task outcome can be judged.",
+  analysis_only: "No verifier evidence — only execution findings are supported.",
+};
 const FILTER_TIPS = {
-  undetermined: "Matches both UNDETERMINED (a verifier ran but reached no clean verdict) and "
-    + "UNVERIFIED (no verifier ran at all) — each run's own badge shows which one applies.",
+  undetermined: "A verifier ran but reached no clean verdict.",
+  unverified: "No verifier evidence at all — task success is not established.",
+  ground_truth: "Runs carrying verifier evidence (the §6.2 capability profile).",
+  analysis_only: "Runs without verifier evidence; execution findings only.",
 };
 const FILTER_CHIPS = FILTER_GROUPS.flatMap(([, chips]) => chips).concat(MORE_FILTER_CHIPS);
 const SORT_OPTIONS = [["triage","Triage priority"],["outcome","Outcome"],["review_progress","Review progress"],["cost","Cost"],["duration","Duration"],["recently_updated","Recently updated"]];
@@ -113,11 +125,30 @@ function _fchip(key, label, onChange) {
     onChange(); });
   return c;
 }
+function _signalFilterOption(key, label, onChange) {
+  const on = state.filters.has(key);
+  const option = el("button", "signal-filter-option" + (on ? " on" : ""));
+  option.type = "button";
+  option.setAttribute("aria-pressed", on ? "true" : "false");
+  option.dataset.filter = key;
+  const mark = el("span", "signal-filter-mark", on ? "✓" : "");
+  mark.setAttribute("aria-hidden", "true");
+  const copy = el("span", "signal-filter-copy");
+  copy.append(el("strong", null, label));
+  copy.append(el("span", null, MORE_FILTER_DESCRIPTIONS[key]));
+  option.append(mark, copy);
+  option.addEventListener("click", () => {
+    on ? state.filters.delete(key) : state.filters.add(key);
+    track("queue_filter_changed", { kind: key, filters: [...state.filters] });
+    onChange();
+  });
+  return option;
+}
 // Runs §item "simpler controls": Outcome and Review status as two labelled
 // groups (what a reader actually filters BY), with the remaining behavioural
-// flags behind one "More filters" disclosure — never a ten-chip wall with no
-// structure. A chip active inside "More filters" keeps the disclosure open by
-// default so an active-but-hidden filter is never invisible.
+// flags behind one compact Signals menu — never a ten-chip wall with no
+// structure. Its selected-count badge keeps active, hidden filters visible
+// without forcing the menu open over the queue whenever the view re-renders.
 function buildFilterChipsRow(onChange) {
   const wrap = el("div", "filter-groups");
   for (const [label, chipDefs] of FILTER_GROUPS) {
@@ -128,13 +159,43 @@ function buildFilterChipsRow(onChange) {
     group.append(row);
     wrap.append(group);
   }
-  const moreOn = MORE_FILTER_CHIPS.some(([key]) => state.filters.has(key));
-  const more = el("details", "filter-group more-filters");
-  if (moreOn) more.open = true;
-  more.append(el("summary", null, "More filters" + (moreOn ? " (active)" : "")));
-  const moreRow = el("div", "filters");
-  for (const [key, chipLabel] of MORE_FILTER_CHIPS) moreRow.append(_fchip(key, chipLabel, onChange));
-  more.append(moreRow);
+  const activeMore = MORE_FILTER_CHIPS.filter(([key]) => state.filters.has(key));
+  const more = el("details", "filter-group more-filters" + (activeMore.length ? " active" : ""));
+  const summary = el("summary");
+  summary.setAttribute("aria-label", "More filters"
+    + (activeMore.length ? "; " + activeMore.length + " selected" : ""));
+  const filterIcon = el("span", "more-filter-icon");
+  filterIcon.setAttribute("aria-hidden", "true");
+  summary.append(filterIcon, el("span", "more-filter-label", "More filters"));
+  if (activeMore.length) summary.append(el("span", "more-filter-count", String(activeMore.length)));
+  more.append(summary);
+  const panel = el("div", "more-filter-panel");
+  const panelHead = el("div", "more-filter-panel-head");
+  const panelCopy = el("div");
+  panelCopy.append(el("strong", null, "More filters"));
+  panelCopy.append(el("span", null, "Narrow runs by signals from the evaluation."));
+  panelHead.append(panelCopy);
+  if (activeMore.length) {
+    const reset = el("button", "more-filter-reset", "Clear");
+    reset.type = "button";
+    reset.addEventListener("click", () => {
+      for (const [key] of MORE_FILTER_CHIPS) state.filters.delete(key);
+      track("queue_filter_changed", { kind: "clear_signals", filters: [...state.filters] });
+      onChange();
+    });
+    panelHead.append(reset);
+  }
+  panel.append(panelHead);
+  panel.append(el("div", "more-filter-section-label", "Run signals"));
+  const moreRow = el("div", "signal-filter-options");
+  for (const [key, chipLabel] of MORE_FILTER_CHIPS) {
+    moreRow.append(_signalFilterOption(key, chipLabel, onChange));
+  }
+  panel.append(moreRow);
+  more.append(panel);
+  more.addEventListener("keydown", e => {
+    if (e.key === "Escape") { more.open = false; summary.focus(); }
+  });
   wrap.append(more);
   return wrap;
 }

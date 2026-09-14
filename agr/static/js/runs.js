@@ -15,9 +15,9 @@ function runsMatchesSearch(r, q) {
 }
 
 function renderRunsSurface(main) {
-  const nav = el("div", "review-nav");
+  const nav = el("div", "review-nav runs-page-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Runs · sweep triage queue"));
+  head.append(el("span", "eyebrow", "Sweep triage queue"));
   nav.append(head);
   const util = el("div", "review-util");
   if (state.runId) {
@@ -45,6 +45,11 @@ function renderRunsSurface(main) {
 
 function renderRunsControls(host) {
   host.textContent = "";
+  let clear;
+  const searchWrap = el("div", "runs-search-wrap");
+  const searchIcon = el("span", "runs-search-icon", "⌕");
+  searchIcon.setAttribute("aria-hidden", "true");
+  searchWrap.append(searchIcon);
   const search = el("input", "runs-search");
   search.type = "search";
   search.placeholder = "Search task name or run ID…";
@@ -52,13 +57,26 @@ function renderRunsControls(host) {
   search.setAttribute("aria-label", "Search runs by task name or run ID");
   search.addEventListener("input", () => {
     state.runsSearch = search.value;
+    if (clear) clear.hidden = !(state.filters.size || state.runsSearch);
     renderRunsTable($("#runs-table-host"));
     syncUrl();
   });
-  host.append(search);
+  searchWrap.append(search);
+  host.append(searchWrap);
   const refresh = () => loadInbox().then(render).catch(showInboxError);
   host.append(buildFilterChipsRow(refresh));
-  host.append(buildSortRow(refresh));
+  const actions = el("div", "runs-toolbar-actions");
+  actions.append(buildSortRow(refresh));
+  clear = el("button", "runs-clear", "Clear all");
+  clear.type = "button";
+  clear.hidden = !(state.filters.size || state.runsSearch);
+  clear.addEventListener("click", () => {
+    state.filters.clear();
+    state.runsSearch = "";
+    refresh();
+  });
+  actions.append(clear);
+  host.append(actions);
 }
 
 function runsOutcomeBadgeClass(status) {
@@ -83,6 +101,7 @@ function runsIdentityCell(r) {
     meta.append(copyButton(r.run_id, "Copy full session id"));
   }
   if (r.cwd) meta.append(el("span", "runs-id-repo", r.cwd));
+  if (r.model) meta.append(el("span", "runs-id-model", r.model));
   const when = relTime(r.finished_at || r.started_at);
   if (when) meta.append(el("span", "runs-id-time", when));
   if (meta.childNodes.length) cell.append(meta);
@@ -98,20 +117,56 @@ function renderRunsTable(host) {
   const all = (state.queue && state.queue.runs) || [];
   const runs = all.filter(r => runsMatchesSearch(r, state.runsSearch));
   const card = el("div", "card card-pad runs-table-card");
-  card.append(el("p", "eyebrow", state.runsSearch
-    ? runs.length + " of " + all.length + " run(s) match “" + state.runsSearch + "”"
-    : runs.length + " run(s)"));
+  const tableMeta = el("div", "runs-table-meta");
+  const count = state.runsSearch
+    ? runs.length + " of " + all.length + (all.length === 1 ? " run" : " runs")
+    : runs.length + (runs.length === 1 ? " run" : " runs");
+  tableMeta.append(el("strong", null, count));
+  const sortLabel = (SORT_OPTIONS.find(([value]) => value === state.sort) || [null, "Triage priority"])[1];
+  tableMeta.append(el("span", null, "Sorted by " + sortLabel.toLowerCase()));
+  card.append(tableMeta);
   if (!runs.length) {
-    card.append(el("div", "empty", all.length
-      ? "No run matches this search."
-      : "No runs match this queue."));
+    const empty = el("div", "runs-empty");
+    empty.append(el("strong", null, state.runsSearch
+      ? "No runs match that search"
+      : state.filters.size ? "No runs match the selected filters" : "No runs in this sweep"));
+    empty.append(el("p", null, state.runsSearch
+      ? "Try a task name, run ID, or clear the search."
+      : state.filters.size
+        ? "Clear the filters to return to the full triage queue."
+        : "Ingest a run to begin reviewing this sweep."));
+    const emptyActions = el("div", "runs-empty-actions");
+    if (state.runsSearch) {
+      const clearSearch = el("button", "button subtle", "Clear search");
+      clearSearch.type = "button";
+      clearSearch.addEventListener("click", () => {
+        state.runsSearch = "";
+        renderRunsControls($(".runs-controls-row"));
+        renderRunsTable($("#runs-table-host"));
+        syncUrl();
+      });
+      emptyActions.append(clearSearch);
+    }
+    if (state.filters.size) {
+      const clearFilters = el("button", "button", "Show all runs");
+      clearFilters.type = "button";
+      clearFilters.addEventListener("click", () => {
+        state.filters.clear();
+        loadInbox().then(render).catch(showInboxError);
+      });
+      emptyActions.append(clearFilters);
+    }
+    if (emptyActions.childNodes.length) empty.append(emptyActions);
+    card.append(empty);
     host.append(card);
     return;
   }
   const showDuration = runs.some(r => r.duration_s != null);
   const showCost = runs.some(r => r.cost != null);
   const scroll = el("div", "table-scroll");
-  const t = el("table", "vs-table runs-table");
+  const t = el("table", "vs-table runs-table"
+    + (showDuration ? " has-duration" : "")
+    + (showCost ? " has-cost" : ""));
   const headers = ["Session", "Outcome", "Main finding", "Review status"];
   if (showDuration) headers.push("Duration");
   if (showCost) headers.push("Cost");
@@ -119,6 +174,8 @@ function renderRunsTable(host) {
   for (const r of runs) {
     const tr = el("tr", "runs-row" + (r.run_id === state.runId ? " active" : ""));
     tr.tabIndex = 0;
+    tr.setAttribute("role", "link");
+    tr.setAttribute("aria-label", "Open " + (r.task_id || r.run_id));
     tr.dataset.runId = r.run_id;
 
     tr.append(runsIdentityCell(r));
@@ -127,12 +184,20 @@ function renderRunsTable(host) {
     const outTd = el("td");
     outTd.append(el("span", "badge " + runsOutcomeBadgeClass(o.status), (o.status || "?").toUpperCase()));
     outTd.append(el("div", "vs-counts", (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks"));
+    // P1: no verifier evidence means no task verdict is possible — the badge
+    // above is then a coverage statement, not a judgement. Say so where the
+    // verdict would otherwise read as one.
+    if (!(r.verification || {}).has_verifier)
+      outTd.append(el("div", "vs-counts runs-no-verifier", "no verifier · analysis only"));
     tr.append(outTd);
 
     const mfTd = el("td", "runs-finding");
     if (r.main_finding) {
-      mfTd.append(el("span", r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg",
-        leadFinding(r.main_finding)));
+      const finding = el("span",
+        "runs-finding-text " + (r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg"),
+        leadFinding(r.main_finding, 112));
+      finding.title = r.main_finding;
+      mfTd.append(finding);
     } else {
       mfTd.append(el("span", "panel-dim", "No decisive finding"));
     }
@@ -151,7 +216,9 @@ function renderRunsTable(host) {
 
     const open = () => { state.runsScroll = $("#main").scrollTop; selectRun(r.run_id); };
     tr.addEventListener("click", open);
-    tr.addEventListener("keydown", e => { if (e.key === "Enter") open(); });
+    tr.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
     t.append(tr);
   }
   scroll.append(t);

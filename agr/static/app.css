@@ -40,9 +40,9 @@
     --shadow:0 16px 42px rgba(0,0,0,.4); --shadow-soft:0 4px 18px rgba(0,0,0,.3);
   }
   * { box-sizing:border-box; }
-  html { background:var(--canvas); }
+  html { height:100%; background:var(--canvas); overflow:hidden; }
   body { margin:0; min-width:320px; color:var(--ink); background:var(--canvas);
-    font:14px/1.45 var(--sans); -webkit-font-smoothing:antialiased; }
+    font:14px/1.45 var(--sans); -webkit-font-smoothing:antialiased; height:100%; overflow:hidden; }
   button, select { font:inherit; color:inherit; }
   button { cursor:pointer; }
   button:focus-visible, select:focus-visible, [tabindex]:focus-visible {
@@ -86,7 +86,7 @@
   /* Three columns, both side widths dragged by the reviewer and remembered.
      The main stage is the only flexible track, so widening a panel narrows the
      reading column rather than overflowing the viewport. */
-  .workspace { height:calc(100vh - 60px); min-height:600px; display:grid;
+  .workspace { height:calc(100vh - 60px); min-height:0; display:grid;
     grid-template-columns:var(--queue-w,296px) 5px minmax(420px,1fr) 5px var(--evidence-w,358px);
     overflow:hidden; }
   .queue, .evidence-panel { min-height:0; overflow:auto; background:var(--paper); }
@@ -137,6 +137,8 @@
   .eq-healthy { color:var(--moss); }
   .eq-issue { color:var(--amber); }
   .eq-unevaluated { color:var(--muted); }
+  /* P2: a dimension's evidence limits sit in its Evidence cell. */
+  .eq-limits { margin-top:5px; display:grid; gap:2px; color:var(--faint); font-size:10px; line-height:1.4; }
   .eq-findings { display:grid; gap:7px; margin-top:12px; }
   .eq-finding { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--paper-strong); }
   .eq-finding summary { cursor:pointer; color:var(--ink-soft); font-size:12px; }
@@ -159,20 +161,58 @@
   .fchip { flex:none; padding:5px 9px; border:1px solid var(--line); border-radius:999px;
     color:var(--muted); background:transparent; font-size:11px; }
   .fchip:hover { color:var(--ink); border-color:var(--line-strong); }
-  .fchip.on { color:var(--navy); background:var(--navy-soft); border-color:var(--line-strong); font-weight:680; }
-  :root[data-theme="dark"] .fchip.on, .fchip.on { color:var(--ink); }
+  .fchip.on { color:#fff; background:var(--navy); border-color:var(--navy); font-weight:680;
+    box-shadow:0 1px 2px rgba(24,36,47,.18); }
+  :root[data-theme="dark"] .fchip.on { color:var(--ink); background:var(--rust-soft); border-color:var(--rust); }
   /* Runs §item "simpler controls": Outcome / Review status / More filters
      instead of one undifferentiated ten-chip row. */
   .filter-groups { display:flex; flex-direction:column; gap:9px; }
   .filter-group-label { display:block; margin-bottom:4px; color:var(--faint); font-size:9.5px;
     font-weight:760; letter-spacing:.07em; text-transform:uppercase; }
-  .more-filters summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:650; }
+  .more-filters summary { min-height:30px; padding:5px 9px; display:inline-flex; align-items:center; gap:6px;
+    cursor:pointer; list-style:none; border:1px solid var(--line); border-radius:7px; color:var(--ink-soft);
+    background:var(--paper-strong); font-size:11px; font-weight:680; user-select:none; }
   .more-filters summary::-webkit-details-marker { display:none; }
-  .more-filters summary::before { content:"▸ "; }
-  .more-filters[open] summary::before { content:"▾ "; }
-  .more-filters .filters { margin-top:6px; }
-  .runs-controls-row .filter-groups { flex:1 1 auto; flex-direction:row; flex-wrap:wrap; align-items:flex-start; gap:16px; }
-  .runs-controls-row .filter-group { min-width:0; }
+  .more-filters summary::after { content:""; width:6px; height:6px; margin:-3px 1px 0 3px;
+    border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; opacity:.65;
+    transform:rotate(45deg); transition:transform .12s, margin .12s; }
+  .more-filters[open] summary::after { margin:3px 1px 0 3px; transform:rotate(225deg); }
+  .more-filter-icon { position:relative; width:13px; height:12px; flex:none; }
+  .more-filter-icon::before, .more-filter-icon::after { content:""; position:absolute; left:1px;
+    border-top:1.5px solid currentColor; }
+  .more-filter-icon::before { top:2px; width:11px; }
+  .more-filter-icon::after { top:7px; width:7px; }
+  .more-filters.active summary { color:var(--navy); border-color:color-mix(in srgb,var(--navy) 42%,var(--line));
+    background:var(--navy-soft); }
+  :root[data-theme="dark"] .more-filters.active summary { color:var(--ink); }
+  .more-filter-count { min-width:17px; height:17px; padding:0 5px; display:inline-grid; place-items:center;
+    border-radius:999px; color:#fff; background:var(--navy); font-size:9px; font-weight:780; }
+  :root[data-theme="dark"] .more-filter-count { color:var(--ink); background:var(--rust); }
+  .more-filter-panel { margin-top:6px; }
+  .more-filter-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+  .more-filter-panel-head strong { display:block; color:var(--ink); font-size:13px; }
+  .more-filter-panel-head span { display:block; margin-top:3px; color:var(--muted); font-size:10.5px; font-weight:400; }
+  .more-filter-reset { padding:4px 7px; border:0; border-radius:5px; color:var(--rust);
+    background:transparent; font-size:10.5px; font-weight:680; }
+  .more-filter-reset:hover { background:var(--rust-pale); }
+  .more-filter-section-label { margin-top:14px; color:var(--faint); font-size:9.5px; font-weight:760;
+    letter-spacing:.07em; text-transform:uppercase; }
+  .signal-filter-options { margin-top:7px; display:grid; gap:6px; }
+  .signal-filter-option { width:100%; padding:9px; display:flex; align-items:flex-start; gap:9px;
+    border:1px solid var(--line); border-radius:8px; color:var(--ink-soft); background:transparent; text-align:left; }
+  .signal-filter-option:hover { border-color:var(--line-strong); background:var(--canvas); }
+  .signal-filter-option.on { border-color:color-mix(in srgb,var(--navy) 48%,var(--line));
+    background:var(--navy-soft); }
+  .signal-filter-mark { width:17px; height:17px; margin-top:1px; display:grid; place-items:center; flex:none;
+    border:1px solid var(--line-strong); border-radius:5px; color:#fff; background:var(--paper-strong);
+    font-size:10px; font-weight:800; }
+  .signal-filter-option.on .signal-filter-mark { border-color:var(--navy); background:var(--navy); }
+  .signal-filter-copy strong { display:block; color:var(--ink); font-size:11px; line-height:1.25; }
+  .signal-filter-copy span { display:block; margin-top:2px; color:var(--muted); font-size:9.5px;
+    font-weight:400; line-height:1.3; }
+  :root[data-theme="dark"] .signal-filter-option.on { border-color:var(--rust); background:var(--rust-soft); }
+  :root[data-theme="dark"] .signal-filter-option.on .signal-filter-mark { border-color:var(--rust); background:var(--rust); }
+  .queue-tools .more-filter-panel-head span { display:none; }
   .sort-row { margin-top:9px; display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
   .sort-row select { padding:3px 5px; border:1px solid var(--line); border-radius:6px;
     color:var(--ink-soft); background:var(--paper-strong); font-size:11px; }
@@ -198,28 +238,116 @@
   .empty { color:var(--muted); padding:26px 14px; text-align:center; font-size:12px; }
 
   /* U2: the full-width Runs table */
-  .runs-controls-row { max-width:900px; margin:0 auto 16px; display:flex; flex-wrap:wrap;
-    align-items:center; gap:12px 16px; }
-  .runs-search { flex:1 0 220px; max-width:340px; padding:7px 11px; border:1px solid var(--line);
-    border-radius:8px; background:var(--paper-strong); color:var(--ink); font-size:12.5px; }
-  .runs-controls-row .filters { flex:1 1 auto; }
-  .runs-controls-row .sort-row { margin-top:0; }
-  .runs-table-card { max-width:none; }
-  .runs-row { cursor:pointer; }
-  .runs-row:hover { background:color-mix(in srgb,var(--paper-strong) 65%,transparent); }
+  .runs-page-nav { margin-bottom:12px; }
+  .runs-controls-row { max-width:1500px; margin:0 auto 12px; padding:11px 12px; display:grid;
+    grid-template-columns:minmax(250px,340px) minmax(0,1fr) auto; align-items:center; gap:10px 18px;
+    border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:var(--shadow-soft); }
+  .runs-search-wrap { min-width:0; height:38px; display:flex; align-items:center; gap:8px; padding:0 11px;
+    border:1px solid var(--line-strong); border-radius:9px; background:var(--paper-strong); }
+  .runs-search-wrap:focus-within { border-color:var(--navy); box-shadow:0 0 0 3px color-mix(in srgb,var(--navy) 13%,transparent); }
+  .runs-search-icon { color:var(--faint); font-size:18px; line-height:1; transform:rotate(-20deg); }
+  .runs-search { width:100%; min-width:0; padding:0; border:0; outline:0; background:transparent;
+    color:var(--ink); font-size:12.5px; }
+  /* The three-column toolbar can run out of room for the grouped chips before
+     the 1260px breakpoint moves them onto their own row. Wrapping the groups
+     (rather than letting them shrink) keeps each label+chip pair intact on its
+     own line instead of spilling over its neighbour — the labels and chips
+     were overlapping each other and the sort/actions block. Groups are
+     flex:0 0 auto so their content never gets clipped; a single group always
+     fits a row, so wrapping is sufficient. */
+  .runs-controls-row .filter-groups { min-width:0; display:flex; flex-direction:row; flex-wrap:wrap;
+    align-items:center; gap:9px 10px; }
+  .runs-controls-row .filter-group { min-width:0; flex:0 0 auto; display:flex; align-items:center; gap:6px; }
+  .runs-controls-row .filter-group-label { margin:0; white-space:nowrap; }
+  .runs-controls-row .filters { flex:none; }
+  .runs-controls-row .fchip { padding:5px 9px; }
+  .runs-controls-row .more-filters { position:relative; flex:none; }
+  .runs-controls-row .more-filters summary { height:32px; padding:5px 9px; white-space:nowrap; }
+  .runs-controls-row .more-filters summary:hover,
+  .runs-controls-row .more-filters[open] summary { color:var(--ink); border-color:var(--line-strong); }
+  .runs-controls-row .more-filter-panel { position:absolute; top:calc(100% + 7px); right:0; z-index:8;
+    width:410px; max-width:min(410px,calc(100vw - 56px)); margin:0; padding:14px;
+    border:1px solid var(--line-strong); border-radius:10px; background:var(--paper-strong); box-shadow:var(--shadow); }
+  .runs-controls-row .signal-filter-options { grid-template-columns:1fr 1fr; }
+  .runs-toolbar-actions { display:flex; align-items:center; gap:8px; justify-self:end; }
+  .runs-controls-row .sort-row { margin:0; white-space:nowrap; }
+  .runs-controls-row .sort-row select { height:34px; padding:4px 28px 4px 8px; }
+  .runs-clear { height:34px; padding:0 9px; border:0; border-radius:7px; color:var(--rust);
+    background:transparent; font-size:11px; font-weight:680; white-space:nowrap; }
+  .runs-clear:hover { background:var(--rust-pale); }
+  #main.wide .runs-table-card { max-width:1400px; }
+  .runs-table-card { max-width:1400px; padding:0; overflow:hidden; border-radius:12px; box-shadow:none; }
+  .runs-table-meta { min-height:42px; padding:10px 14px; display:flex; align-items:center; gap:9px;
+    border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--paper) 76%,var(--canvas)); }
+  .runs-table-meta strong { font-size:12px; letter-spacing:.01em; }
+  .runs-table-meta span { color:var(--muted); font-size:10.5px; }
+  .runs-table { table-layout:fixed; }
+  .runs-table th { padding:8px 14px; font-size:10px; background:var(--paper); }
+  .runs-table td { padding:10px 14px; }
+  .runs-table th:nth-child(1), .runs-table td:nth-child(1) { width:34%; }
+  .runs-table th:nth-child(2), .runs-table td:nth-child(2) { width:14%; }
+  .runs-table th:nth-child(3), .runs-table td:nth-child(3) { width:38%; }
+  .runs-table th:nth-child(4), .runs-table td:nth-child(4) { width:14%; }
+  .runs-table.has-duration th:nth-child(1), .runs-table.has-duration td:nth-child(1),
+  .runs-table.has-cost th:nth-child(1), .runs-table.has-cost td:nth-child(1) { width:29%; }
+  .runs-table.has-duration th:nth-child(2), .runs-table.has-duration td:nth-child(2),
+  .runs-table.has-cost th:nth-child(2), .runs-table.has-cost td:nth-child(2) { width:13%; }
+  .runs-table.has-duration th:nth-child(3), .runs-table.has-duration td:nth-child(3),
+  .runs-table.has-cost th:nth-child(3), .runs-table.has-cost td:nth-child(3) { width:35%; }
+  .runs-table.has-duration th:nth-child(4), .runs-table.has-duration td:nth-child(4),
+  .runs-table.has-cost th:nth-child(4), .runs-table.has-cost td:nth-child(4) { width:14%; }
+  .runs-table.has-duration th:nth-child(5), .runs-table.has-duration td:nth-child(5),
+  .runs-table.has-cost th:nth-child(5), .runs-table.has-cost td:nth-child(5) { width:9%; }
+  .runs-table.has-duration.has-cost th:nth-child(1), .runs-table.has-duration.has-cost td:nth-child(1) { width:27%; }
+  .runs-table.has-duration.has-cost th:nth-child(2), .runs-table.has-duration.has-cost td:nth-child(2) { width:12%; }
+  .runs-table.has-duration.has-cost th:nth-child(3), .runs-table.has-duration.has-cost td:nth-child(3) { width:32%; }
+  .runs-table.has-duration.has-cost th:nth-child(4), .runs-table.has-duration.has-cost td:nth-child(4) { width:13%; }
+  .runs-table.has-duration.has-cost th:nth-child(5), .runs-table.has-duration.has-cost td:nth-child(5),
+  .runs-table.has-duration.has-cost th:nth-child(6), .runs-table.has-duration.has-cost td:nth-child(6) { width:8%; }
+  .runs-row { cursor:pointer; transition:background .12s, box-shadow .12s; }
+  .runs-row:hover { background:var(--navy-soft); box-shadow:inset 3px 0 0 var(--navy); }
   .runs-row.active { background:var(--navy-soft); }
   .runs-row:focus-visible { outline:2px solid var(--navy); outline-offset:-2px; }
-  .runs-task { font-weight:650; }
+  .runs-task { font-weight:680; line-height:1.3; }
   /* Runs §item "readable session identity": task title + one short, copyable
      id fragment + repository/time, instead of the full "namespace/task__uuid"
      string repeated in mono underneath. */
-  .runs-id-meta { margin-top:3px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+  .runs-id-meta { margin-top:3px; display:flex; flex-wrap:wrap; align-items:center; gap:3px 8px; }
   .runs-run-id { color:var(--muted); font-size:10.5px; }
   .runs-id-repo { color:var(--faint); font-size:10.5px; overflow-wrap:anywhere; }
+  .runs-id-model { color:var(--faint); font-size:10.5px; }
   .runs-id-time { color:var(--faint); font-size:10.5px; }
-  .runs-finding { max-width:38ch; }
+  .runs-finding { max-width:none; }
+  .runs-finding-text { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical;
+    -webkit-line-clamp:2; line-clamp:2; line-height:1.4; }
   .runs-finding-neg { color:var(--ink); }
   .runs-finding-pos { color:var(--moss); }
+  .runs-table .review-state { width:max-content; max-width:100%; margin:0; padding:3px 8px;
+    display:inline-flex; border:1px solid var(--line); border-radius:999px; background:var(--paper-strong);
+    font-size:10.5px; white-space:nowrap; }
+  .runs-table .review-state.handled { border-color:color-mix(in srgb,var(--moss) 35%,var(--line)); background:var(--moss-soft); }
+  .runs-table .review-state.progress { border-color:color-mix(in srgb,var(--amber) 35%,var(--line)); background:var(--amber-soft); }
+  .runs-empty { min-height:210px; padding:48px 20px; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; text-align:center; }
+  .runs-empty strong { font-size:15px; }
+  .runs-empty p { max-width:430px; margin:6px 0 0; color:var(--muted); font-size:12px; }
+  .runs-empty-actions { margin-top:16px; display:flex; gap:8px; }
+  .runs-table-card .table-scroll { overflow-x:auto; }
+
+  @media (max-width:1260px) {
+    .runs-controls-row { grid-template-columns:minmax(240px,320px) 1fr; }
+    .runs-toolbar-actions { grid-column:2; grid-row:1; }
+    .runs-controls-row .filter-groups { grid-column:1 / -1; grid-row:2; }
+  }
+  @media (max-width:820px) {
+    .runs-controls-row { grid-template-columns:1fr; padding:10px; }
+    .runs-search-wrap, .runs-controls-row .filter-groups, .runs-toolbar-actions { grid-column:1; grid-row:auto; }
+    .runs-controls-row .filter-groups { flex-wrap:wrap; padding-right:0; }
+    .runs-controls-row .filter-group { align-items:flex-start; flex-direction:column; }
+    .runs-toolbar-actions { justify-self:stretch; justify-content:space-between; }
+    .runs-controls-row .more-filter-panel { left:0; right:auto; max-width:calc(100vw - 56px); }
+    .runs-table { table-layout:auto; }
+  }
 
   /* run header + segmented control */
   .run-header { display:flex; align-items:flex-start; justify-content:space-between; gap:20px;
@@ -505,6 +633,10 @@
   .moment-observed { margin:0; color:var(--ink-soft); font-size:13.5px; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
   .moment-anchors { display:flex; flex-wrap:wrap; align-items:center; gap:8px 4px; margin-top:10px; }
   .moment-anchors-label { color:var(--muted); font-size:10px; font-weight:760; letter-spacing:.06em; text-transform:uppercase; }
+  /* P2: a finding's evidence limits sit on the card, not only in the breakdown. */
+  .moment-limits { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 6px; margin-top:8px;
+    color:var(--muted); font-size:11px; line-height:1.5; }
+  .moment-limits ul { margin:0; padding-left:16px; }
   /* T2: the five-part breakdown, preserved exactly, behind an expand toggle */
   .moment-detail { margin:0 22px 8px; border-top:1px solid var(--line); }
   .moment-detail > summary { padding:10px 0; cursor:pointer; color:var(--navy); font-size:11.5px; font-weight:700;
@@ -792,6 +924,12 @@
   .fleet-pattern-title.unclassified { color:var(--muted); font-style:italic; font-weight:600; }
   .fleet-pattern-raw { margin-top:3px; color:var(--faint); font-size:10px; }
   .fleet-pattern-raw .mono { overflow-wrap:anywhere; }
+  .fleet-pattern-meta { margin-top:3px; color:var(--faint); font-size:10px; }
+  .outcome-split-line { line-height:1.5; }
+  .outcome-split .outcome-fail { color:var(--rust); }
+  .outcome-split .outcome-pass { color:var(--moss); }
+  .outcome-caveat { margin:5px 0 0; color:var(--muted); font-size:11px; line-height:1.4;
+    border-left:2px solid var(--line); padding-left:8px; max-width:56ch; }
   .fleet-row.unclassified { background:color-mix(in srgb,var(--canvas-deep) 55%,transparent); }
   .fleet-detail-row > td { border-bottom:0; padding:0; }
   .fleet-detail-row.open > td { border-bottom:1px solid var(--line); }
@@ -803,6 +941,50 @@
   .fleet-example-row { flex-wrap:wrap; }
   .fleet-example-link { color:var(--rust); font:600 11.5px var(--mono); }
   .fleet-example-id { color:var(--faint); }
+  /* P2: a finding's evidence limits sit with the finding, not in a footnote. */
+  .fleet-example-limits { margin:3px 0 7px 10px; color:var(--muted); font-size:10px; line-height:1.45; }
+  .fleet-example-limits-label { display:block; color:var(--faint); font-size:9px; font-weight:760;
+    letter-spacing:.07em; text-transform:uppercase; }
+  .fleet-example-limits ul { margin:3px 0 0; padding-left:16px; }
+
+  /* Execution-quality matrix: same expandable-row treatment, its own class
+     names so it never collides with the Patterns table's selectors. */
+  .eq-table th:first-child, .eq-table td.eq-toggle { width:26px; padding-right:0; }
+  .eq-toggle-btn { border:0; background:transparent; color:var(--muted); font-size:10px; cursor:pointer;
+    padding:4px 6px; border-radius:5px; }
+  .eq-toggle-btn:hover { color:var(--ink); background:var(--paper-strong); }
+  .eq-detail-row > td { border-bottom:0; padding:0; }
+  .eq-detail-row.open > td { border-bottom:1px solid var(--line); }
+  .eq-detail { width:100%; }
+  .eq-detail summary { display:none; }
+  .eq-detail-body { padding:2px 0 14px 34px; display:grid; gap:2px; }
+  .eq-detail .kv-block { grid-template-columns:170px minmax(0,1fr); padding:8px 0; }
+  .eq-examples { margin-top:2px; }
+  .eq-example-row { flex-wrap:wrap; }
+  .eq-example-link { color:var(--rust); font:600 11.5px var(--mono); }
+  .eq-example-id { color:var(--faint); }
+  .eq-not-evaluated { cursor:help; }
+  /* Execution-quality Coverage column: the denominator behind every score, so
+     "0% of 8" and "nobody could be measured" never read the same. */
+  .eq-coverage { width:24%; min-width:170px; }
+  .eq-coverage-count { display:block; font-size:11.5px; font-weight:640; }
+  .eq-coverage-count.ok { color:var(--moss); }
+  .eq-coverage-count.partial { color:var(--amber); }
+  .eq-coverage-count.warn { color:var(--rust); }
+  .eq-coverage-bar { height:4px; margin:5px 0 0; max-width:150px; border-radius:3px;
+    overflow:hidden; background:var(--line); }
+  .eq-coverage-bar i { display:block; height:100%; background:var(--moss); }
+  .eq-coverage-count.partial + .eq-coverage-bar i { background:var(--amber); }
+  .eq-coverage-count.warn + .eq-coverage-bar i { background:var(--rust); }
+  .eq-coverage-note { margin-top:4px; line-height:1.35; }
+  .eq-coverage-tasks { margin-top:3px; opacity:0.85; }
+  /* The missing-capability heading that replaces a repeated per-run note. */
+  .eq-reason { margin-top:5px; display:flex; align-items:baseline; gap:6px; }
+  .eq-reason:first-child { margin-top:0; }
+  .eq-reason-label { color:var(--muted); font:700 9.5px var(--sans);
+    letter-spacing:.06em; text-transform:uppercase; }
+  .eq-detail-lede { margin:0 0 6px; max-width:640px; color:var(--muted);
+    font-size:11.5px; line-height:1.5; }
   .vs-interp { max-width:900px; margin:0 auto 16px; padding:14px 16px; border-radius:11px;
     background:var(--violet-soft); border:1px solid color-mix(in srgb,var(--violet) 26%,transparent); }
   .vs-interp .eyebrow { color:var(--violet); }

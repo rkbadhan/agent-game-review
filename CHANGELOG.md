@@ -12,6 +12,21 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Fixed
 
+- **Execution quality in Patterns** — the fleet card silently dropped every run
+  ingested before `execution_quality.json` existed and every run whose outcome
+  was not PASSED/FAILED, so a whole store read "Not evaluated / No results".
+  Old captures are now derived from their own persisted events, unverified runs
+  are counted in their own column, and each dimension expands to the affected
+  runs (linked to every violating event) and the unevaluated runs with the
+  capability they were missing. Every run in the drill-down is a link that
+  opens its full trace — including an evaluated run with no violation and an
+  unevaluated run, which were previously plain text, so a dimension with no
+  findings had nothing to click. A structured (object) repetition signature no
+  longer crashes the summary with an unhashable-type error. Every optional
+  record read in the fallback is guarded, so a capture with `events.json` but
+  no `capabilities.json` reports unevaluated instead of 500ing. `agr
+  backfill-execution-quality` provisions the record once for a whole
+  pre-feature store so the fallback is not recomputed on every read.
 - **AGR-01** — reproducible corpus manifest, counting definitions, and an
   annotation protocol for the real-data pilot corpus.
 - **AGR-02** — reconciled same-scope test observations instead of letting a

@@ -38,19 +38,52 @@ def test_list_runs_empty_store(tmp_path):
     assert read.list_runs(store) == []
 
 
+def test_run_card_separates_verifier_evidence_from_verdict(tmp_path):
+    """P1: whether a task verdict is possible is the §6.2 verifier evidence, not
+    the outcome string. It rides on the card so Runs/Patterns/Compare can filter
+    and annotate on it without re-deriving it. A trace with no verifier is
+    analysis-only: its UNVERIFIED outcome is a coverage statement, not a
+    judgement."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_load("clean_pass.atif.json"), store)
+
+    trace = _load("clean_pass.atif.json")
+    trace["run"]["logical_run_id"] = "trace_only"
+    trace.pop("verifier", None)
+    trace["capabilities"]["verifier_code"] = "unavailable"
+    analyze(trace, store)
+
+    cards = {r["run_id"]: r for r in read.list_runs(store)}
+    v = cards["greeting_file__clean_pass"]
+    assert v["outcome"]["status"] == "PASSED"
+    assert v["verification"] == {
+        "has_verifier": True, "results": None, "code": "complete",
+        "checks": 4, "atomic": True}
+
+    u = cards["trace_only"]
+    assert u["outcome"]["status"] == "UNVERIFIED"
+    assert u["verification"]["has_verifier"] is False
+    assert u["verification"]["checks"] == 0
+
+
 def test_list_runs_skips_a_legacy_run_dir_with_an_invalid_charset_id(tmp_path):
     """F1 follow-up (review of PR #64): the path-safety charset added to
     Store._run_dir sits on every read path too, via list_runs' directory
     walk. A run directory left over from before that charset existed (e.g. a
-    colon in an old logical_run_id, never rejected at the time it was
+    space in an old logical_run_id, never rejected at the time it was
     ingested) must be skipped, not raise InvalidRunId out of the walk and
-    take down the entire listing."""
+    take down the entire listing.
+
+    A space is used rather than a colon because it is rejected by
+    validate_run_id but is a legal directory name on every platform — a
+    colon cannot be created on Windows at all, which would make this test
+    untestable there instead of exercising the walk."""
     store = _store_with(tmp_path, "chess_best_move.atif.json")
 
     # A directory name no run_id could pass validate_run_id() today, written
     # directly to disk the way an OLD AGR version's ingest would have —
     # simulating a store that predates F1's run_id charset.
-    legacy_dir = os.path.join(store.root, "runs", "legacy:2024-01-01T00:00:00Z")
+    legacy_dir = os.path.join(store.root, "runs", "legacy 2024-01-01T000000Z")
     os.makedirs(legacy_dir, exist_ok=True)
     with open(os.path.join(legacy_dir, "index.json"), "w", encoding="utf-8") as fh:
         json.dump([{"capture_id": "capture_legacy", "source_hash": "sha256:x",
