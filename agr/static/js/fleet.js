@@ -426,9 +426,16 @@ async function renderFleet(main) {
   main.append(wrap);
   wrap.append(renderFleetGroupByCard(fl));
 
-  if (!fl.executionQuality) {
+  // Guarded the same way loadFleetArgumentShapes() guards its own fetch: two
+  // renderFleet() calls overlapping in time (e.g. this await still pending
+  // when something elsewhere triggers a fresh top-level render()) must not
+  // both see `!fl.executionQuality` and each fire their own request to the
+  // same endpoint.
+  if (!fl.executionQuality && !fl.executionQualityPending) {
+    fl.executionQualityPending = true;
     try { fl.executionQuality = await api("/fleet/execution-quality"); }
     catch (e) { fl.executionQuality = null; }
+    finally { fl.executionQualityPending = false; }
   }
   if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
 
@@ -454,9 +461,11 @@ async function renderFleet(main) {
       + "tool failure for Patterns to have anything to group."));
     return;
   }
-  if (!fl.usageSummary) {
+  if (!fl.usageSummary && !fl.usageSummaryPending) {
+    fl.usageSummaryPending = true;
     try { fl.usageSummary = await api("/fleet/usage-summary"); }
     catch (e) { fl.usageSummary = null; }
+    finally { fl.usageSummaryPending = false; }
   }
   if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
   if (!fl.argumentShapes && !fl.argumentShapesPending) await loadFleetArgumentShapes();
@@ -552,6 +561,12 @@ function renderFleetTable(groups) {
     else if (g.usage_availability === "partial") tokensText += " (partial)";
     const tokensCell = td(tokensText);
     if (g.overlapping_usage_events || g.usage_unavailable_count) tokensCell.title = g.usage_note;
+    // The blended total_tokens figure includes an unrecovered episode's
+    // window all the way to the end of its run — attempt_tokens_total is
+    // the honest "cost of the failed attempt itself" number, shown right
+    // next to it rather than replacing it.
+    if (g.attempt_tokens_total)
+      tokensCell.append(el("div", "vs-counts", fmtCompact(g.attempt_tokens_total) + " wasted on the failed attempt(s)"));
     tr.append(tokensCell);
     t.append(tr);
 
@@ -571,6 +586,12 @@ function renderFleetTable(groups) {
     body.append(rate);
     body.append(kvBlock("Avg turns to resolve", g.avg_turns_to_resolve != null ? g.avg_turns_to_resolve.toFixed(1) : "—"));
     body.append(kvBlock("Wall time", fmtWallMs(g.total_wall_ms)));
+    // The trustworthy "cost of this bug" number — the failed attempts
+    // themselves, not the blended total_tokens which for an unrecovered
+    // episode also absorbs every later, unrelated turn in that run.
+    const wasted = kvBlock("Wasted on failed attempts", fmtCompact(g.attempt_tokens_total));
+    wasted.title = g.usage_note;
+    body.append(wasted);
     const argBlock = el("div", "kv-block");
     argBlock.append(el("span", "kv-k", "Argument shapes"));
     const argV = el("span", "kv-v"); argV.append(argumentShapesBlock(g)); argBlock.append(argV);

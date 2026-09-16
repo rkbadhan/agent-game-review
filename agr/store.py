@@ -79,6 +79,12 @@ class Store:
     def __init__(self, root: str):
         self.root = root
         os.makedirs(self.root, exist_ok=True)
+        # Bumped by every method below that actually writes bytes to disk (never
+        # by a no-op like write_source's immutable-skip or register_capture's
+        # idempotent return). read.list_runs's cache uses this to invalidate
+        # itself exactly on a same-process write, rather than trusting a bare
+        # time-based expiry to catch a write that just happened.
+        self._write_seq = 0
 
     # --- paths ---------------------------------------------------------------
 
@@ -145,6 +151,7 @@ class Store:
         }
         index.append(entry)
         self._write_index(run_id, index)
+        self._write_seq += 1
         return entry
 
     # --- record IO -----------------------------------------------------------
@@ -158,6 +165,7 @@ class Store:
             return  # immutable: never rewrite
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(canonical_bytes(doc).decode("utf-8"))
+        self._write_seq += 1
 
     def read_source(self, run_id: str, capture_id: str) -> Any:
         path = os.path.join(self._capture_dir(run_id, capture_id), "source.json")
@@ -172,6 +180,7 @@ class Store:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
+        self._write_seq += 1
 
     def read_derived(self, run_id: str, capture_id: str, name: str) -> Any:
         with open(os.path.join(self._capture_dir(run_id, capture_id), name), encoding="utf-8") as fh:

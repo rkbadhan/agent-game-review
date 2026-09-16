@@ -23,6 +23,9 @@ thin transport over these functions; nothing here imports a third-party package.
 from __future__ import annotations
 
 import os
+import threading
+import time
+import weakref
 from datetime import datetime
 from typing import Any, Optional
 
@@ -692,13 +695,66 @@ def _verification_summary(capabilities: dict, outcome: dict) -> dict:
     }
 
 
+# fleet.py's three endpoints (episodes/usage-summary/execution-quality) and
+# queue.py's two (sweep/queue) each call list_runs() independently — on the
+# Patterns page alone the browser fires 3-4 separate HTTP requests that all
+# need it, and list_runs() itself is an os.walk() of the whole store plus
+# several JSON reads per run, the dominant cost of every one of those
+# requests. Cache the result per Store instance (a WeakKeyDictionary, not
+# id(store): a plain int id can be recycled by a later, unrelated Store once
+# an earlier one is garbage-collected, which would serve that new store a
+# dead store's cached rows).
+#
+# Invalidation has two layers: Store._write_seq changes the instant THIS
+# process writes anything list_runs reads (so e.g. POST /runs/{id}/workflow
+# is reflected on the very next call, in-process, exactly — no window where
+# a reader could see stale workflow state) — see Store's own writes for what
+# bumps it. The short TTL beneath that is the only guard against a SEPARATE
+# process (an `agr review`/ingest CLI run) writing to the same on-disk store
+# while `agr serve` is up: this process's _write_seq can't see that, so the
+# cache is also time-bounded, at the cost of up to _LIST_RUNS_CACHE_TTL_S of
+# staleness against an external writer.
+_LIST_RUNS_CACHE_TTL_S = 3.0
+_list_runs_cache: "weakref.WeakKeyDictionary[Store, tuple[int, float, list[dict]]]" = (
+    weakref.WeakKeyDictionary()
+)
+_list_runs_cache_lock = threading.Lock()
+
+
 def list_runs(store: Store) -> list[dict]:
     """Summarise every logical run in the store, ordered by run id.
 
     Each summary is assembled from persisted records only; it never recomputes
     the pipeline. Runs are keyed by their filesystem directory (the logical
     ``run_id``) so a fuller capture of the same run stays a single row.
+
+    Cached per store (see the module-level note above) — callers get a fresh
+    ``list`` on every call (so an in-place ``.sort()`` like queue.py's can
+    never corrupt the cached rows for the next caller), but the same row
+    ``dict`` objects; nothing here mutates a row in place after building it,
+    so sharing them across callers is safe.
     """
+    with _list_runs_cache_lock:
+        now = time.monotonic()
+        cached = _list_runs_cache.get(store)
+        if cached is not None:
+            write_seq, computed_at, summaries = cached
+            if write_seq == store._write_seq and (now - computed_at) < _LIST_RUNS_CACHE_TTL_S:
+                return list(summaries)
+        # Captured BEFORE the (I/O-bound, lock-released-during-disk-reads)
+        # compute below, not after: a write landing on this store WHILE
+        # _list_runs_uncached is mid-walk bumps store._write_seq during the
+        # call, and if that new value were the one cached, the next reader
+        # would see seq match and be served this now-stale snapshot for the
+        # rest of the TTL. Caching the seq from before the compute means any
+        # write concurrent with it forces a recompute on the very next call.
+        seq_before = store._write_seq
+        summaries = _list_runs_uncached(store)
+        _list_runs_cache[store] = (seq_before, now, summaries)
+        return list(summaries)
+
+
+def _list_runs_uncached(store: Store) -> list[dict]:
     root = _runs_root(store)
     if not os.path.isdir(root):
         return []

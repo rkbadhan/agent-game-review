@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from agr import read
+from agr import read, workflow
 from agr.pipeline import analyze
 from agr.store import Store
 
@@ -190,6 +190,108 @@ def test_list_runs_flags_provisional_contract(tmp_path):
     (summary,) = read.list_runs(store)
     assert summary["contract"]["watermarked"] is True
     assert "PROVISIONAL REVIEW" in summary["watermark"]
+
+
+# --- list_runs caching ---------------------------------------------------------
+# fleet.py and queue.py each call list_runs() independently, and on the Patterns
+# page alone the browser fires several separate requests that all need it — a
+# cache keyed per Store collapses the redundant os.walk()+per-run reads, but
+# only if it (a) is invisible to a reader making the same call twice, (b) never
+# lets one caller's mutation of the returned list corrupt another's, (c) is
+# invalidated exactly by a same-process write (never serving stale workflow
+# state right after a POST), and (d) never crosses between two different Store
+# instances, including one that has been garbage-collected.
+
+
+def test_list_runs_cache_does_not_walk_the_store_twice(tmp_path, monkeypatch):
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    calls = []
+    real_walk = os.walk
+
+    def counting_walk(*args, **kwargs):
+        calls.append(1)
+        return real_walk(*args, **kwargs)
+
+    monkeypatch.setattr(os, "walk", counting_walk)
+    first = read.list_runs(store)
+    second = read.list_runs(store)
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_list_runs_cache_survives_a_callers_in_place_sort(tmp_path):
+    """queue.py's queue_view() does ``rows.sort(...)`` in place on whatever
+    list_runs() returns. Two runs sorted opposite ways by two different callers
+    must never see each other's ordering — each call gets its own list."""
+    store = _store_with(tmp_path, "chess_best_move.atif.json", "clean_pass.atif.json")
+    rows = read.list_runs(store)
+    rows.sort(key=lambda r: r["run_id"], reverse=True)
+    fresh = read.list_runs(store)
+    assert [r["run_id"] for r in fresh] == sorted(r["run_id"] for r in fresh)
+
+
+def test_list_runs_cache_invalidates_on_a_same_process_write(tmp_path):
+    """A workflow POST (store.write_derived under the hood) must be visible on
+    the very next list_runs() call, with no reliance on the TTL to catch it —
+    a reader must never see stale review_progress right after marking a run
+    handled."""
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    before = read.list_runs(store)
+    assert before[0]["workflow"]["review_progress"] == "unreviewed"
+
+    workflow.set_workflow(
+        store, before[0]["run_id"], actor="tester", base_version=0,
+        disposition="no_action", progress="handled")
+
+    after = read.list_runs(store)
+    assert after[0]["workflow"]["review_progress"] == "handled"
+
+
+def test_list_runs_cache_invalidates_a_write_that_lands_mid_compute(tmp_path, monkeypatch):
+    """A write from another thread that lands WHILE _list_runs_uncached is
+    still walking the store (it does disk I/O, releasing the GIL, so this is
+    a real interleaving under FastAPI's threadpool, not a hypothetical one)
+    must not be masked by the cache. Tagging the snapshot with
+    store._write_seq read AFTER the compute would record the POST-write seq
+    against the PRE-write snapshot, so the next reader's seq check would
+    pass and serve stale data for the rest of the TTL — the seq must be
+    captured before the compute starts instead."""
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    # Via _list_runs_uncached directly, not list_runs() — calling the cached
+    # entry point here would populate the cache and turn the very next call
+    # below into a harmless cache HIT, never reaching the patched function at
+    # all (this is exactly how the test first failed to reproduce the bug).
+    run_id = read._list_runs_uncached(store)[0]["run_id"]
+    real_uncached = read._list_runs_uncached
+
+    def uncached_with_a_write_landing_during_the_walk(s):
+        result = real_uncached(s)
+        # Simulates a concurrent writer whose write completes after this
+        # snapshot was built but before list_runs() caches it.
+        workflow.set_workflow(
+            s, run_id, actor="tester", base_version=0,
+            disposition="no_action", progress="handled")
+        return result
+
+    monkeypatch.setattr(read, "_list_runs_uncached", uncached_with_a_write_landing_during_the_walk)
+    stale = read.list_runs(store)
+    assert stale[0]["workflow"]["review_progress"] == "unreviewed"
+    monkeypatch.setattr(read, "_list_runs_uncached", real_uncached)
+
+    fresh = read.list_runs(store)
+    assert fresh[0]["workflow"]["review_progress"] == "handled"
+
+
+def test_list_runs_cache_is_per_store_not_per_process(tmp_path):
+    """Two different Store objects over two different on-disk stores must never
+    share a cached listing, even transiently."""
+    a = Store(str(tmp_path / "store_a"))
+    analyze(_load("chess_best_move.atif.json"), a)
+    b = Store(str(tmp_path / "store_b"))
+    analyze(_load("clean_pass.atif.json"), b)
+    ra = read.list_runs(a)
+    rb = read.list_runs(b)
+    assert {r["run_id"] for r in ra} != {r["run_id"] for r in rb}
 
 
 # --- get_review --------------------------------------------------------------
