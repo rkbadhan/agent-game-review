@@ -83,6 +83,14 @@ class EpisodeGroup:
     # non-additive with respect to its own episode list, by construction
     # (shared events are real, not a bug to eliminate).
     overlapping_usage_events: int = 0
+    # Plain sum of each episode's own initiating_attempt_tokens — the cost of
+    # the failed attempt itself (the failing call and the turns that led to
+    # it), unlike total_tokens which for an unrecovered episode includes
+    # everything through the end of the run, whether or not it was spent
+    # trying to fix this failure. Unlike total_tokens this is a genuine sum,
+    # not a union: an attempt's own lead-in tokens are never double-counted
+    # across two episodes since each episode has its own single failing call.
+    attempt_tokens_total: int = 0
     total_wall_ms: int = 0
     # AGR-05/06 (review 82cc113): how many of this group's episodes have
     # usage_completeness == "unavailable" — no cost was ever recorded in
@@ -262,19 +270,28 @@ class EpisodeGroup:
             # count of tokens the underlying events recorded, nothing more.
             "total_tokens": self.total_tokens,
             "overlapping_usage_events": self.overlapping_usage_events,
+            "attempt_tokens_total": self.attempt_tokens_total,
             "usage_unavailable_count": self.usage_unavailable_count,
             "usage_partial_count": self.usage_partial_count,
             "usage_availability": self.usage_availability,
             "usage_note": (
                 "total_tokens is the union of underlying usage records across this "
-                "group's episodes; overlapping_usage_events > 0 means some events were "
-                "covered by more than one episode and are counted once, not per episode."
+                "group's episodes' windows — for an episode that never resolved, its "
+                "window runs to the end of the run, so total_tokens can include tokens "
+                "spent on later, unrelated work, not just this failure. "
+                "attempt_tokens_total is the sum of each episode's initiating_attempt_"
+                "tokens — the cost of the failed attempt itself (the failing call and "
+                "its lead-in) — and IS attributable to this group; treat it, not "
+                "total_tokens, as the trustworthy 'cost of this bug' figure. "
+                "overlapping_usage_events > 0 means some of total_tokens's underlying "
+                "events were covered by more than one episode and are counted once, "
+                "not per episode."
                 + (f" {self.usage_unavailable_count} of {self.count} episode(s) never had "
-                   "usage instrumented at all — total_tokens undercounts this group's real "
+                   "usage instrumented at all — both totals undercount this group's real "
                    "cost." if self.usage_unavailable_count else "")
                 + (f" {self.usage_partial_count} of {self.count} episode(s) had only part of "
-                   "their window instrumented — total_tokens may undercount even where it "
-                   "is nonzero." if self.usage_partial_count else "")
+                   "their window instrumented — both totals may undercount even where "
+                   "nonzero." if self.usage_partial_count else "")
             ),
             "total_wall_ms": self.total_wall_ms,
             "fallback_basis_count": self.fallback_basis_count,
@@ -357,6 +374,7 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
             # episode's window running into the next failure's) would
             # otherwise double-count those events' tokens.
             **dict(zip(("total_tokens", "overlapping_usage_events"), _usage_union(eps))),
+            attempt_tokens_total=sum(e.get("initiating_attempt_tokens") or 0 for e in eps),
             total_wall_ms=sum(e.get("wall_ms") or 0 for e in eps),
             usage_unavailable_count=sum(1 for e in eps if e.get("usage_completeness") == "unavailable"),
             usage_partial_count=sum(1 for e in eps if e.get("usage_completeness") == "partial"),

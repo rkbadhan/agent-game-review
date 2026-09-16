@@ -417,6 +417,10 @@ def test_to_dict_shape(tmp_path):
         # AGR-06: total_tokens is a union, not a plain sum — overlapping_
         # usage_events and usage_note say so explicitly.
         "overlapping_usage_events", "usage_note",
+        # The plain sum of each episode's initiating_attempt_tokens — the
+        # cost of the failed attempt itself, trustworthy where total_tokens
+        # (an unrecovered episode's window runs to the end of its run) is not.
+        "attempt_tokens_total",
         # AGR-05/06 (review 82cc113): how many/whether this group's episodes
         # ever had usage instrumented at all — total_tokens alone cannot tell
         # a genuine zero apart from unmeasured usage.
