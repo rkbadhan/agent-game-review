@@ -17,7 +17,9 @@ workflow beside the immutable source (never mutating it) via :mod:`agr.workflow`
     GET  /sweep                     implicit-sweep summary (§4.3.1)
     GET  /queue                     triage queue view (§4.3.2)
     GET  /runs                      run summaries
-    GET  /fleet/episodes            recovery episodes grouped across every run (item 30)
+    GET  /fleet/episodes            recovery episodes grouped across every run (item 30);
+                                     optional ?limit=&offset= pages it, total count in
+                                     the X-Total-Count response header
     GET  /fleet/argument-shapes     argument-shape distribution per failing-call signature (item 31)
     GET  /runs/{run_id}             full deterministic review + workflow/feedback
     GET  /runs/{run_id}/forensic    synchronized forensic view (§4.5)
@@ -59,7 +61,7 @@ def create_app(store_root: str = ".agr-store"):
     """
     try:
         from fastapi import Body, FastAPI, HTTPException, Query
-        from fastapi.responses import HTMLResponse
+        from fastapi.responses import HTMLResponse, JSONResponse
         from fastapi.staticfiles import StaticFiles
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via serve
         raise RuntimeError(
@@ -126,15 +128,38 @@ def create_app(store_root: str = ".agr-store"):
         return read.list_runs(store)
 
     @app.get("/fleet/episodes")
-    def fleet_episodes(group_by: str = "tool,error_signature") -> list[dict]:
+    def fleet_episodes(
+        group_by: str = "tool,error_signature",
+        limit: Optional[int] = Query(default=None, ge=1),
+        offset: int = Query(default=0, ge=0),
+    ):
         """Item 30: recovery episodes grouped across EVERY run in the store —
-        which failures repeat, how often, and how much they cost."""
+        which failures repeat, how often, and how much they cost.
+
+        ``limit``/``offset`` page the already-ranked list (fleet.fleet_episodes
+        does the ranking; this only slices it) without changing the response
+        shape — omitting them returns every group exactly as before, so
+        existing callers (the CLI, the pinned API test) see no difference.
+        The full count always goes out as the ``X-Total-Count`` header so a
+        pager knows how much more there is without widening the body.
+
+        Returns a plain ``JSONResponse`` rather than declaring ``response:
+        Response`` as a parameter for FastAPI to inject: this module's
+        ``from __future__ import annotations`` turns that annotation into a
+        string FastAPI resolves against the module's globals, and `Response`
+        is only ever imported into this function's (`create_app`'s) local
+        scope to keep FastAPI an optional dependency — the injection silently
+        never resolves and every request 422s on a phantom "response" query
+        param instead.
+        """
         dims = [d.strip() for d in group_by.split(",") if d.strip()] or None
         try:
             groups = fleet.fleet_episodes(store, group_by=dims)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return [g.to_dict() for g in groups]
+        page = groups[offset:offset + limit] if limit is not None else groups
+        body = [g.to_dict() for g in page]
+        return JSONResponse(content=body, headers={"X-Total-Count": str(len(groups))})
 
     @app.get("/fleet/usage-summary")
     def fleet_usage_summary() -> dict:

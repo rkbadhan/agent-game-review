@@ -943,6 +943,53 @@
   .fleet-row:hover { background:var(--navy-soft); }
   .fleet-row.unclassified { background:color-mix(in srgb,var(--canvas-deep) 55%,transparent); }
   .fleet-row.unclassified:hover { background:color-mix(in srgb,var(--navy-soft) 70%,var(--canvas-deep) 55%); }
+
+  /* Triage color review: color used to answer only "did this resolve" (the
+     confirmed/plausible/unrecovered caption above) — nothing signalled "should
+     I care". Severity (unrecovered_share x cost, computed in fleet.js's
+     patternSeverity()) now reads as a stripe + faint wash on the row itself,
+     reusing the SAME rust/amber/moss hues the recovery caption already uses
+     so the two levels of color agree with each other. `data-recurring` fades
+     a row's identifying text independently of severity — the two are
+     deliberately orthogonal, see fleet.js — so a one-off that was genuinely
+     expensive still carries full-strength severity color even though its
+     title recedes. Declared after .unclassified above so severity (a live
+     "should I care" signal) wins the row background on the rare row that is
+     both unclassified and severe. */
+  /* The stripe lives on the first CELL, not the row: box-shadow on a <tr>
+     itself is unreliable across table layouts (a <tr> isn't consistently a
+     paintable box the way a <td> is) — the row's own background, below,
+     doesn't have that problem and paints on the tr directly. */
+  .fleet-row[data-severity="high"] {
+    background: color-mix(in srgb, var(--rust) 8%, transparent);
+  }
+  .fleet-row[data-severity="high"] td:first-child { box-shadow: inset 4px 0 0 var(--rust); }
+  .fleet-row[data-severity="high"]:hover {
+    background: color-mix(in srgb, var(--rust) 8%, var(--navy-soft) 60%);
+  }
+  .fleet-row[data-severity="medium"] {
+    background: color-mix(in srgb, var(--amber) 6%, transparent);
+  }
+  .fleet-row[data-severity="medium"] td:first-child { box-shadow: inset 4px 0 0 var(--amber); }
+  .fleet-row[data-severity="medium"]:hover {
+    background: color-mix(in srgb, var(--amber) 6%, var(--navy-soft) 60%);
+  }
+  .fleet-row[data-severity="low"] td:first-child { box-shadow: inset 4px 0 0 var(--moss); }
+  .fleet-row[data-severity="none"] td:first-child { box-shadow: inset 4px 0 0 var(--line-strong); }
+  /* recurring:false (one-off) rows recede — their identifying text and plain
+     counts fade, but the recovery breakdown keeps its own explicit color
+     (unaffected, since it's not selected below) and reads clearly against
+     the faded neighbors. */
+  .fleet-row[data-recurring="false"] .fleet-pattern-title,
+  .fleet-row[data-recurring="false"] .fleet-pattern-meta,
+  .fleet-row[data-recurring="false"] .fleet-num {
+    color:var(--faint);
+  }
+  .fleet-row[data-recurring="false"] .fleet-pattern-title { font-weight:560; }
+  /* A one-off row can still be the most expensive thing on the page (Read's
+     token-limit groups are a common one) — its cost stays fully legible even
+     while the rest of the row recedes for being unrepeated. */
+  .fleet-row[data-severity="high"] .fleet-tokens-figure { color:var(--ink); font-weight:730; }
   .fleet-detail-row > td { border-bottom:0; padding:0; }
   .fleet-detail-row.open > td { border-bottom:1px solid var(--line); }
   .fleet-detail { width:100%; }
@@ -950,6 +997,8 @@
   .fleet-detail-body { padding:2px 0 14px 34px; display:grid; gap:2px; }
   .fleet-detail .kv-block { grid-template-columns:170px minmax(0,1fr); padding:8px 0; }
   .fleet-examples { margin-top:2px; }
+  .fleet-load-more { display:flex; justify-content:center; padding-top:14px; }
+  .fleet-load-more .seg { border-color:var(--line); }
   .fleet-example-row { flex-wrap:wrap; }
   .fleet-example-link { color:var(--rust); font:600 11.5px var(--mono); }
   .fleet-example-id { color:var(--faint); }

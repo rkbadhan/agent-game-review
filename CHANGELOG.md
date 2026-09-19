@@ -283,6 +283,15 @@ anything else), then Patterns, then Runs.
   `---`/`}`/`===` case) is labelled **Unclassified tool failures** instead
   of presenting that raw text as if it identified a real common cause — the
   raw text is still shown, just not as the headline.
+- **Follow-up: unclassified pattern titles no longer collide.** The
+  boilerplate "Unclassified tool failures" phrase was the ENTIRE bold title
+  for every weak-signature group on a tool, so two genuinely different
+  fallback failures on the same tool (e.g. `Read`'s "file does not exist"
+  vs. "file content exceeds max tokens") rendered as identical headlines —
+  the only differentiator was in the small gray "raw:" caption underneath.
+  The title now carries a short, quoted excerpt of the actual fallback text
+  instead of the generic phrase; the "weak signature" evidence-strength
+  label still marks it as not an established diagnostic.
 - **Session identity reads as a name, not a UUID.** The Runs table's
   identity cell now shows the captured task as the title, one shortened
   session-id fragment with a copy button (Patterns' representative-episode
