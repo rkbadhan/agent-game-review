@@ -229,7 +229,26 @@ ERROR_SIGNATURE_VERSION = "error-sig-0.2"
 #   command's own executable/args into the probe's target set — only the
 #   probe's own invocation, truncated at the first shell chain operator, is
 #   considered.
-RECOVERY_VERSION = "recovery-0.10"
+# 0.11: episodes now carry raw_failure_text/raw_failure_text_truncated — the
+# failure event's own text, bounded but not re-selected. failure_diagnostic
+# and error_signature are both still just the ONE line _select_diagnostic
+# picked; for a fallback_last_nonempty episode (no recognised marker
+# anywhere) that line can be a dead end for a reader trying to root-cause the
+# failure, when the real diagnostic (an HTTP status, a response body) is on
+# a different line the mechanical selector was never going to recognise.
+# 0.12: _plausible_operation_match now also links a failed call to a
+# DIFFERENT tool's success within the same MCP server family
+# (_tool_family — "mcp__jira__search_issues" and "mcp__jira__get_issue"
+# share the family "mcp__jira"), on target-token overlap alone (no stable
+# "executable" token position exists to compare across two differently-
+# shaped tool calls). Previously "if tool_a != tool_b: return False" made
+# this link impossible even when a failed Jira search was followed by a
+# successful, target-overlapping Jira lookup that plainly answered it — that
+# recovery evidence was silently dropped entirely rather than recorded as
+# plausible. Same-tool matching is unchanged; a cross-tool match is still
+# only ever plausibly_resolved, never promoted to good_recovery /
+# retry_succeeded_without_strategy_change.
+RECOVERY_VERSION = "recovery-0.12"
 
 # The corpus manifest (AGR-01): reproducible provenance over a Harbor eval
 # corpus root — source locations/checksums, logical run ids, capture ids, and

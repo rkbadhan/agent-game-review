@@ -348,3 +348,50 @@ def test_error_signature_basis_is_fallback_when_no_diagnostic_is_found():
     eps = classify_recoveries(events, "r", "c")
     assert len(eps) == 1
     assert eps[0].error_signature_basis == "fallback_last_nonempty"
+
+
+# --- raw_failure_text: a fallback_last_nonempty episode's escape hatch -----
+# error_signature/failure_diagnostic are both just the ONE line
+# _select_diagnostic picked; for a fallback episode (no recognised marker
+# anywhere) that can dead-end a reader when the real diagnostic sits on a
+# DIFFERENT line the mechanical selector never recognised as one.
+
+
+def test_raw_failure_text_carries_the_failing_events_own_text_verbatim():
+    events = [
+        _ev("evt_1", "tool_call", tool="mcp__jira__search", content="search issue"),
+        _ev("evt_2", "tool_result", tool="mcp__jira__search",
+            content="Something went wrong.\nFor more information check: "
+                    "https://api.example.com/errors/Status/400",
+            exit_code=1),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    ep = eps[0]
+    # The mechanical selector falls back to the LAST non-blank line — a dead
+    # end for a reader, since the more useful first line never surfaces.
+    assert ep.error_signature_basis == "fallback_last_nonempty"
+    assert "For more information check" in ep.failure_diagnostic
+    # raw_failure_text carries the WHOLE failure text, verbatim, not just the
+    # one line the fallback tier settled on — the "Something went wrong."
+    # line is visible here even though it never became the signature.
+    assert ep.raw_failure_text == (
+        "Something went wrong.\nFor more information check: "
+        "https://api.example.com/errors/Status/400")
+    assert ep.raw_failure_text_truncated is False
+
+
+def test_raw_failure_text_truncates_long_text_with_an_explicit_flag():
+    from agr.recovery import _RAW_FAILURE_TEXT_LIMIT
+
+    long_text = "x" * (_RAW_FAILURE_TEXT_LIMIT + 500)
+    events = [
+        _ev("evt_1", "tool_call", tool="shell", content="./run.sh"),
+        _ev("evt_2", "tool_result", tool="shell", content=long_text, exit_code=1),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    ep = eps[0]
+    assert len(ep.raw_failure_text) == _RAW_FAILURE_TEXT_LIMIT
+    assert ep.raw_failure_text == long_text[:_RAW_FAILURE_TEXT_LIMIT]
+    assert ep.raw_failure_text_truncated is True

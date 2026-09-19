@@ -441,6 +441,18 @@ class RecoveryEpisode:
     # figures a reader of ONE run wants to see (e.g. "43,320 tokens", not
     # "<N> tokens"). Same basis tiering as error_signature_basis.
     failure_diagnostic: Optional[str] = None
+    # The failure event's own raw text, bounded but NOT re-selected or
+    # normalised — unlike failure_diagnostic (still just the ONE line
+    # _select_diagnostic picked), this is the whole payload a reader can
+    # scan themselves. Exists because the fallback_last_nonempty tier picks
+    # one line when nothing in the closed marker/traceback set matched
+    # anywhere — the actual diagnostic (an HTTP status, a response body) can
+    # be on a DIFFERENT line the mechanical selector was never going to
+    # recognise, and failure_diagnostic alone has nowhere further to send a
+    # reader in that case. Truncated with an explicit flag, never silently
+    # cut (same convention as read._final_state's artifact content).
+    raw_failure_text: Optional[str] = None
+    raw_failure_text_truncated: bool = False
     turns_to_resolve: Optional[int] = None        # tool_call count from failure through resolution; None if unresolved
     # AGR-05: usage summed strictly AFTER the failure result through the
     # selected resolution (or the observed terminal event, for an unrecovered

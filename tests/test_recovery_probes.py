@@ -131,6 +131,74 @@ def test_different_module_success_cannot_resolve_pytest_failure():
     assert eps[0].resolution_event_id == "evt_4"
 
 
+def test_cross_tool_success_in_the_same_mcp_family_can_plausibly_resolve():
+    """Claim 1 (cross-tool recovery linkage): a failed Jira search followed
+    by a DIFFERENT Jira MCP tool's success naming the same issue key is real
+    recovery evidence — a same-tool-only check ("if tool_a != tool_b: return
+    False") silently dropped this kind of link entirely, even though the
+    two tools are plainly the same underlying system. Still never promoted
+    past plausibly_resolved — the link is target-token overlap between two
+    differently-shaped calls, never an exact rerun."""
+    events = [
+        ev("evt_1", "tool_call", tool="mcp__jira__search_issues",
+           content='{"jql": "key = PROJ-123"}'),
+        ev("evt_2", "tool_result", tool="mcp__jira__search_issues",
+           content="no issues found", exit_code=1),
+        ev("evt_3", "tool_call", tool="mcp__jira__get_issue",
+           content='{"issueKey": "PROJ-123"}'),
+        ev("evt_4", "tool_result", tool="mcp__jira__get_issue",
+           content='{"key": "PROJ-123", "status": "Open"}', exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    ep = eps[0]
+    assert ep.classification == PLAUSIBLE_RECOVERY
+    assert ep.classification not in (GOOD_RECOVERY, UNCHANGED_RETRY)
+    assert ep.resolution_event_id == "evt_4"
+    assert ep.attribution_ceiling == "hypothesized"
+    assert ep.resolved_by == "mcp__jira__get_issue"
+
+
+def test_cross_tool_success_in_a_different_mcp_family_never_links():
+    """A failed Jira call and a successful, unrelated GitHub call sharing no
+    real connection must never link just because both happen to be MCP
+    tools — family scoping (same SERVER, not just "any MCP tool") is what
+    keeps this from inventing an equivalence between unrelated systems."""
+    events = [
+        ev("evt_1", "tool_call", tool="mcp__jira__search_issues",
+           content='{"jql": "key = PROJ-123"}'),
+        ev("evt_2", "tool_result", tool="mcp__jira__search_issues",
+           content="no issues found", exit_code=1),
+        ev("evt_3", "tool_call", tool="mcp__github__search_issues",
+           content='{"query": "PROJ-123"}'),
+        ev("evt_4", "tool_result", tool="mcp__github__search_issues",
+           content='{"results": []}', exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == UNRECOVERED
+    assert eps[0].resolution_event_id is None
+
+
+def test_cross_tool_success_in_the_same_family_without_target_overlap_never_links():
+    """Same MCP family alone is not enough — two Jira calls about
+    DIFFERENT issues must not link just because they share a server."""
+    events = [
+        ev("evt_1", "tool_call", tool="mcp__jira__search_issues",
+           content='{"jql": "key = PROJ-123"}'),
+        ev("evt_2", "tool_result", tool="mcp__jira__search_issues",
+           content="no issues found", exit_code=1),
+        ev("evt_3", "tool_call", tool="mcp__jira__get_issue",
+           content='{"issueKey": "OTHER-999"}'),
+        ev("evt_4", "tool_result", tool="mcp__jira__get_issue",
+           content='{"key": "OTHER-999", "status": "Open"}', exit_code=0),
+    ]
+    eps = classify_recoveries(events, "r", "c")
+    assert len(eps) == 1
+    assert eps[0].classification == UNRECOVERED
+    assert eps[0].resolution_event_id is None
+
+
 def test_exact_rerun_still_resolves_as_unchanged_retry():
     """The conservative identity keeps the legitimate case working: an exact
     rerun of the failed command that succeeds is
