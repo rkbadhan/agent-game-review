@@ -35,6 +35,7 @@ from .execution_quality import (
     generation_token_counts,
     generation_wall_ms,
 )
+from .recovery import raw_failure_lead
 from .schema import WATERMARKED_STATUSES
 from .store import InvalidRunId, Store, source_hash
 
@@ -149,8 +150,22 @@ def _moment_summary(candidate: dict) -> str:
         tool = f.get("tool")
         diag = f.get("failure_diagnostic") or f.get("error_signature")
         diag_usable = diag and f.get("error_signature_basis") != "fallback_last_nonempty"
-        lead = (f"{tool} failed: {diag}" if (tool and diag_usable)
-                else f"{tool} call failed" if tool else "tool call failed")
+        if tool and diag_usable:
+            lead = f"{tool} failed: {diag}"
+        else:
+            # Root-cause follow-up: an opaque fallback signature is dropped
+            # above as unusable, but the episode's own raw_failure_text is
+            # still something to root-cause from — use it rather than
+            # dead-ending on a bare "tool call failed".
+            raw_lead = raw_failure_lead(f.get("raw_failure_text"))
+            if tool and raw_lead:
+                lead = f"{tool} failed: {raw_lead}"
+            elif raw_lead:
+                lead = f"tool call failed: {raw_lead}"
+            elif tool:
+                lead = f"{tool} call failed"
+            else:
+                lead = "tool call failed"
         if f.get("resolution_event"):
             return f"{lead}, recovered via strategy change"
         return f"{lead}, left unresolved before submission"

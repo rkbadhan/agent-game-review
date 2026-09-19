@@ -71,6 +71,17 @@ function renderMomentCard(rv, f, moment) {
   const body = el("div", "moment-body");
 
   body.append(mcBlock("Situation", "validated fact", situationText(moment), ""));
+  // Root-cause follow-up: the failure's own raw text, collapsed by default,
+  // right under the Situation line it can explain — present whenever the
+  // fact carries one, not only for a fallback signature, since a confident
+  // diagnostic can still benefit from the surrounding context (same choice
+  // fleet.js already made for its own representative-episode disclosure).
+  // facts[0], not a find() for the state_transition fact specifically — the
+  // SAME fact situationText/toolFailureIdentity/recoveryText already read,
+  // so this disclosure can never describe a different fact than the
+  // headline above it when a moment carries more than one fact.
+  const fact0 = (moment.facts || [])[0] || {};
+  if (fact0.type === "state_transition" && fact0.raw_failure_text) body.append(rawFailureTextDetail(fact0));
   body.append(mcBlock(moment.kind === "omission" ? "Agent omission" : "Agent action", "source event", actionText(moment, f), "action"));
   body.append(mcBlock("Observed consequence", "validated fact", consequenceText(moment), "consequence"));
 
@@ -137,17 +148,57 @@ function mcBlock(label, sub, text, kind) {
   const l = el("div", "mc-label"); l.append(document.createTextNode(label)); l.append(el("span", null, sub)); b.append(l);
   b.append(el("p", "mc-text", text)); return b;
 }
+// Root-cause follow-up: the same collapsed "Raw failure text" disclosure
+// fleet.js's representativeEpisodesBlock() already renders for a fleet-wide
+// pattern, here for the single run this moment belongs to — the failure
+// event's own text, verbatim, not just the one line error_signature/
+// failure_diagnostic selected.
+function rawFailureTextDetail(f) {
+  const wrap = el("div", "moment-raw-failure");
+  const raw = el("details");
+  raw.append(el("summary", null, "Raw failure text"));
+  raw.append(el("pre", "moment-raw-failure-text", f.raw_failure_text
+    + (f.raw_failure_text_truncated ? "\n…[truncated]" : "")));
+  wrap.append(raw);
+  return wrap;
+}
+// Root-cause follow-up: a one-line lead-in clipped from a fallback_last_
+// nonempty fact's raw_failure_text (RecoveryEpisode.raw_failure_text — the
+// failure event's own text, unselected; fleet.js already shows the full
+// text under a "Raw failure text" disclosure for the same reason). Used only
+// when failure_diagnostic/error_signature are both the opaque fallback
+// tier's single, possibly-wrong line — this is the only detail left in that
+// case, so toolFailureIdentity falls back to it rather than showing nothing.
+// Clipped to its first line and a short length, mirroring agr.recovery's
+// own raw_failure_lead() (RAW_FAILURE_LEAD_LIMIT there == 160 here — keep
+// these two in sync) — a whole traceback quoted inline in a one-line summary
+// is unreadable, and the full text is still one click away via
+// rawFailureTextDetail below. The line split matches Python's str.
+// splitlines() separator set (not just "\n") so the SAME raw_failure_text
+// never picks a different first line here than it does server-side.
+const RAW_FAILURE_LEAD_LIMIT = 160;
+const _LINE_SPLIT = new RegExp("\\r\\n|[\\n\\r\\v\\f\\x1c\\x1d\\x1e\\x85\\u2028\\u2029]");
+function rawFailureLead(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const line = trimmed.split(_LINE_SPLIT)[0];
+  if (!line) return null;
+  return line.length <= RAW_FAILURE_LEAD_LIMIT ? line : line.slice(0, RAW_FAILURE_LEAD_LIMIT - 1) + "…";
+}
 // The (tool, diagnostic) identity of a state_transition fact — the same
 // identity agr.fleet groups recovery episodes by (item 32 follow-up) — or
-// null when the fact carries neither. `usable` is false for an opaque
-// fallback signature (no traceback, no recognised diagnostic marker: the
-// fleet view's "Unclassified" case), where showing the raw last-line text as
-// if it identified the failure would be misleading.
+// null when the fact carries neither. `diag` falls back to the fact's own
+// raw_failure_text for an opaque fallback signature (no traceback, no
+// recognised diagnostic marker: the fleet view's "Unclassified" case) —
+// showing the ONE line the mechanical selector fell back to as if it
+// identified the failure would be misleading, but the failure's own raw
+// text underneath it is still something a reader can root-cause from.
 function toolFailureIdentity(f) {
   if (!f || f.type !== "state_transition") return null;
   const diag = f.failure_diagnostic || f.error_signature;
   const usable = !!diag && f.error_signature_basis !== "fallback_last_nonempty";
-  return { tool: f.tool || null, diag: usable ? diag : null };
+  return { tool: f.tool || null, diag: usable ? diag : rawFailureLead(f.raw_failure_text) };
 }
 function situationText(m) { const f = (m.facts || [])[0] || {};
   if (f.type === "requirement_status") return "Requirement check " + f.check_id + " required " + fmtVal(f.expected) + ".";

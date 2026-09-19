@@ -432,6 +432,36 @@ def test_final_state_marks_an_undeclared_artifact_and_truncates_long_content():
     assert final["availability"]["filesystem"]["state"] == "unavailable"
 
 
+def test_moment_summary_falls_back_to_raw_failure_text_for_a_fallback_signature():
+    """Root-cause follow-up: failure_diagnostic/error_signature are both just
+    the one line the opaque fallback tier picked and are dropped as unusable
+    — the old summary read as a bare "tool call failed" with nothing a reader
+    could root-cause from. raw_failure_text (carried onto the candidate's
+    structured fact by the detector) gives it something left to fall back to,
+    clipped to its own first line."""
+    candidate = {"structured_facts": [{
+        "type": "state_transition", "tool": "http_client",
+        "error_signature": "For more information check: https:/<PATH>",
+        "error_signature_basis": "fallback_last_nonempty",
+        "failure_diagnostic": "For more information check: https://api.example.com/errors/Status/400",
+        "raw_failure_text": "Something went wrong.\nFor more information check: "
+                             "https://api.example.com/errors/Status/400",
+    }]}
+    assert read._moment_summary(candidate) == (
+        "http_client failed: Something went wrong., left unresolved before submission")
+
+
+def test_moment_summary_still_bare_with_no_raw_failure_text_at_all():
+    """A pre-0.11 persisted episode carries no raw_failure_text — the summary
+    falls all the way back to the old bare wording, not a crash or a literal
+    "None" rendered inline."""
+    candidate = {"structured_facts": [{
+        "type": "state_transition", "tool": "http_client",
+        "error_signature_basis": "fallback_last_nonempty",
+    }]}
+    assert read._moment_summary(candidate) == "http_client call failed, left unresolved before submission"
+
+
 # --- guided view: phases + key moments -------------------------------------
 
 

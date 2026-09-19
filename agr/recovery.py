@@ -432,6 +432,34 @@ _TURN_EVENT_TYPES = ("model_output", "tool_call")
 # (raw_failure_text_truncated), never silently cut.
 _RAW_FAILURE_TEXT_LIMIT = 2000
 
+# Root-cause follow-up (agr.reviewer.render / agr.read._moment_summary): both
+# fall back to a one-line clip of raw_failure_text when error_signature/
+# failure_diagnostic are the opaque fallback tier's single, possibly-wrong
+# line and are dropped as unusable. The clip itself lives HERE, once, so the
+# two callers can never drift out of byte-for-byte agreement with each other
+# (they previously carried their own copies) — only the diag_usable GATE
+# itself stays duplicated across those two modules, deliberately, per their
+# own comments; moments.js mirrors this function client-side for the same
+# reason it mirrors that gate.
+RAW_FAILURE_LEAD_LIMIT = 160
+
+
+def raw_failure_lead(raw: Optional[str]) -> Optional[str]:
+    """A one-line lead-in from ``raw``: its first line, clipped short. Takes
+    the first line only — a whole traceback quoted inline in a one-line
+    summary/card headline is unreadable — and the full text is still
+    available verbatim via the fact's own ``raw_failure_text`` field.
+    """
+    if not raw:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    line = stripped.splitlines()[0]
+    if not line:
+        return None
+    return line if len(line) <= RAW_FAILURE_LEAD_LIMIT else line[:RAW_FAILURE_LEAD_LIMIT - 1] + "…"
+
 
 def _window_turn_coverage(events: list[DerivedEvent], start_idx: int, end_idx: int) -> tuple[int, int]:
     """(covered, total) turns among the tool_call events in [start_idx, end_idx].

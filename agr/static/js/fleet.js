@@ -378,6 +378,14 @@ function renderFleetExecutionQuality(matrix) {
     });
     toggleCell.append(toggleBtn);
     tr.append(toggleCell, td(label));
+    // Same fix as the Patterns table's own fleet-row (18fa429): the whole
+    // row opens the detail, not just the 26px toggle button. Guarded so the
+    // toggle button's own click does not bubble up here and toggle a SECOND
+    // time; keyboard access stays on the button alone.
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".eq-toggle-btn")) return;
+      detail.open = !detail.open;
+    });
     tr.append(eqCoverageCell(matrix, key));
     for (const [outcome] of EQ_OUTCOMES) {
       const metric = (((byOutcome[outcome] || {}).dimensions || {})[key]) || {};

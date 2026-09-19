@@ -40,7 +40,7 @@ from typing import Optional, Protocol
 from . import version
 from ._util import action_signature, is_mutation, is_tool_failure, paired_result, structured_input
 from .execution_quality import generation_token_counts, generation_wall_ms
-from .recovery import GOOD_RECOVERY, UNRECOVERED
+from .recovery import GOOD_RECOVERY, UNRECOVERED, raw_failure_lead
 from .schema import (
     ATTRIBUTION_LEVELS,
     Candidate,
@@ -729,8 +729,23 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
         tool = fact.get("tool")
         diag = fact.get("failure_diagnostic") or fact.get("error_signature")
         diag_usable = diag and fact.get("error_signature_basis") != "fallback_last_nonempty"
-        lead = (f"{tool} failed: {diag}" if (tool and diag_usable)
-                else f"The {tool} call failed" if tool else "A tool call failed")
+        if tool and diag_usable:
+            lead = f"{tool} failed: {diag}"
+        else:
+            # Root-cause follow-up: the opaque fallback signature is dropped
+            # above, but the failure's own raw_failure_text (RecoveryEpisode.
+            # raw_failure_text, threaded through by the detector) is still
+            # something to root-cause from — use it before falling all the
+            # way back to a bare "call failed" with no detail at all.
+            raw_lead = raw_failure_lead(fact.get("raw_failure_text"))
+            if tool and raw_lead:
+                lead = f"{tool} failed: {raw_lead}"
+            elif raw_lead:
+                lead = f"A tool call failed: {raw_lead}"
+            elif tool:
+                lead = f"The {tool} call failed"
+            else:
+                lead = "A tool call failed"
         if fact.get("resolution_event"):
             return f"{lead}, then recovered via a strategy change before submission."
         if observation_scope:

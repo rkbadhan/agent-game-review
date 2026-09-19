@@ -395,3 +395,50 @@ def test_raw_failure_text_truncates_long_text_with_an_explicit_flag():
     assert len(ep.raw_failure_text) == _RAW_FAILURE_TEXT_LIMIT
     assert ep.raw_failure_text == long_text[:_RAW_FAILURE_TEXT_LIMIT]
     assert ep.raw_failure_text_truncated is True
+
+
+# --- raw_failure_lead: the one-line clip agr.read/agr.reviewer both fall ---
+# back to for an opaque fallback signature. Lives in agr.recovery, once, so
+# read.py and reviewer.py can never drift out of byte-for-byte agreement —
+# see the module-level comment beside it.
+
+
+def test_raw_failure_lead_takes_only_the_first_line():
+    from agr.recovery import raw_failure_lead
+
+    assert raw_failure_lead("Something went wrong.\nFor more information: ...") == "Something went wrong."
+
+
+def test_raw_failure_lead_clips_a_long_first_line():
+    from agr.recovery import RAW_FAILURE_LEAD_LIMIT, raw_failure_lead
+
+    line = "x" * (RAW_FAILURE_LEAD_LIMIT + 40)
+    lead = raw_failure_lead(line)
+    assert len(lead) == RAW_FAILURE_LEAD_LIMIT
+    assert lead == line[:RAW_FAILURE_LEAD_LIMIT - 1] + "…"
+
+
+def test_raw_failure_lead_strips_leading_whitespace_only_once():
+    from agr.recovery import raw_failure_lead
+
+    # A leading blank line must not become the "first line" once the string
+    # is stripped — the strip happens once, up front, before splitting.
+    assert raw_failure_lead("\n\n  Something went wrong.\nmore detail") == "Something went wrong."
+
+
+def test_raw_failure_lead_none_for_empty_or_whitespace_only_text():
+    from agr.recovery import raw_failure_lead
+
+    assert raw_failure_lead(None) is None
+    assert raw_failure_lead("") is None
+    assert raw_failure_lead("   \n  \n  ") is None
+
+
+def test_raw_failure_lead_splits_on_the_same_separators_as_str_splitlines():
+    """Parity check for moments.js's own rawFailureLead: every separator
+    str.splitlines() recognises must end the lead the same way a plain "\\n"
+    split would — this is the set moments.js's _LINE_SPLIT regex mirrors."""
+    from agr.recovery import raw_failure_lead
+
+    for sep in ("\r\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "):
+        assert raw_failure_lead(f"first{sep}second") == "first", repr(sep)

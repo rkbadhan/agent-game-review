@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from agr import fleet
+from agr import fleet, read
 from agr.pipeline import analyze
 from agr.store import Store
 
@@ -597,3 +597,115 @@ def test_fleet_usage_summary_reports_partial_episode_count(tmp_path):
     d = summary.to_dict()
     assert d["usage_availability"] == "partial"
     assert "only part of their window instrumented" in d["usage_note"]
+
+
+# --- load-time / caching: the fleet endpoints share one on-disk pass --------
+#
+# Before this cache, fleet_episodes()/fleet_usage_summary() each ran their OWN
+# loop over every run's recoveries.json, and fleet_execution_quality() its own
+# loop calling execution_quality_record() per run — an O(runs) disk-read-and-
+# parse cost paid fresh on EVERY fleet request, even though read.list_runs()
+# itself was already cached (PR #82). The Patterns page's own 2-4 fleet
+# requests (a group-by change plus the usage-summary and execution-quality
+# cards loading alongside it) previously each re-paid that cost independently.
+
+
+def _count_derived_reads(monkeypatch, name):
+    """Patch Store.read_derived to count only reads of ``name``."""
+    calls = []
+    real_read = Store.read_derived
+
+    def counting(self, run_id, capture_id, read_name):
+        if read_name == name:
+            calls.append(1)
+        return real_read(self, run_id, capture_id, read_name)
+
+    monkeypatch.setattr(Store, "read_derived", counting)
+    return calls
+
+
+def test_load_all_episodes_reads_recoveries_once_across_two_calls(tmp_path, monkeypatch):
+    """The first call is a cold compute — it necessarily reads recoveries.json
+    once per run (plus whatever read.list_runs's OWN cached per-run summary
+    already reads, unrelated to this cache). The SECOND call must be a pure
+    cache hit: no additional reads at all."""
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    calls = _count_derived_reads(monkeypatch, "recoveries.json")
+    first = fleet._load_all_episodes(store)
+    after_first = len(calls)
+    assert after_first > 0
+    second = fleet._load_all_episodes(store)
+    assert first == second
+    assert len(calls) == after_first
+
+
+def test_fleet_episodes_and_usage_summary_share_the_cached_episode_pass(tmp_path, monkeypatch):
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    fleet.fleet_episodes(store)  # warms the shared cache
+    calls = _count_derived_reads(monkeypatch, "recoveries.json")
+    fleet.fleet_usage_summary(store)
+    # Before this cache, fleet_usage_summary() ran its OWN independent loop
+    # over every run's recoveries.json — reusing fleet_episodes()'s already-
+    # warm cache means it reads nothing further here at all.
+    assert len(calls) == 0
+
+
+def test_load_all_episodes_cache_invalidates_on_a_new_ingest(tmp_path):
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    assert len(fleet._load_all_episodes(store)) == 1
+    with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
+        analyze(json.load(fh), store)
+    assert len(fleet._load_all_episodes(store)) == 2
+
+
+def _count_execution_quality_records(monkeypatch):
+    calls = []
+    real_record = fleet.execution_quality_record
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real_record(*args, **kwargs)
+
+    monkeypatch.setattr(fleet, "execution_quality_record", counting)
+    return calls
+
+
+def test_load_all_execution_quality_reads_once_across_two_calls(tmp_path, monkeypatch):
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    calls = _count_execution_quality_records(monkeypatch)
+    first = fleet._load_all_execution_quality(store)
+    second = fleet._load_all_execution_quality(store)
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_fleet_execution_quality_uses_the_cached_pass_across_two_calls(tmp_path, monkeypatch):
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    calls = _count_execution_quality_records(monkeypatch)
+    fleet.fleet_execution_quality(store)
+    fleet.fleet_execution_quality(store)
+    assert len(calls) == 1
+
+
+def test_load_all_execution_quality_cache_invalidates_on_a_new_ingest(tmp_path):
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    assert len(fleet._load_all_execution_quality(store)) == 1
+    with open(os.path.join(FIXTURES, "tool_failure_recovery.atif.json"), encoding="utf-8") as fh:
+        analyze(json.load(fh), store)
+    assert len(fleet._load_all_execution_quality(store)) == 2
+
+
+def test_load_all_execution_quality_carries_its_own_outcome_bucket(tmp_path):
+    """The outcome bucket travels in the SAME tuple as the record it labels,
+    computed from the SAME read.list_runs() row in the SAME pass — not
+    looked back up afterwards against a separately-cached read.list_runs()
+    call, which could (only under a concurrent external writer) disagree
+    with the snapshot the record itself came from."""
+    from agr.queue import outcome_bucket
+
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    (run_id, task_id, label, record) = fleet._load_all_execution_quality(store)[0]
+    run = next(r for r in read.list_runs(store) if r["run_id"] == run_id)
+    assert task_id == run.get("task_id")
+    assert label == outcome_bucket((run.get("outcome") or {}).get("status"))
+    assert record  # the execution-quality record itself is still there
