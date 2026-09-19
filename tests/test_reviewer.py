@@ -389,6 +389,23 @@ def test_review_moments_persist_and_are_deterministic_only(tmp_path, load_fixtur
     assert m.gate_results["better_action"] == "not_available_deterministic"
 
 
+def test_unresolved_failure_falls_back_to_raw_failure_text_for_a_fallback_signature(tmp_path, load_fixture):
+    """Root-cause follow-up: failure_diagnostic/error_signature are both just
+    the one line the opaque fallback_last_nonempty tier picked, and render()
+    drops them as unusable — the rendered card used to read as a bare "The
+    http_client call failed" with no detail a reader could root-cause from.
+    RecoveryEpisode.raw_failure_text, threaded through by the detector, gives
+    it something left to fall back to."""
+    a = analyze(load_fixture("unclassified_tool_failure.atif.json"), Store(str(tmp_path / "store")))
+    moments = [m for m in a.review_moments if m.detector == "ignored_tool_failure"]
+    assert moments
+    m = moments[0]
+    fact = next(f for f in m.validated_facts if f["type"] == "state_transition")
+    assert fact["error_signature_basis"] == "fallback_last_nonempty"
+    assert "http_client failed: Something went wrong." in m.rendered_statement
+    assert "https://api.example.com" not in m.rendered_statement  # clipped to the raw text's first line
+
+
 def test_clean_pass_selects_no_negative_card(tmp_path, load_fixture):
     a = analyze(load_fixture("clean_pass.atif.json"), Store(str(tmp_path / "store")))
     assert not [m for m in a.review_moments if m.selected and m.polarity == "negative"]

@@ -656,6 +656,15 @@
   .mc-block.interp { background:var(--violet-soft); } .mc-block.interp .mc-label, .mc-block.interp .mc-text { color:var(--violet); }
   .mc-block.hypo { background:var(--moss-soft); } .mc-block.hypo .mc-label, .mc-block.hypo .mc-text { color:var(--moss); }
   .mc-block.absent .mc-text { color:var(--muted); font-style:italic; }
+  /* Root-cause follow-up: the failure's own raw text, collapsed under the
+     Situation line — same treatment as fleet.js's .fleet-example-raw. */
+  .moment-raw-failure { margin:-4px 0 12px; }
+  .moment-raw-failure summary { display:block; cursor:pointer; color:var(--muted); font-size:11px;
+    font-weight:650; text-decoration:underline; text-underline-offset:2px; list-style:none; }
+  .moment-raw-failure summary::-webkit-details-marker { display:none; }
+  .moment-raw-failure-text { margin:6px 0 0; padding:10px; background:var(--canvas-deep);
+    border-radius:6px; font-size:11px; line-height:1.5; max-height:240px; overflow:auto;
+    white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ink); }
   /* T1: Eval lesson attached to its recommending moment card, collapsed by default */
   .moment-lesson { margin:0 22px 16px; padding-top:14px; border-top:1px solid var(--line); }
   .moment-lesson > summary { cursor:pointer; color:var(--amber); font-size:11px; font-weight:700;
@@ -959,6 +968,8 @@
 
   /* Execution-quality matrix: same expandable-row treatment, its own class
      names so it never collides with the Patterns table's selectors. */
+  .eq-row { cursor:pointer; }
+  .eq-row:hover { background:var(--navy-soft); }
   .eq-table th:first-child, .eq-table td.eq-toggle { width:26px; padding-right:0; }
   .eq-toggle-btn { border:0; background:transparent; color:var(--muted); font-size:10px; cursor:pointer;
     padding:4px 6px; border-radius:5px; }

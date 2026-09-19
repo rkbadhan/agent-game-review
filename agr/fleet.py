@@ -10,6 +10,9 @@ or inferred about the episodes themselves — only aggregated and sorted.
 
 from __future__ import annotations
 
+import threading
+import time
+import weakref
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional
@@ -304,6 +307,65 @@ class EpisodeGroup:
         }
 
 
+# Load-time follow-up: read.list_runs() is cached (PR #82), but the
+# per-run store.read_derived(..., "recoveries.json") reads that fleet_
+# episodes() and fleet_usage_summary() each did in their OWN loop were not —
+# every one of Patterns' 2-4 fleet requests (a group-by change plus the
+# usage-summary and execution-quality cards that load alongside it) re-read
+# and re-parsed EVERY run's recoveries.json from disk, on every request, an
+# O(runs) cost paid repeatedly for the same on-disk data. Cached here once,
+# the same way as list_runs itself: per Store instance (a WeakKeyDictionary,
+# not id(store) — a plain int id can be recycled by a later, unrelated Store
+# once an earlier one is garbage-collected), invalidated the instant this
+# process writes anything (Store._write_seq), with a short TTL beneath that
+# as the only guard against a SEPARATE process (an `agr review`/ingest CLI
+# run) writing to the same on-disk store while `agr serve` is up.
+_EPISODES_CACHE_TTL_S = 3.0
+_episodes_cache: "weakref.WeakKeyDictionary[Store, tuple[int, float, list[dict]]]" = (
+    weakref.WeakKeyDictionary()
+)
+_episodes_cache_lock = threading.Lock()
+
+
+def _load_all_episodes(store: Store) -> list[dict]:
+    """Every persisted recovery episode across every run, each carrying its
+    own ``run_id``/``source_capture_id`` — the single on-disk pass every
+    fleet endpoint needs, regardless of ``--group-by``. Callers get a fresh
+    ``list`` on every call, but the same row ``dict`` objects; nothing here
+    mutates a row in place after building it, so sharing them across callers
+    (and across fleet_episodes/fleet_usage_summary) is safe — same convention
+    as read.list_runs's own cache.
+    """
+    with _episodes_cache_lock:
+        now = time.monotonic()
+        cached = _episodes_cache.get(store)
+        if cached is not None:
+            write_seq, computed_at, all_eps = cached
+            if write_seq == store._write_seq and (now - computed_at) < _EPISODES_CACHE_TTL_S:
+                return list(all_eps)
+        # Captured BEFORE the compute below, not after — see read.list_runs's
+        # own cache for why: a write landing while this is mid-walk must
+        # force a recompute on the very next call, not be served stale for
+        # the rest of the TTL.
+        seq_before = store._write_seq
+        all_eps = _load_all_episodes_uncached(store)
+        _episodes_cache[store] = (seq_before, now, all_eps)
+        return list(all_eps)
+
+
+def _load_all_episodes_uncached(store: Store) -> list[dict]:
+    all_eps: list[dict] = []
+    for r in read.list_runs(store):
+        run_id = r["run_id"]
+        capture_id = r.get("capture_id")
+        if not capture_id or not store.has_derived(run_id, capture_id, "recoveries.json"):
+            continue
+        episodes = store.read_derived(run_id, capture_id, "recoveries.json") or []
+        for ep in episodes:
+            all_eps.append({**ep, "run_id": run_id, "source_capture_id": capture_id})
+    return all_eps
+
+
 def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[EpisodeGroup]:
     """Group every run's persisted recovery episodes by ``group_by``
     (default: tool + error_signature together), ordered so the most
@@ -321,15 +383,9 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
         for r in runs
     }
     buckets: dict[tuple, list[dict]] = {}
-    for r in runs:
-        run_id = r["run_id"]
-        capture_id = r.get("capture_id")
-        if not capture_id or not store.has_derived(run_id, capture_id, "recoveries.json"):
-            continue
-        episodes = store.read_derived(run_id, capture_id, "recoveries.json") or []
-        for ep in episodes:
-            key = tuple(ep.get(d) for d in dims)
-            buckets.setdefault(key, []).append({**ep, "run_id": run_id, "source_capture_id": capture_id})
+    for ep in _load_all_episodes(store):
+        key = tuple(ep.get(d) for d in dims)
+        buckets.setdefault(key, []).append(ep)
 
     groups: list[EpisodeGroup] = []
     for key, eps in buckets.items():
@@ -486,21 +542,12 @@ class FleetUsageSummary:
 def fleet_usage_summary(store: Store) -> FleetUsageSummary:
     """The whole-fleet usage headline, independent of any --group-by choice.
 
-    Reads every run's persisted episodes directly (not via :func:`fleet_
-    episodes`, which only ever sees one grouping's buckets) so the union is
-    computed across the COMPLETE episode list once, not reassembled from
-    per-group unions that could themselves double-count a shared event.
+    Reads every run's persisted episodes via the same cached pass as
+    :func:`fleet_episodes` (never reassembled from per-group unions, which
+    could double-count a shared event) so the union is computed across the
+    COMPLETE episode list once.
     """
-    runs = read.list_runs(store)
-    all_eps: list[dict] = []
-    for r in runs:
-        run_id = r["run_id"]
-        capture_id = r.get("capture_id")
-        if not capture_id or not store.has_derived(run_id, capture_id, "recoveries.json"):
-            continue
-        episodes = store.read_derived(run_id, capture_id, "recoveries.json") or []
-        for ep in episodes:
-            all_eps.append({**ep, "run_id": run_id})
+    all_eps = _load_all_episodes(store)
     total_tokens, overlapping = _usage_union(all_eps)
     return FleetUsageSummary(
         total_tokens=total_tokens,
@@ -535,6 +582,52 @@ def _anchor_events(record: dict, detector: str) -> list[str]:
     return []
 
 
+# Load-time follow-up: the same O(runs) cost as _load_all_episodes above,
+# for execution_quality_record()'s own per-run has_derived/read_derived pair
+# (or, for a pre-migration capture, its full events.json-derived fallback) —
+# paid fresh on every /fleet/execution-quality request without this cache.
+#
+# The outcome bucket is computed and cached HERE, in the same pass and from
+# the SAME read.list_runs() row the record itself came from, rather than
+# fleet_execution_quality() looking each run back up in a separately-cached
+# read.list_runs() call afterwards — two independently-TTL'd caches could
+# otherwise (rarely, only under a concurrent external writer) disagree on
+# which runs exist for one request's duration, transiently misbucketing a
+# run under an outcome it no longer has by the time the second cache is read.
+_EXECUTION_QUALITY_CACHE_TTL_S = 3.0
+_execution_quality_cache: "weakref.WeakKeyDictionary[Store, tuple[int, float, list[tuple]]]" = (
+    weakref.WeakKeyDictionary()
+)
+_execution_quality_cache_lock = threading.Lock()
+
+
+def _load_all_execution_quality(store: Store) -> list[tuple[str, Optional[str], str, dict]]:
+    """Every run's ``(run_id, task_id, outcome_bucket, execution-quality
+    record)``, cached the same way as :func:`_load_all_episodes`."""
+    with _execution_quality_cache_lock:
+        now = time.monotonic()
+        cached = _execution_quality_cache.get(store)
+        if cached is not None:
+            write_seq, computed_at, records = cached
+            if write_seq == store._write_seq and (now - computed_at) < _EXECUTION_QUALITY_CACHE_TTL_S:
+                return list(records)
+        seq_before = store._write_seq
+        records = _load_all_execution_quality_uncached(store)
+        _execution_quality_cache[store] = (seq_before, now, records)
+        return list(records)
+
+
+def _load_all_execution_quality_uncached(store: Store) -> list[tuple[str, Optional[str], str, dict]]:
+    records: list[tuple[str, Optional[str], str, dict]] = []
+    for run in read.list_runs(store):
+        run_id, capture_id = run["run_id"], run.get("capture_id")
+        if not capture_id:
+            continue
+        label = outcome_bucket((run.get("outcome") or {}).get("status"))
+        records.append((run_id, run.get("task_id"), label, execution_quality_record(store, run_id, capture_id)))
+    return records
+
+
 def fleet_execution_quality(store: Store) -> dict:
     """Execution issue incidence by outcome, using evaluated runs only.
 
@@ -563,15 +656,8 @@ def fleet_execution_quality(store: Store) -> dict:
     groups: dict[str, list[tuple[str, str | None, dict]]] = {
         bucket: [] for bucket in OUTCOME_BUCKETS
     }
-    for run in read.list_runs(store):
-        label = outcome_bucket((run.get("outcome") or {}).get("status"))
-        run_id, capture_id = run["run_id"], run.get("capture_id")
-        if not capture_id:
-            continue
-        groups[label].append((
-            run_id, run.get("task_id"),
-            execution_quality_record(store, run_id, capture_id),
-        ))
+    for run_id, task_id, label, record in _load_all_execution_quality(store):
+        groups[label].append((run_id, task_id, record))
     # Distinct tasks, tracked per dimension ACROSS outcome buckets: a task with
     # both a passing and a failing run must not be counted twice. Runs measure
     # how often something was observed; tasks measure how far it spread (§12.1).

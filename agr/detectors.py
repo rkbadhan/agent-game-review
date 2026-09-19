@@ -336,6 +336,17 @@ class IgnoredToolFailure(Detector):
                     "tool": ep.tool, "error_signature": ep.error_signature,
                     "error_signature_basis": ep.error_signature_basis,
                     "failure_diagnostic": ep.failure_diagnostic,
+                    # Root-cause follow-up: failure_diagnostic/error_signature
+                    # are both just the ONE line _select_diagnostic picked —
+                    # for a fallback_last_nonempty episode (no recognised
+                    # marker anywhere) that line is dropped as unusable
+                    # (see agr.reviewer.render / agr.read._moment_summary's
+                    # own diag_usable gate) and the card had nowhere left to
+                    # go but a bare "tool call failed". Carry the episode's
+                    # own raw_failure_text through so those callers have
+                    # something left to fall back to instead of nothing.
+                    "raw_failure_text": ep.raw_failure_text,
+                    "raw_failure_text_truncated": ep.raw_failure_text_truncated,
                 }],
             ))
         return out
@@ -488,6 +499,10 @@ class SuccessfulRecoveryViaStrategyChange(Detector):
                     "tool": ep.tool, "error_signature": ep.error_signature,
                     "error_signature_basis": ep.error_signature_basis,
                     "failure_diagnostic": ep.failure_diagnostic,
+                    # See IgnoredToolFailure's own comment above — the same
+                    # fallback dead end applies to a RECOVERED episode's card.
+                    "raw_failure_text": ep.raw_failure_text,
+                    "raw_failure_text_truncated": ep.raw_failure_text_truncated,
                 }],
             ))
         return out

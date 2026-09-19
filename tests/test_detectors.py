@@ -39,6 +39,22 @@ def test_published_moments_carry_their_limits(tmp_path, load_fixture):
     assert any("Not linked to a verifier check" in limit for limit in moments[0].limits)
 
 
+def test_ignored_tool_failure_carries_raw_failure_text_for_a_fallback_signature(tmp_path, load_fixture):
+    """Root-cause follow-up: failure_diagnostic/error_signature are both just
+    the one line the opaque fallback tier picked — the candidate's structured
+    fact also carries raw_failure_text (RecoveryEpisode.raw_failure_text)
+    so a downstream renderer has something left to fall back to instead of a
+    bare "tool call failed" with no detail at all."""
+    a = _analyze(tmp_path, load_fixture, "unclassified_tool_failure.atif.json")
+    fact = _by_name(a)["ignored_tool_failure"].candidates[0].structured_facts[0]
+    assert fact["error_signature_basis"] == "fallback_last_nonempty"
+    assert fact["raw_failure_text"] == (
+        "Something went wrong.\nFor more information check: "
+        "https://api.example.com/errors/Status/400"
+    )
+    assert fact["raw_failure_text_truncated"] is False
+
+
 def test_ignored_tool_failure_silent_when_recovered(tmp_path, load_fixture):
     a = _analyze(tmp_path, load_fixture, "tool_failure_recovery.atif.json")
     assert _by_name(a)["ignored_tool_failure"].candidates == []
