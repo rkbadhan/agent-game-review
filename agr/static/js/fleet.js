@@ -277,8 +277,10 @@ const EQ_OUTCOMES = [
   ["unverified", "Unverified runs (no verifier evidence)"],
 ];
 
-function eqRunRow(runId, eventIds, note) {
+function eqRunRow(runId, eventIds, note, violations) {
   const row = el("div", "vs-pair eq-example-row");
+  const severity = eqRunSeverity(violations);
+  if (severity) row.dataset.severity = severity;
   const { task } = runIdParts(runId);
   const first = (eventIds || [])[0] || null;
   const b = el("button", "eq-example-link", task);
@@ -300,6 +302,51 @@ function eqRunRow(runId, eventIds, note) {
   return row;
 }
 
+// Bucketed the same coarse way patternSeverity() weighs a pattern's cost
+// (~line 555) — a handful of tiers separates "one stray violation" from
+// "this run is a real outlier" without over-fitting an exact count. Only
+// affected runs carry a violation count; healthy/unevaluated rows pass
+// `undefined` and get no stripe.
+function eqRunSeverity(violations) {
+  if (!violations) return null;
+  if (violations >= 5) return "high";
+  if (violations >= 2) return "medium";
+  return "low";
+}
+
+// Same class of bug as the Patterns table before it was paged (7cb9599): a
+// run list here can span the WHOLE store — every run falls into exactly one
+// outcome bucket, so expanding any dimension row rendered every run in the
+// store as flat DOM rows, regardless of which dimension was opened. Unlike
+// Patterns, the full list is already sitting in memory from the one
+// /fleet/execution-quality fetch, so "load more" needs no extra request —
+// it is just revealing the next slice of `items` already held.
+const EQ_RUNS_PAGE = 30;
+function eqRunList(items, buildRow) {
+  const wrap = el("div", "vs-pairs eq-examples");
+  // moreWrap is appended UNCONDITIONALLY, before the first row goes in —
+  // showMore() always inserts new rows via wrap.insertBefore(row, moreWrap),
+  // and insertBefore's reference node must already be a child of wrap or it
+  // throws. Appending it only when items.length > EQ_RUNS_PAGE (deciding
+  // that ahead of the first showMore() call) would leave it detached for
+  // every list short enough to fit on one page — the common case — and
+  // break every one of them.
+  const moreWrap = el("div", "eq-load-more");
+  const moreBtn = el("button", "seg", "");
+  moreWrap.append(moreBtn);
+  wrap.append(moreWrap);
+  let shown = 0;
+  function showMore() {
+    for (const item of items.slice(shown, shown + EQ_RUNS_PAGE)) wrap.insertBefore(buildRow(item), moreWrap);
+    shown = Math.min(shown + EQ_RUNS_PAGE, items.length);
+    if (shown >= items.length) moreWrap.remove();
+    else moreBtn.textContent = "Show more (" + (items.length - shown) + " of " + items.length + " remaining)";
+  }
+  moreBtn.addEventListener("click", showMore);
+  showMore();
+  return wrap;
+}
+
 // The list of unevaluated runs, collapsed under one heading per missing-
 // capability set. The heading carries the "why" once; each run is then just
 // its task name, short id, and an opening link.
@@ -312,7 +359,7 @@ function eqUnevaluatedList(unevaluated) {
     head.append(el("span", "vs-counts", g.runIds.length
       + (g.runIds.length === 1 ? " run" : " runs")));
     list.append(head);
-    for (const runId of g.runIds) list.append(eqRunRow(runId, null, null));
+    list.append(eqRunList(g.runIds, (runId) => eqRunRow(runId, null, null)));
   }
   return list;
 }
@@ -348,12 +395,18 @@ function eqDetail(byOutcome, key) {
       v.append(el("span", "vs-counts", "no runs"));
     } else {
       if (affected.length || healthyIds.length) {
-        const list = el("div", "vs-pairs eq-examples");
-        for (const a of affected)
-          list.append(eqRunRow(a.run_id, a.event_ids, a.violations + " violation(s)"));
-        for (const runId of healthyIds)
-          list.append(eqRunRow(runId, null, "evaluated, no violation"));
-        v.append(list);
+        // Worst offenders first — the old flat list gave a run with a dozen
+        // violations the same visual weight as one with a single stray hit,
+        // and nothing sorted the list to put either one where a reader would
+        // see it first.
+        const items = [
+          ...affected.map(a => ({ kind: "affected", run_id: a.run_id, event_ids: a.event_ids, violations: a.violations })),
+          ...healthyIds.map(runId => ({ kind: "healthy", run_id: runId })),
+        ];
+        items.sort((x, y) => (y.violations || 0) - (x.violations || 0));
+        v.append(eqRunList(items, (item) => item.kind === "affected"
+          ? eqRunRow(item.run_id, item.event_ids, item.violations + " violation(s)", item.violations)
+          : eqRunRow(item.run_id, null, "evaluated, no violation")));
       }
       if (unevaluated.length) v.append(eqUnevaluatedList(unevaluated));
     }

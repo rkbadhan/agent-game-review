@@ -12,6 +12,72 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Fixed
 
+- **Runs page (`?view=runs`): no pagination, a stuck outcome-filter toggle,
+  and a blocking "More filters" popover.** A UX audit found three defects:
+  1. `renderRunsTable` (runs.js) rendered every run in the filtered set as a
+     DOM row unconditionally — 1,629 `<tr>`s (1,628 runs + header) on first
+     paint for a real store, zero pagination anywhere. Same class of bug as
+     the Patterns table and the execution-quality drilldown before those were
+     paged — now a client-side "Show more" pager (50 at a time; `runs` is
+     already fully in memory, so no extra request).
+  2. Clicking an outcome filter chip a second time (to undo it), or clicking
+     a different chip right after, could leave the chip and the table stuck —
+     confirmed root cause via a real-browser test that forces the exact race
+     (network delay via an async route handler, not a blocking sleep, which
+     understated the bug on a first attempt): `_fchip`/`_signalFilterOption`
+     (inbox.js) captured `state.filters.has(key)` into a closure ONCE when
+     the button was built, not read fresh at click time. `onChange` fires an
+     async `/queue` reload, and the chip only gets its next on/off class from
+     the render that eventually follows it — a second click on that SAME
+     button before that response lands (any real network latency, or just a
+     fast second click) re-ran the SAME branch (add, add) instead of
+     toggling (add, remove), so the filter never cleared and the chip never
+     visibly changed. Fixed by reading `state.filters.has(key)` inside the
+     handler. Separately hardened `loadInbox()` with a `state.queueLoadToken`
+     guard (the same pattern as `selectRun`'s `state.loadToken`) so an
+     out-of-order `/queue` response — a genuinely different hazard from the
+     closure bug, both reproducible — can no longer clobber a newer one.
+  3. The "More filters" popover (a native `<details>`) had no outside-click
+     dismiss — only Escape or its own summary closed it — and sat
+     absolute-positioned over the table underneath
+     (`.runs-controls-row .more-filter-panel`), blocking clicks on the rows
+     it covered. Extended the outside-click-dismiss handler the view-bar
+     popovers already use (keyboard.js) to cover `.more-filters` everywhere
+     it appears (the sidebar and the Runs page both build it).
+
+  Review follow-up: pagination (1) introduced its own regression in the
+  existing "return to the Runs table" restore — opening a run past the first
+  page, then coming back (typically via Back, which restores `state.runId`
+  without going through the "Runs" nav button's reset), re-rendered only the
+  first page, so the previously-open run's row was neither present (no
+  `.active` highlight) nor tall enough for the saved `state.runsScroll` to
+  land anywhere meaningful. `renderRunsTable` now reveals at least as far as
+  that run's position, and at least as many rows as were on screen when it
+  was opened (a new `state.runsShown`, saved alongside `state.runsScroll`) —
+  both no-ops on an ordinary fresh visit, verified against a synthetic
+  1,700-run store (open run #800, browser Back, confirm the row and its
+  highlight render and the scroll offset restores) and against the
+  no-over-reveal case (the "Runs" nav button's reset still shows a plain
+  first page).
+
+  The flagged-but-unconfirmed "Cost/Duration sort look identical" observation
+  checked out as not a bug: `queue.py`'s `_sort_key` correctly ranks an
+  uncaptured cost/duration as unavailable rather than tying it with a genuine
+  zero — in a corpus where most/all runs never captured either value, both
+  sorts degenerate to the same run-id fallback order, which is what was seen.
+- **Execution-quality drill-down no longer dumps the whole store into the DOM.**
+  Expanding any dimension row (Context bloat, Slow generation, Redundant work)
+  rendered every run in the store as flat rows — since every run falls into
+  exactly one outcome bucket, a store of 1,628 runs meant 1,628 DOM rows on
+  ANY dimension, with no pagination, sort, or visual distinction between a run
+  with one violation and one with a dozen — the same class of bug as the
+  Patterns table before it was paged (`7cb9599`) and given a severity stripe
+  (`2306049`). `eqRunList()` now pages each run list client-side (30 at a
+  time, via a "Show more" button — the full list is already in memory from
+  the one `/fleet/execution-quality` fetch, so this needs no extra request),
+  and affected runs are sorted worst-first (most violations) with a
+  rust/amber/moss severity stripe on each row, mirroring the Patterns table's
+  own signal.
 - **Execution quality in Patterns** — the fleet card silently dropped every run
   ingested before `execution_quality.json` existed and every run whose outcome
   was not PASSED/FAILED, so a whole store read "Not evaluated / No results".

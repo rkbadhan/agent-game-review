@@ -74,10 +74,17 @@ function statusClass(s) { s = (s||"").toUpperCase();
   return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED")?"undetermined":"failed"; }
 
 async function loadInbox() {
+  // UX audit finding #2: capture the token before the request so a NEWER
+  // loadInbox() call (a second filter click, a sort change, a "Show all
+  // runs" reset) started while this one is still in flight can supersede it.
+  // See state.queueLoadToken's comment (state.js) for what this prevents.
+  const token = ++state.queueLoadToken;
   const params = new URLSearchParams();
   for (const f of state.filters) params.append("filter", f);
   params.set("sort", state.sort);
-  [state.sweep, state.queue] = await Promise.all([api("/sweep"), api("/queue?" + params.toString())]);
+  const [sweep, queue] = await Promise.all([api("/sweep"), api("/queue?" + params.toString())]);
+  if (token !== state.queueLoadToken) return;  // superseded by a newer load
+  state.sweep = sweep; state.queue = queue;
   renderSweep(); renderQueueControls(); renderRunList(); syncUrl();
   track("queue_view_created", { queue_view_id: state.queue.queue_view_id, sort: state.sort,
     filters: [...state.filters], count: (state.queue.run_ids || []).length });
@@ -120,9 +127,22 @@ function _fchip(key, label, onChange) {
   c.setAttribute("aria-pressed", on ? "true" : "false");
   c.dataset.filter = key;
   if (FILTER_TIPS[key]) c.title = FILTER_TIPS[key];
-  c.addEventListener("click", () => { on ? state.filters.delete(key) : state.filters.add(key);
+  // UX audit finding #2: re-read state.filters INSIDE the handler rather
+  // than closing over the `on` computed when this button was built. onChange
+  // triggers an async /queue reload (loadInbox) and the chip only gets its
+  // next "on"/"off" class from the render that eventually follows it — a
+  // second click on this SAME button before that response lands (a slow
+  // /queue query, or just a fast second click) would otherwise still see the
+  // stale pre-click `on`, so two quick clicks both ran the "add" branch
+  // instead of "add, then remove": the filter never toggled off, and the
+  // chip visibly never changed either, which is exactly the "chip stays on,
+  // nothing happens" symptom this closes.
+  c.addEventListener("click", () => {
+    const currentlyOn = state.filters.has(key);
+    currentlyOn ? state.filters.delete(key) : state.filters.add(key);
     track("queue_filter_changed", { kind: key, filters: [...state.filters] });
-    onChange(); });
+    onChange();
+  });
   return c;
 }
 function _signalFilterOption(key, label, onChange) {
@@ -137,8 +157,11 @@ function _signalFilterOption(key, label, onChange) {
   copy.append(el("strong", null, label));
   copy.append(el("span", null, MORE_FILTER_DESCRIPTIONS[key]));
   option.append(mark, copy);
+  // Same stale-closure fix as _fchip above — re-read state.filters at click
+  // time rather than the `on` this option was built with.
   option.addEventListener("click", () => {
-    on ? state.filters.delete(key) : state.filters.add(key);
+    const currentlyOn = state.filters.has(key);
+    currentlyOn ? state.filters.delete(key) : state.filters.add(key);
     track("queue_filter_changed", { kind: key, filters: [...state.filters] });
     onChange();
   });

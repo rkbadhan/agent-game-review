@@ -36,6 +36,21 @@ document.addEventListener("click", e => {
     if (!d.contains(e.target)) d.removeAttribute("open");
   });
 });
+// UX audit finding #3: the Runs "More filters" popover (inbox.js's
+// buildFilterChipsRow, used by both the sidebar and the Runs page) had the
+// same missing outside-click dismiss as the view-bar popovers above — but
+// wasn't covered by that handler, which is scoped to `.review-nav` and this
+// popover lives in the filter row instead (two places: the sidebar's
+// #queue-controls and the Runs page's .runs-controls-row). Left open, it sits
+// absolute-positioned OVER the table beneath it (app.css's
+// `.runs-controls-row .more-filter-panel`), which then blocks clicks on the
+// rows underneath — closing it here, the same way, means a reader dismisses
+// it with the same click that would otherwise land on a blocked row.
+document.addEventListener("click", e => {
+  document.querySelectorAll("details.more-filters[open]").forEach(d => {
+    if (!d.contains(e.target)) d.removeAttribute("open");
+  });
+});
 // "Runs" (U1): the global triage workspace, distinct from a run's investigation
 // shell — full width, no evidence panel (render.js's isWorkspaceView), reached
 // from the app bar regardless of what was open before.

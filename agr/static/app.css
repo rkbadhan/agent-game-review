@@ -304,6 +304,11 @@
   .runs-table.has-duration.has-cost th:nth-child(4), .runs-table.has-duration.has-cost td:nth-child(4) { width:13%; }
   .runs-table.has-duration.has-cost th:nth-child(5), .runs-table.has-duration.has-cost td:nth-child(5),
   .runs-table.has-duration.has-cost th:nth-child(6), .runs-table.has-duration.has-cost td:nth-child(6) { width:8%; }
+  /* Same client-side pager as the execution-quality drilldown's
+     .eq-load-more (fleet.js's eqRunList) — a full-width row instead of a
+     nested block since this list is table rows, not vs-pairs. */
+  .runs-load-more-row td { padding:12px 14px; text-align:center; }
+  .runs-load-more-row .seg { border-color:var(--line); }
   .runs-row { cursor:pointer; transition:background .12s, box-shadow .12s; }
   .runs-row:hover { background:var(--navy-soft); box-shadow:inset 3px 0 0 var(--navy); }
   .runs-row.active { background:var(--navy-soft); }
@@ -1034,6 +1039,16 @@
   .eq-example-link { color:var(--rust); font:600 11.5px var(--mono); }
   .eq-example-id { color:var(--faint); }
   .eq-not-evaluated { cursor:help; }
+  /* Same severity signal as the Patterns table's row stripe (fleet-row
+     [data-severity]) — a run with several violations otherwise renders with
+     the same visual weight as one with a single stray hit. */
+  .eq-example-row[data-severity="high"] { border-left:3px solid var(--rust); padding-left:7px; }
+  .eq-example-row[data-severity="medium"] { border-left:3px solid var(--amber); padding-left:7px; }
+  .eq-example-row[data-severity="low"] { border-left:3px solid var(--moss); padding-left:7px; }
+  /* Same client-side pager as the Patterns table's "Load more" (7cb9599),
+     scaled down for this nested, already-compact detail area. */
+  .eq-load-more { padding-top:5px; }
+  .eq-load-more .seg { font-size:10.5px; padding:4px 10px; border-color:var(--line); }
   /* Execution-quality Coverage column: the denominator behind every score, so
      "0% of 8" and "nobody could be measured" never read the same. */
   .eq-coverage { width:24%; min-width:170px; }
