@@ -267,3 +267,50 @@ def test_single_line_diagnostic_basis_is_not_fallback():
 def test_empty_input_basis_is_fallback():
     _, basis = error_signature_with_basis("")
     assert basis == "fallback_last_nonempty"
+
+
+# --- tool-/API-boundary markers (Patterns screenshot review: every group ----
+# from one of these was landing in the "Unclassified tool failures" bucket
+# because nothing matched any line of it, so the whole group selected via
+# the opaque fallback tier on every episode).
+
+def test_read_tool_token_limit_message_is_a_recognised_diagnostic():
+    raw = ("File content (81920 tokens) exceeds maximum allowed tokens (25000). "
+           "Use offset and limit parameters to read specific portions of the "
+           "file, or search for specific content instead of reading the whole file.")
+    sig, basis = error_signature_with_basis(raw)
+    assert basis == "diagnostic_line"
+    assert "exceeds maximum allowed" in sig
+
+
+def test_read_tool_size_limit_message_is_a_recognised_diagnostic():
+    raw = "File content (270KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file."
+    _, basis = error_signature_with_basis(raw)
+    assert basis == "diagnostic_line"
+
+
+def test_api_rate_limit_line_wins_over_a_trailing_doc_link():
+    """The real complaint usually leads and a 'see the docs' link trails it —
+    without a marker for 'rate limit', the trailing link (the only thing
+    left after nothing else qualifies) would be picked by the fallback tier
+    instead of the actual diagnostic on line one."""
+    raw = ("API rate limit exceeded for installation 123.\n"
+           "For more information check: https://docs.github.com/rest")
+    sig, basis = error_signature_with_basis(raw)
+    assert basis == "diagnostic_line"
+    assert "rate limit" in sig
+    assert "docs.github.com" not in sig
+
+
+def test_http_reason_phrase_from_an_mcp_tool_is_recognised():
+    raw = "Forbidden: the authenticated user cannot access this resource"
+    _, basis = error_signature_with_basis(raw)
+    assert basis == "diagnostic_line"
+
+
+def test_session_expiry_line_wins_over_a_trailing_hint():
+    raw = ("Session cookie has expired.\n"
+           "Call kibana_update_cookie with the fresh value — no restart needed.")
+    sig, basis = error_signature_with_basis(raw)
+    assert basis == "diagnostic_line"
+    assert "expired" in sig

@@ -27,24 +27,39 @@ function renderFleetSurface(main) {
   renderEvidencePanel();
 }
 
-async function loadFleetEpisodes() {
+// No pagination on the store side — fleet_episodes() ranks EVERY group
+// before anything can be sliced, so the page boundary is drawn here, over
+// the already-ranked list the server hands back one page at a time.
+const FLEET_PAGE_SIZE = 25;
+
+async function loadFleetEpisodes(opts) {
   const fl = state.fleet;
+  const append = !!(opts && opts.append);
   // U3: capture the token AND the groupBy this fetch is actually for. Two
   // grouping changes in quick succession both land here; only the token
   // bumped by the SECOND call is still current when its response arrives, so
-  // the first one's `await` resolving later must not overwrite fl.episodes
-  // with data for a grouping the reader has already switched away from.
+  // an earlier one's `await` resolving later must not overwrite fl.episodes
+  // with data for a grouping (or page) the reader has already moved past.
   const token = ++fl.loadToken;
   const groupBy = fl.groupBy;
-  fl.pending = true; fl.error = null;
+  const offset = append ? fl.episodes.length : 0;
+  if (append) fl.loadingMore = true; else { fl.pending = true; fl.episodes = null; }
+  fl.error = null;
   try {
-    const episodes = await api("/fleet/episodes?group_by=" + encodeURIComponent(groupBy));
-    if (token !== fl.loadToken) return;  // superseded by a newer grouping change
-    fl.episodes = episodes;
+    const url = "/fleet/episodes?group_by=" + encodeURIComponent(groupBy)
+      + "&limit=" + FLEET_PAGE_SIZE + "&offset=" + offset;
+    const r = await fetch(url, { headers: { accept: "application/json" } });
+    if (!r.ok) { const e = new Error(url + " -> " + r.status); e.status = r.status; throw e; }
+    const page = await r.json();
+    if (token !== fl.loadToken) return;  // superseded by a newer grouping change or page
+    const totalHeader = r.headers.get("X-Total-Count");
+    fl.total = totalHeader != null ? Number(totalHeader) : page.length;
+    fl.episodes = append ? fl.episodes.concat(page) : page;
+    fl.hasMore = fl.episodes.length < fl.total;
   } catch (e) {
     if (token === fl.loadToken) fl.error = e.message || "failed to load";
   } finally {
-    if (token === fl.loadToken) fl.pending = false;
+    if (token === fl.loadToken) { fl.pending = false; fl.loadingMore = false; }
   }
 }
 
@@ -413,6 +428,7 @@ function renderFleetGroupByCard(fl) {
     chip.addEventListener("click", () => {
       if (fl.groupBy === val) return;
       fl.groupBy = val; fl.episodes = null; fl.error = null;
+      fl.total = null; fl.hasMore = false;
       // U3: start the fetch for the NEW grouping right here rather than
       // leaving renderFleet to notice fl.episodes is null — if an earlier
       // grouping's fetch is still in flight, waiting for "the pending fetch"
@@ -477,7 +493,7 @@ async function renderFleet(main) {
   }
   if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
   if (!fl.argumentShapes && !fl.argumentShapesPending) await loadFleetArgumentShapes();
-  wrap.append(renderFleetTable(fl.episodes));
+  wrap.append(renderFleetTable(fl));
 }
 
 // Item 5/6: a pattern's title is derived from its diagnostic error text
@@ -486,17 +502,73 @@ async function renderFleet(main) {
 // common cause. A group where EVERY episode selected its signature via the
 // opaque fallback tier (agr.fleet.EpisodeGroup.all_fallback_basis — no
 // traceback, no recognised diagnostic marker anywhere, e.g. bare "---") is
-// labelled "Unclassified tool failures" instead; its raw fallback text is
-// preserved and shown, just not presented as an established common cause.
+// flagged as unclassified instead of presenting the raw text as an
+// established common cause.
+//
+// Follow-up: the boilerplate "Unclassified tool failures" phrase used to
+// BE the entire bold title for every weak-signature group on a tool — two
+// genuinely different fallback failures on the same tool (e.g. Read's
+// "file does not exist" vs "file content exceeds max tokens") rendered as
+// identical headlines, with the only differentiator pushed down into the
+// small gray "raw:" caption underneath. That degrades scannability instead
+// of just being vague, so the title now carries a short excerpt of the
+// actual fallback text (quoted, to mark it as raw/unconfirmed rather than
+// an extracted diagnostic) — the "weak signature" meta line
+// (evidence_strength, rendered just below) still carries the "this is not
+// an established diagnostic" signal, so nothing is lost by dropping the
+// generic phrase.
 function patternTitle(g) {
   const toolIdx = g.group_by.indexOf("tool");
   const sigIdx = g.group_by.indexOf("error_signature");
   const tool = toolIdx >= 0 ? g.key[toolIdx] : null;
   const sig = sigIdx >= 0 ? g.key[sigIdx] : null;
-  if (g.all_fallback_basis && sig)
-    return { title: "Unclassified tool failures" + (tool ? " · " + tool : ""), raw: sig, unclassified: true };
+  if (g.all_fallback_basis && sig) {
+    const excerpt = "“" + truncateText(sig, 60) + "”";
+    return { title: (tool ? tool + " — " : "") + excerpt, raw: sig, unclassified: true };
+  }
   const parts = g.key.filter(Boolean);
   return { title: parts.join(" — ") || "(none)", raw: null, unclassified: false };
+}
+
+// Triage color review: the ONLY color in this table was on the recovery-
+// breakdown caption (confirmed/plausible/unrecovered) — it answers "did this
+// resolve", never "should I care". A 1-episode typo and a 380-episode,
+// multi-million-token unresolved pattern rendered with near-identical visual
+// weight. This computes a row-level severity band — unrecovered_share × cost
+// — independent of `recurring`: a group's row gets the stripe/wash below,
+// while its title/meta separately fade when `recurring` is false (applied in
+// renderFleetTable). The two signals are deliberately orthogonal: a one-off
+// that burned real tokens before anyone caught it (Read's token-limit groups
+// are a common one) still needs to pop even though its title recedes.
+//
+// cost is bucketed (not used continuous) because raw token counts span
+// several orders of magnitude across a real fleet — a handful of coarse
+// buckets is enough to separate "noise" from "this is where the waste is"
+// without over-fitting the exact number. attempt_tokens_total is preferred
+// over total_tokens (the same "trustworthy cost of this bug" figure the
+// detail panel uses) since total_tokens can absorb an unrecovered episode's
+// later, unrelated turns. When usage was never instrumented for this group
+// (usage_availability === "unavailable" — the common case for a store with
+// no usage telemetry at all) cost is simply unknown, not zero: severity
+// falls back to unrecovered_share and recurrence alone rather than reading
+// as "cheap".
+function costWeight(g) {
+  if (g.usage_availability === "unavailable") return null;
+  const tokens = g.attempt_tokens_total || g.total_tokens || 0;
+  if (tokens >= 1000000) return 3;
+  if (tokens >= 250000) return 2;
+  if (tokens >= 50000) return 1;
+  return 0;
+}
+function patternSeverity(g) {
+  const share = g.unrecovered_share || 0;
+  if (share <= 0) return "none";
+  const weight = costWeight(g);
+  if (weight == null) return share >= 0.5 && g.recurring ? "medium" : "low";
+  const score = share * weight;
+  if (score >= 2) return "high";
+  if (score >= 1) return "medium";
+  return "low";
 }
 
 // Item 6: compact rows — Pattern · Affected runs · Episodes · Recovery ·
@@ -504,9 +576,13 @@ function patternTitle(g) {
 // wall time, argument shapes, and representative episodes move into a
 // per-row expandable detail area (a <details> in a full-width second row) so
 // opening examples for one pattern never reflows or crowds the other rows.
-function renderFleetTable(groups) {
+function renderFleetTable(fl) {
+  const groups = fl.episodes;
   const card = el("div", "card card-pad");
-  card.append(el("p", "eyebrow", groups.length + " pattern(s)"));
+  const countLabel = fl.total != null && fl.total !== groups.length
+    ? groups.length + " of " + fl.total + " pattern(s)"
+    : groups.length + " pattern(s)";
+  card.append(el("p", "eyebrow", countLabel));
   card.append(el("p", "chapter-lede",
     "Ranked to lead with recurring behaviours: recurring before one-off, then "
     + "reach (distinct tasks, then runs), evidence strength, and measured tokens. "
@@ -518,6 +594,9 @@ function renderFleetTable(groups) {
     const title = patternTitle(g);
     const detail = el("details", "fleet-detail");
     const tr = el("tr", "fleet-row" + (title.unclassified ? " unclassified" : ""));
+
+    tr.dataset.severity = patternSeverity(g);
+    tr.dataset.recurring = g.recurring ? "true" : "false";
 
     const detailRow = el("tr", "fleet-detail-row");
     const toggleCell = el("td", "fleet-toggle");
@@ -566,10 +645,10 @@ function renderFleetTable(groups) {
 
     // §12.1: a run count without its task count cannot show whether a pattern
     // spans many tasks or repeats within a few.
-    const runsCell = td(String(g.runs));
+    const runsCell = td(String(g.runs), "fleet-num");
     if (g.tasks != null) runsCell.append(el("div", "vs-counts", g.tasks + (g.tasks === 1 ? " task" : " tasks")));
     tr.append(runsCell);
-    tr.append(td(String(g.count)));
+    tr.append(td(String(g.count), "fleet-num"));
     tr.append(resolutionBreakdownCell(g));
 
     // AGR-05/06 (review 82cc113): a group whose episodes NEVER had usage
@@ -579,7 +658,11 @@ function renderFleetTable(groups) {
     let tokensText = fmtCompact(g.total_tokens);
     if (g.usage_availability === "unavailable") tokensText = "unavailable";
     else if (g.usage_availability === "partial") tokensText += " (partial)";
-    const tokensCell = td(tokensText);
+    const tokensCell = el("td");
+    // Its own class so a high-severity ROW's cost figure stays fully legible
+    // even when the surrounding row is faded for being one-off (below) — a
+    // single expensive occurrence is exactly the case the fade must not hide.
+    tokensCell.append(el("span", "fleet-tokens-figure", tokensText));
     if (g.overlapping_usage_events || g.usage_unavailable_count) tokensCell.title = g.usage_note;
     // The blended total_tokens figure includes an unrecovered episode's
     // window all the way to the end of its run — attempt_tokens_total is
@@ -628,6 +711,18 @@ function renderFleetTable(groups) {
   const scroll = el("div", "table-scroll");
   scroll.append(t);
   card.append(scroll);
+  if (fl.hasMore) {
+    const more = el("div", "fleet-load-more");
+    const btn = el("button", "seg", fl.loadingMore ? "Loading…" : "Load more patterns");
+    btn.disabled = fl.loadingMore;
+    btn.addEventListener("click", () => {
+      if (fl.loadingMore) return;
+      loadFleetEpisodes({ append: true }).then(render);
+      render();
+    });
+    more.append(btn);
+    card.append(more);
+  }
   return card;
 }
 

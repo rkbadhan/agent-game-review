@@ -47,8 +47,14 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
   // U3: `loadToken` guards a grouping change the same way run.js's does for a
   // run switch — an episodes fetch started for a groupBy the reader has since
   // changed away from must not land on top of the newer choice.
+  // `total`/`hasMore` back the "Load more" pager: total is the server's full
+  // group count (X-Total-Count), independent of how many pages have been
+  // fetched into `episodes` so far. `loadingMore` is distinct from `pending`
+  // so an in-flight next-page fetch shows "Loading…" on the button itself
+  // rather than blanking the rows already on screen.
   fleet: { groupBy: "tool,error_signature", episodes: null, pending: false,
-    error: null, loadToken: 0, usageSummary: null, executionQuality: null } };
+    error: null, loadToken: 0, usageSummary: null, executionQuality: null,
+    total: null, hasMore: false, loadingMore: false } };
 
 // --- §4.1 shareable review location -----------------------------------------
 //   The exact review position lives in the query string, so a reviewer can share

@@ -94,6 +94,18 @@ _DIAGNOSTIC_MARKERS = (
     "Permission denied",
     "syntax error near unexpected token",
     "is not recognized as an internal or external command",
+    # Tool- and API-boundary errors, which don't follow Python's Exception-
+    # naming convention or any of the shell wording above — without these,
+    # a group where EVERY episode is one of these (a size-limited Read call,
+    # an MCP tool's HTTP error) selects via the opaque fallback tier on
+    # every episode and the whole group renders as "Unclassified tool
+    # failures" instead of a real, groupable signature. Each is the literal
+    # wording the respective tool/API actually returns, not a guess at what
+    # the error means.
+    "exceeds maximum allowed",  # Read: file too large / too many tokens
+    "rate limit",                # GitHub/REST APIs' own rate-limit wording
+    "Unauthorized", "Forbidden", "Not Found",  # HTTP reason phrases MCP tools relay verbatim
+    "expired",                   # session/token/cookie expiry
 )
 
 # A Python exception class name by convention ends in Error/Exception/Warning
