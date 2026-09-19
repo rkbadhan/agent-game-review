@@ -24,11 +24,24 @@ const state = { runId: null, view: "review", chapter: "moments", forensic: null,
   // newly selected finding shows its own source without extra clicks.
   evidenceFocus: null,
   sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "RK", dispOpen: false,
+  // UX audit finding #2: bumped on every loadInbox() call, the same way F4's
+  // state.loadToken guards a run selection — a filter/sort change (or the
+  // initial boot load) starting a NEW /queue fetch while an earlier one is
+  // still in flight must not let that earlier, now-stale response land on
+  // top of it. Without this, whichever request happened to resolve LAST won
+  // the final state.queue regardless of which click was actually last, which
+  // could pair a since-cleared filter with a stale filtered (possibly
+  // 0-row) result — a state that looks stuck rather than merely slow, since
+  // nothing about it self-corrects until some other render is triggered.
+  queueLoadToken: 0,
   // U2 Runs workspace: the search box's live text, and the reading position on
   // that surface — restored when a run is opened and then left again ("Back to
   // review" / the "Runs" nav button), rather than dropping the reader back at
-  // the top of a freshly rendered table.
-  runsSearch: "", runsScroll: 0,
+  // the top of a freshly rendered table. runsShown is the pagination-follow-up
+  // half of that restore (runs.js): how many rows were actually on screen
+  // when the run was opened, so a return can reveal enough of the paged
+  // table for runsScroll to land somewhere meaningful again.
+  runsSearch: "", runsScroll: 0, runsShown: 0,
   compare: null, sibling: null, traceOpen: false, traceStep: null,
   // §4.3.5 fast/deep entry preference — where each run opens, remembered per
   // browser like the panel widths. Default is Overview: a first-time reader

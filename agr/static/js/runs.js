@@ -8,6 +8,7 @@
 //   disagree between the two surfaces. Search is client-side over that
 //   already-loaded page, since the full run list is already in memory and a
 //   round trip per keystroke would only add latency.
+const RUNS_PAGE = 50;
 function runsMatchesSearch(r, q) {
   const needle = (q || "").trim().toLowerCase();
   if (!needle) return true;
@@ -171,7 +172,13 @@ function renderRunsTable(host) {
   if (showDuration) headers.push("Duration");
   if (showCost) headers.push("Cost");
   t.append(rowEls("tr", headers, "th"));
-  for (const r of runs) {
+
+  // Declared before runsRow so its `open()` (below) closes over the LIVE
+  // value — read fresh at click time, not the 0 this had when runsRow was
+  // defined — and can save how many rows were actually on screen.
+  let shown = 0;
+
+  function runsRow(r) {
     const tr = el("tr", "runs-row" + (r.run_id === state.runId ? " active" : ""));
     tr.tabIndex = 0;
     tr.setAttribute("role", "link");
@@ -214,13 +221,57 @@ function renderRunsTable(host) {
     if (showDuration) tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate"));
     if (showCost) tr.append(td(fmtCost(r.cost) || "—", "vs-rate"));
 
-    const open = () => { state.runsScroll = $("#main").scrollTop; selectRun(r.run_id); };
+    // U2 follow-up: `shown` is saved alongside the scroll offset so a return
+    // to this table (below) can restore ENOUGH rows for that offset to mean
+    // anything, not just the scroll number itself.
+    const open = () => { state.runsScroll = $("#main").scrollTop; state.runsShown = shown; selectRun(r.run_id); };
     tr.addEventListener("click", open);
     tr.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
     });
-    t.append(tr);
+    return tr;
   }
+
+  // UX audit finding #1: this table had no pagination anywhere — every run in
+  // the (filtered) set rendered as a DOM row unconditionally, so an unfiltered
+  // 1,628-run store meant 1,628 <tr>s on first paint. Same client-side pager
+  // as the execution-quality drilldown's eqRunList() (fleet.js) — `runs` is
+  // already fully in memory (client-side search is the only filtering that
+  // happens here; outcome/status filtering is server-side via /queue), so
+  // revealing more needs no extra request, just the next slice.
+  const moreRow = el("tr", "runs-load-more-row");
+  const moreCell = el("td"); moreCell.colSpan = headers.length;
+  const moreBtn = el("button", "seg", "");
+  moreCell.append(moreBtn);
+  moreRow.append(moreCell);
+  t.append(moreRow);
+  function showMore(count) {
+    const take = count || RUNS_PAGE;
+    for (const r of runs.slice(shown, shown + take)) t.insertBefore(runsRow(r), moreRow);
+    shown = Math.min(shown + take, runs.length);
+    if (shown >= runs.length) moreRow.remove();
+    else moreBtn.textContent = "Show more (" + (runs.length - shown) + " of " + runs.length + " remaining)";
+  }
+  // The click listener must not forward its MouseEvent as `count` — showMore
+  // treats any truthy argument as a row count, and an Event object there
+  // would corrupt the slice.
+  moreBtn.addEventListener("click", () => showMore());
+  // U2 follow-up (review of this PR): returning to this table — via Back,
+  // which restores state.runId without going through the "Runs" nav
+  // button's reset (goToRuns(), keyboard.js) — restores state.runsScroll
+  // AND the previously-open run's `.active` highlight. Neither means
+  // anything if that run's row is still behind an unrevealed page: with a
+  // flat RUNS_PAGE-row first reveal, opening run #800 out of 1,628 and
+  // coming back would clamp the saved scroll to the bottom of a
+  // much-shorter page-1 table, and #800's row (not among the first 50)
+  // would never show its highlight either. Reveal at least as far as that
+  // run's own position, and at least as many rows as were on screen when it
+  // was opened (state.runsShown) — both fall back to 0/-1 for an ordinary
+  // fresh visit, so this never over-reveals when nothing needs restoring.
+  const activeIdx = state.runId ? runs.findIndex(r => r.run_id === state.runId) : -1;
+  const restoreFloor = activeIdx >= 0 ? Math.max(activeIdx + 1, state.runsShown || 0) : 0;
+  showMore(Math.max(RUNS_PAGE, restoreFloor));
+
   scroll.append(t);
   card.append(scroll);
   host.append(card);
