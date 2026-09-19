@@ -930,7 +930,10 @@
   .outcome-split .outcome-pass { color:var(--moss); }
   .outcome-caveat { margin:5px 0 0; color:var(--muted); font-size:11px; line-height:1.4;
     border-left:2px solid var(--line); padding-left:8px; max-width:56ch; }
+  .fleet-row { cursor:pointer; }
+  .fleet-row:hover { background:var(--navy-soft); }
   .fleet-row.unclassified { background:color-mix(in srgb,var(--canvas-deep) 55%,transparent); }
+  .fleet-row.unclassified:hover { background:color-mix(in srgb,var(--navy-soft) 70%,var(--canvas-deep) 55%); }
   .fleet-detail-row > td { border-bottom:0; padding:0; }
   .fleet-detail-row.open > td { border-bottom:1px solid var(--line); }
   .fleet-detail { width:100%; }
@@ -946,6 +949,13 @@
   .fleet-example-limits-label { display:block; color:var(--faint); font-size:9px; font-weight:760;
     letter-spacing:.07em; text-transform:uppercase; }
   .fleet-example-limits ul { margin:3px 0 0; padding-left:16px; }
+  .fleet-example-raw { margin:3px 0 7px 10px; }
+  .fleet-example-raw summary { display:block; cursor:pointer; color:var(--muted); font-size:10px;
+    font-weight:650; text-decoration:underline; text-underline-offset:2px; list-style:none; }
+  .fleet-example-raw summary::-webkit-details-marker { display:none; }
+  .fleet-example-raw-text { margin:5px 0 0; padding:8px; background:var(--canvas-deep);
+    border-radius:6px; font-size:10.5px; line-height:1.5; max-height:220px; overflow:auto;
+    white-space:pre-wrap; overflow-wrap:anywhere; color:var(--ink); }
 
   /* Execution-quality matrix: same expandable-row treatment, its own class
      names so it never collides with the Patterns table's selectors. */

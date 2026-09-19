@@ -528,6 +528,18 @@ function renderFleetTable(groups) {
     });
     toggleCell.append(toggleBtn);
     tr.append(toggleCell);
+    // The whole row is clickable, not just the 26px-wide toggle button — a
+    // mouse user's click anywhere on the row (the pattern title, the numeric
+    // columns) opens the detail. The button click already handles this
+    // itself; without the guard below, that click would bubble up here and
+    // toggle a SECOND time, undoing itself. Keyboard access stays on the
+    // button alone (its own tabindex/aria-expanded) — the row is not given
+    // its own tabindex/role, which would nest one interactive control (the
+    // button) inside another (the row) and confuse a screen reader.
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".fleet-toggle-btn")) return;
+      detail.open = !detail.open;
+    });
 
     const patternCell = el("td", "fleet-pattern");
     patternCell.append(el("div", "fleet-pattern-title" + (title.unclassified ? " unclassified" : ""), title.title));
@@ -676,6 +688,21 @@ function representativeEpisodesBlock(g) {
       for (const limit of a.limits) ul.append(el("li", null, limit));
       limits.append(ul);
       list.append(limits);
+    }
+    // The failure's own raw text — the fallback_last_nonempty tier admits it
+    // found no recognised diagnostic marker anywhere and picked one line as
+    // a last resort; the real diagnostic (an HTTP status, a response body)
+    // can be on a DIFFERENT line that line never captured. Collapsed by
+    // default (it can run to raw_failure_text_truncated's limit) so it never
+    // crowds the compact row list — but present for every episode, not only
+    // fallback ones, since a confident signature can still benefit from the
+    // surrounding context.
+    if (a.raw_failure_text) {
+      const raw = el("details", "fleet-example-raw");
+      raw.append(el("summary", null, "Raw failure text"));
+      raw.append(el("pre", "fleet-example-raw-text", a.raw_failure_text
+        + (a.raw_failure_text_truncated ? "\n…[truncated]" : "")));
+      list.append(raw);
     }
   }
   wrap.append(list);

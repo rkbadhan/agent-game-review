@@ -91,6 +91,17 @@ def test_representative_episodes_carry_their_evidence_limits(tmp_path):
     assert any("No resolution was observed" in limit for limit in anchor["limits"])
 
 
+def test_representative_episodes_carry_the_raw_failure_text(tmp_path):
+    """error_signature/limits alone can dead-end a reader on a
+    fallback_last_nonempty pattern — raw_failure_text carries the failure's
+    own text through to the drill-in so they have something to root-cause
+    from beyond the one line the mechanical selector fell back to."""
+    store = _store(tmp_path, "ignored_failure.atif.json")
+    anchor = fleet.fleet_episodes(store)[0].example_anchors[0]
+    assert anchor["raw_failure_text"] == "error: compilation failed (missing header)"
+    assert anchor["raw_failure_text_truncated"] is False
+
+
 def test_episode_limits_are_per_episode_not_shared():
     """Limits are derived from each episode's own fields, so two episodes in
     one group are limited differently when their evidence differs."""
@@ -108,6 +119,16 @@ def test_episode_limits_are_per_episode_not_shared():
     limits = episode_limits(plausible)
     assert any("plausible, not confirmed" in limit for limit in limits)
     assert any("never instrumented" in limit for limit in limits)
+    # Same-tool plausible link (e.g. a narrowed rerun): tool/resolved_by
+    # absent or equal, so no "different tool" limit is added.
+    assert not any("different tool" in limit for limit in limits)
+
+    # Claim 1: a cross-tool plausible link (tool != resolved_by) states that
+    # explicitly — it is even weaker evidence than a same-tool plausible
+    # link (not even a retry of the failed call), and the limits list says so.
+    cross_tool = {**plausible, "tool": "mcp__jira__search_issues", "resolved_by": "mcp__jira__get_issue"}
+    cross_limits = episode_limits(cross_tool)
+    assert any("different tool (mcp__jira__get_issue)" in limit for limit in cross_limits)
 
     retry = {**clean, "classification": "retry_succeeded_without_strategy_change"}
     assert any("retry, not a" in limit for limit in episode_limits(retry))

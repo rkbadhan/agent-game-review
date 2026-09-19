@@ -118,32 +118,80 @@ def _links_to_failed_operation(success_sig: tuple | None, failed_sig: tuple | No
     return _operation_key(success_sig) == _operation_key(failed_sig)
 
 
+def _tool_family(tool: Optional[str]) -> Optional[str]:
+    """The tool's namespace for cross-tool recovery linkage: the server
+    segment of an ``mcp__<server>__<name>`` tool name (e.g.
+    ``"mcp__jira__search_issues"`` -> ``"mcp__jira"``), or the tool's own
+    bare name when it carries no such namespace (so two identically-named
+    tools still compare equal, same as before this existed).
+
+    Deliberately narrow: two different specific tools in the SAME family are
+    still just two means of reaching the same underlying system (two Jira
+    MCP tools) — the only cross-tool pairing ``_plausible_operation_match``
+    below treats as potentially the same objective. A ``shell`` failure and
+    an unrelated ``mcp__jira__...`` success are different families and never
+    link; this never invents an equivalence between fundamentally different
+    tools that share no evidence of being the same underlying system.
+    """
+    if not tool:
+        return None
+    parts = tool.split("__")
+    if len(parts) >= 3 and parts[0] == "mcp":
+        return "__".join(parts[:2])
+    return tool
+
+
 def _plausible_operation_match(success_sig: tuple | None, failed_sig: tuple | None) -> bool:
-    """Item 4's WEAKER link: same tool, same executable, overlapping targets.
+    """Item 4's WEAKER link: overlapping targets, on the SAME tool or the
+    same MCP tool family.
 
     Tried only when the strict tier (:func:`_links_to_failed_operation`)
-    fails to find any exact rerun. Same tool and executable as the failed
-    call, and at least one shared non-flag token in the remainder of the
-    command — a narrowed rerun (``pytest tests/ -k fast`` after a failed
-    ``pytest tests/``) or an adjacent command on the same target
-    (``python -m compileall tests/`` after a failed ``python -m pytest
-    tests/``) both qualify. This is deliberately looser than R5's strict
-    identity and is never promoted to ``good_recovery`` / ``retry_succeeded_
-    without_strategy_change`` — the caller records it as ``plausibly_
-    resolved`` with a lowered attribution ceiling.
+    fails to find any exact rerun. This is deliberately looser than R5's
+    strict identity and is never promoted to ``good_recovery`` /
+    ``retry_succeeded_without_strategy_change`` — the caller records it as
+    ``plausibly_resolved`` with a lowered attribution ceiling, on both paths
+    below.
+
+    Same tool: the failed call's executable and at least one shared non-flag
+    token in the remainder of the command — a narrowed rerun (``pytest
+    tests/ -k fast`` after a failed ``pytest tests/``) or an adjacent
+    command on the same target (``python -m compileall tests/`` after a
+    failed ``python -m pytest tests/``) both qualify.
+
+    Different tool, same MCP family (:func:`_tool_family`) — e.g. a failed
+    ``mcp__jira__search_issues`` and a later successful
+    ``mcp__jira__get_issue`` naming the same issue key: a failure in one
+    Jira tool followed by success in a sibling Jira tool is real recovery
+    evidence a same-tool-only check would silently drop entirely. Neither
+    side's content is a shell command with a stable "executable" token
+    position to compare positionally (an MCP call's content is its
+    JSON-serialised arguments — see ``action_signature``), so this path
+    skips the executable check and requires target-token overlap alone,
+    reusing ``target_tokens``'s substring-containment style and
+    ``MIN_RELATED_TOKEN_LEN`` floor (the same one
+    ``is_state_changing_action_related_to`` uses) rather than exact-token
+    equality, since a value can land inside differently-punctuated JSON on
+    each side (``"key": "PROJ-123"`` vs ``"issueKey":"PROJ-123"}``).
     """
     if failed_sig is None or success_sig is None:
         return False
     tool_a, tool_b = failed_sig[0], success_sig[0]
-    if tool_a != tool_b:
+    if tool_a == tool_b:
+        tokens_a = str(failed_sig[1] or "").split()
+        tokens_b = str(success_sig[1] or "").split()
+        if not tokens_a or not tokens_b or tokens_a[0] != tokens_b[0]:
+            return False  # no executable, or a different one
+        targets_a = {t for t in tokens_a[1:] if not t.startswith("-")}
+        targets_b = {t for t in tokens_b[1:] if not t.startswith("-")}
+        return bool(targets_a & targets_b)
+    family_a, family_b = _tool_family(tool_a), _tool_family(tool_b)
+    if family_a is None or family_a != family_b:
         return False
-    tokens_a = str(failed_sig[1] or "").split()
-    tokens_b = str(success_sig[1] or "").split()
-    if not tokens_a or not tokens_b or tokens_a[0] != tokens_b[0]:
-        return False  # no executable, or a different one
-    targets_a = {t for t in tokens_a[1:] if not t.startswith("-")}
-    targets_b = {t for t in tokens_b[1:] if not t.startswith("-")}
-    return bool(targets_a & targets_b)
+    targets_a = target_tokens(failed_sig)
+    targets_b = target_tokens(success_sig)
+    if not targets_a or not targets_b:
+        return False
+    return any(a in b or b in a for a in targets_a for b in targets_b)
 
 
 # --- item 33 — expected-probe classification --------------------------------
@@ -377,6 +425,13 @@ def _tokens_from_cost(cost: dict) -> int:
 # one of those without assuming which single step actually carries it.
 _TURN_EVENT_TYPES = ("model_output", "tool_call")
 
+# Bound on RecoveryEpisode.raw_failure_text — large enough to carry an HTTP
+# response body or a short stack trace past whatever single line
+# _select_diagnostic happened to pick, small enough that a store with many
+# episodes does not balloon. Longer text is truncated with an explicit flag
+# (raw_failure_text_truncated), never silently cut.
+_RAW_FAILURE_TEXT_LIMIT = 2000
+
 
 def _window_turn_coverage(events: list[DerivedEvent], start_idx: int, end_idx: int) -> tuple[int, int]:
     """(covered, total) turns among the tool_call events in [start_idx, end_idx].
@@ -595,6 +650,22 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
             # this one.
             changed_action = last_same_op_call is not None and last_same_op_call != failed_sig
             classification = UNRECOVERED
+            # Deliberately still the run's own terminal event, not narrowed to
+            # the last same-objective retry or the next episode's own start
+            # (considered and rejected): an UNRECOVERED episode by definition
+            # never observes a resolution, so there is no non-arbitrary EARLIER
+            # point to call "where recovery was given up on" — the agent may
+            # keep trying via calls this conservative objective-identity check
+            # doesn't recognize as "the same objective" (see item 4's plausible
+            # tier above), and cutting the window at the last recognized retry
+            # would just as easily UNDER-count a real, still-ongoing attempt as
+            # it would stop over-counting an abandoned one. episode_window_
+            # tokens/turns_to_resolve keep this run-to-the-end window — and the
+            # honest label that comes with it (see EpisodeGroup.usage_note) —
+            # while attempt_tokens_total (the sum of each episode's own
+            # initiating_attempt_tokens, AGR item: Patterns load-time/accuracy
+            # pass) is the number attributable to the failure itself,
+            # unaffected by where this window ends.
             if stop_idx is not None:
                 window_end_idx = stop_idx  # the run's own observed terminal event
             else:
@@ -643,6 +714,12 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
         # Same input + same selection tiers as error_signature_with_basis, so
         # its own basis is not tracked separately — sig_basis already applies.
         diagnostic, _ = _compute_diagnostic_line_with_basis(failure_text)
+        # The raw failure text itself, not re-selected — see
+        # RecoveryEpisode.raw_failure_text for why sig/diagnostic (both just
+        # the ONE line _select_diagnostic picked) can be a dead end.
+        raw_failure_text = failure_text[:_RAW_FAILURE_TEXT_LIMIT] if failure_text else None
+        raw_failure_text_truncated = bool(
+            failure_text and len(failure_text) > _RAW_FAILURE_TEXT_LIMIT)
         # AGR-05: episode_window_tokens sums EVERY event strictly after the
         # failure result through window_end_idx (inclusive), by POSITION —
         # never the `evidence` list, which is built for display/traceability
@@ -716,6 +793,8 @@ def classify_recoveries(events: list[DerivedEvent], run_id: str, capture_id: str
                 error_signature=sig,
                 error_signature_basis=sig_basis,
                 failure_diagnostic=diagnostic,
+                raw_failure_text=raw_failure_text,
+                raw_failure_text_truncated=raw_failure_text_truncated,
                 turns_to_resolve=turns_to_resolve,
                 episode_window_tokens=episode_window_tokens,
                 initiating_attempt_tokens=initiating_attempt_tokens,
@@ -762,6 +841,10 @@ def episode_limits(ep: dict) -> list[str]:
                       "measured total undercounts.")
     if ep.get("attribution_ceiling") == "hypothesized":
         limits.append("The failure-to-resolution link is plausible, not confirmed.")
+        resolved_by = ep.get("resolved_by")
+        if resolved_by and resolved_by != ep.get("tool"):
+            limits.append(f"The plausible resolution came from a different tool "
+                          f"({resolved_by}), not a retry of the failed call itself.")
     classification = ep.get("classification")
     if classification == "retry_succeeded_without_strategy_change":
         limits.append("The retry succeeded without a strategy change — a retry, not a "

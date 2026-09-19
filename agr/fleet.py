@@ -348,6 +348,12 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
                 # evidence limits, so the drill-in never shows a confident
                 # classification without what it does not establish.
                 "limits": episode_limits(e),
+                # The failure's own raw text, not re-selected — lets a reader
+                # root-cause a fallback_last_nonempty pattern (no recognised
+                # diagnostic marker anywhere) instead of dead-ending on the
+                # one line the mechanical selector fell back to.
+                "raw_failure_text": e.get("raw_failure_text"),
+                "raw_failure_text_truncated": e.get("raw_failure_text_truncated", False),
             }
             for e in eps[:_MAX_ANCHORS]
         ]
