@@ -28,7 +28,7 @@ const CHANGE_LABELS = {
 function renderVersionsSurface(main) {
   const nav = el("div", "review-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Compare versions · §4.16"));
+  head.append(el("span", "eyebrow", "Compare versions · matched comparison across a task slice"));
   nav.append(head);
   const util = el("div", "review-util");
   const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");

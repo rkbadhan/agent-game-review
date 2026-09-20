@@ -350,7 +350,11 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         # headings now rather than one flat chip row. UNDETERMINED and
         # UNVERIFIED are separate chips, not one fused "Undetermined /
         # Unverified".
-        chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip")}
+        # Read the label span specifically, not the whole chip's inner_text —
+        # a chip with a non-zero match count now also carries a .fchip-count
+        # badge (the redesign's global per-chip counts), which would append
+        # its digits onto the label and break an exact-string comparison.
+        chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip-label")}
         assert {"Failed", "Passed", "Undetermined", "Unverified",
                 "Unreviewed", "In progress", "Handled"} <= chip_labels
         # Regression: at the default 1280px viewport the grouped chips used to
@@ -1257,7 +1261,10 @@ def test_review_position_is_shareable_in_the_url(server):
         assert other.query_selector("#trace-body .step.active").get_attribute("data-step-id") == "s7"
         assert other.query_selector("#trace-body .pane.lit").get_attribute("data-panel") == "artifact"
         assert _query(other.url)["moment"] == [moment_id]
-        assert other.query_selector(".fchip.on").inner_text() == "Failed"
+        # .fchip-label, not the chip's own inner_text — a non-zero match
+        # count now renders as a sibling .fchip-count badge (the redesign's
+        # per-chip counts), which inner_text would otherwise fold in.
+        assert other.query_selector(".fchip.on .fchip-label").inner_text() == "Failed"
 
         # A link to a run this store does not hold falls back to the queue rather
         # than stranding the reviewer on an empty workspace.

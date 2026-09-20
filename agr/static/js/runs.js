@@ -15,6 +15,34 @@ function runsMatchesSearch(r, q) {
   return (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
 }
 
+// Redesign follow-up: the page used to go straight from the eyebrow to the
+// controls with no orientation — a reader couldn't tell how big the corpus
+// was, or how much of it still needed review, without scrolling to the
+// table's own meta line below the fold. sweepIdentityText (inbox.js) is the
+// same computation the sidebar's own summary uses, so the sweep/finished-time
+// wording can never read differently on the two surfaces. `null` (not an
+// empty element) before state.sweep has loaded, so the caller can skip it
+// cleanly on that first render rather than showing an empty bar.
+function renderRunsStatLine() {
+  const s = state.sweep;
+  if (!s) return null;
+  const wrap = el("div", "runs-stat-line");
+  const total = s.total_runs ?? 0;
+  wrap.append(el("span", "runs-stat-count", total.toLocaleString() + (total === 1 ? " run" : " runs")));
+  const counts = state.queue && state.queue.filter_counts;
+  const unreviewed = counts ? counts.unreviewed : null;
+  if (unreviewed != null) {
+    wrap.append(el("span", "runs-stat-sep", "·"));
+    wrap.append(el("span", "runs-stat-unreviewed", unreviewed.toLocaleString() + " unreviewed"));
+  }
+  const { detail } = sweepIdentityText(s);
+  if (detail) {
+    wrap.append(el("span", "runs-stat-sep", "·"));
+    wrap.append(el("span", "runs-stat-detail", detail));
+  }
+  return wrap;
+}
+
 function renderRunsSurface(main) {
   const nav = el("div", "review-nav runs-page-nav");
   const head = el("div", "outline");
@@ -28,6 +56,9 @@ function renderRunsSurface(main) {
   }
   nav.append(util);
   main.append(nav);
+
+  const stat = renderRunsStatLine();
+  if (stat) main.append(stat);
 
   const controls = el("div", "runs-controls-row");
   renderRunsControls(controls);
