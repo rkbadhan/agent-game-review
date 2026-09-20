@@ -89,9 +89,10 @@ async function loadInbox() {
   track("queue_view_created", { queue_view_id: state.queue.queue_view_id, sort: state.sort,
     filters: [...state.filters], count: (state.queue.run_ids || []).length });
 }
-function renderSweep() {
-  const s = state.sweep, host = $("#sweep-summary"); host.textContent = "";
-  if (!s) return;
+// Shared by the sidebar's own summary (below) and the Runs page's stat line
+// (runs.js) — one place computing the sweep identity and its detail string,
+// so the two surfaces can never state it differently.
+function sweepIdentityText(s) {
   const hv = s.harness_versions || [];
   const harness = hv.length === 1 ? "Harness " + hv[0] : hv.length > 1 ? hv.length + " harnesses" : null;
   // The sweep identity, stated as honestly as the runs allow (§4.3.1): a real id
@@ -99,12 +100,18 @@ function renderSweep() {
   // the source declared none.
   const sweep = s.sweep_id === "mixed" ? (s.sweep_ids || []).length + " sweeps"
     : s.sweep_id && s.sweep_id !== "implicit" ? "Sweep " + s.sweep_id : "Implicit sweep";
+  const rel = relTime(s.latest_finished_at);
+  const detail = [sweep, harness].filter(Boolean).join(" · ") + (rel ? " · finished " + rel : "");
+  return { sweep, detail };
+}
+function renderSweep() {
+  const s = state.sweep, host = $("#sweep-summary"); host.textContent = "";
+  if (!s) return;
+  const { sweep, detail } = sweepIdentityText(s);
   const titleRow = el("div", "queue-title-row");
   titleRow.append(el("h2", null, "All runs"));
   titleRow.append(el("span", "count-pill", String(s.total_runs)));
   host.append(titleRow);
-  const rel = relTime(s.latest_finished_at);
-  const detail = [sweep, harness].filter(Boolean).join(" · ") + (rel ? " · finished " + rel : "");
   host.append(el("div", "sweep-name", detail));
   $("#crumb-sweep").textContent = sweep;
   const bo = s.by_outcome || {};
@@ -121,12 +128,28 @@ function renderSweep() {
 // Shared by the investigation sidebar's controls below and the U2 full-width
 // Runs table (runs.js) — one filter/sort definition so the two surfaces can
 // never silently disagree about what a chip or sort option means.
-function _fchip(key, label, onChange) {
+// `count`: this chip's global match count (queue.py's filter_counts — every
+// run in the store, independent of whichever OTHER filters are currently
+// active; see its own comment for why). `undefined` before the first /queue
+// response lands, never rendered then. A chip whose count is exactly 0 gets
+// the `empty` class (app.css fades it) — the whole point being that a reader
+// can tell "nothing here" apart from "1,628 runs here" without clicking
+// either one, which is exactly the click a real corpus with one dominant
+// bucket (e.g. everything UNVERIFIED) used to invite for no reason.
+function _fchip(key, label, onChange, count) {
   const on = state.filters.has(key);
-  const c = el("button", "fchip" + (on ? " on" : ""), label);
+  const c = el("button", "fchip" + (on ? " on" : "") + (count === 0 ? " empty" : ""));
+  c.append(el("span", "fchip-label", label));
+  // Only a non-zero count earns a badge — the .empty fade above already
+  // says "nothing here" on its own, and a row of five "0" badges next to
+  // the one chip that actually matters is exactly the clutter a compact
+  // control bar can't afford.
+  if (count) c.append(el("span", "fchip-count", count.toLocaleString()));
   c.setAttribute("aria-pressed", on ? "true" : "false");
   c.dataset.filter = key;
-  if (FILTER_TIPS[key]) c.title = FILTER_TIPS[key];
+  const tip = [FILTER_TIPS[key], count != null ? count.toLocaleString() + (count === 1 ? " run matches." : " runs match.") : null]
+    .filter(Boolean).join(" ");
+  if (tip) c.title = tip;
   // UX audit finding #2: re-read state.filters INSIDE the handler rather
   // than closing over the `on` computed when this button was built. onChange
   // triggers an async /queue reload (loadInbox) and the chip only gets its
@@ -145,16 +168,19 @@ function _fchip(key, label, onChange) {
   });
   return c;
 }
-function _signalFilterOption(key, label, onChange) {
+function _signalFilterOption(key, label, onChange, count) {
   const on = state.filters.has(key);
-  const option = el("button", "signal-filter-option" + (on ? " on" : ""));
+  const option = el("button", "signal-filter-option" + (on ? " on" : "") + (count === 0 ? " empty" : ""));
   option.type = "button";
   option.setAttribute("aria-pressed", on ? "true" : "false");
   option.dataset.filter = key;
   const mark = el("span", "signal-filter-mark", on ? "✓" : "");
   mark.setAttribute("aria-hidden", "true");
   const copy = el("span", "signal-filter-copy");
-  copy.append(el("strong", null, label));
+  const labelRow = el("strong");
+  labelRow.append(document.createTextNode(label));
+  if (count) labelRow.append(el("span", "fchip-count", count.toLocaleString()));
+  copy.append(labelRow);
   copy.append(el("span", null, MORE_FILTER_DESCRIPTIONS[key]));
   option.append(mark, copy);
   // Same stale-closure fix as _fchip above — re-read state.filters at click
@@ -173,12 +199,17 @@ function _signalFilterOption(key, label, onChange) {
 // structure. Its selected-count badge keeps active, hidden filters visible
 // without forcing the menu open over the queue whenever the view re-renders.
 function buildFilterChipsRow(onChange) {
+  // Global per-chip counts (queue.py's filter_counts) — absent before the
+  // first /queue response lands, in which case every chip below renders
+  // with no badge at all rather than a misleading "0".
+  const counts = (state.queue && state.queue.filter_counts) || null;
   const wrap = el("div", "filter-groups");
   for (const [label, chipDefs] of FILTER_GROUPS) {
     const group = el("div", "filter-group");
     group.append(el("span", "filter-group-label", label));
     const row = el("div", "filters");
-    for (const [key, chipLabel] of chipDefs) row.append(_fchip(key, chipLabel, onChange));
+    for (const [key, chipLabel] of chipDefs)
+      row.append(_fchip(key, chipLabel, onChange, counts ? counts[key] : null));
     group.append(row);
     wrap.append(group);
   }
@@ -212,7 +243,7 @@ function buildFilterChipsRow(onChange) {
   panel.append(el("div", "more-filter-section-label", "Run signals"));
   const moreRow = el("div", "signal-filter-options");
   for (const [key, chipLabel] of MORE_FILTER_CHIPS) {
-    moreRow.append(_signalFilterOption(key, chipLabel, onChange));
+    moreRow.append(_signalFilterOption(key, chipLabel, onChange, counts ? counts[key] : null));
   }
   panel.append(moreRow);
   more.append(panel);

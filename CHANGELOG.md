@@ -12,6 +12,34 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Fixed
 
+- **Runs page control bar redesigned: orientation before controls, chip
+  counts, and the "More filters" wrap bug fixed at its root.** Follow-up UX
+  pass on the Runs page (mocked up first as a Design canvas, then built):
+  - A stat line now sits above the controls — total runs, how many are
+    unreviewed, and the sweep identity — so a reader is oriented before
+    touching a single filter, instead of that only being reachable via the
+    table's own meta line below the fold.
+  - Every outcome/review-status chip (and every "More filters" signal) now
+    carries its global match count (`queue.py`'s new `filter_counts` — every
+    run in the store, deliberately independent of which OTHER filters are
+    active, so it states the shape of the whole corpus rather than a
+    faceted "how many more would this add"). A chip whose count is exactly
+    0 fades back (dimmer text, lighter border, no badge) instead of reading
+    with the same weight as one that actually has runs behind it — directly
+    answering the earlier finding that a zero-result chip invites exactly
+    the exploratory click that then reads as "broken."
+  - The 3-column single-row control bar (search | chips | sort) gave the
+    chip group whatever width was left over after search and sort claimed
+    their own columns — often under half the card's width — which is what
+    let "More filters" (the narrowest, last item) wrap onto its own
+    stranded line with dead space beside it. Rebuilt as two rows: search
+    and Sort share a top row, and the chip groups get the CARD'S FULL WIDTH
+    on their own row underneath (~4x what the single-row layout gave them),
+    which is enough room at every realistic desktop width without wrapping
+    or scrolling — verified at 600–1920px, including the count badges added
+    above. `sweepIdentityText()` (inbox.js) factors the sweep-label
+    computation the sidebar's own summary already did, so the stat line and
+    the sidebar can never word it differently.
 - **Runs page (`?view=runs`): no pagination, a stuck outcome-filter toggle,
   and a blocking "More filters" popover.** A UX audit found three defects:
   1. `renderRunsTable` (runs.js) rendered every run in the filtered set as a

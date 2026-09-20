@@ -88,6 +88,26 @@ def test_failed_filter_chip(tmp_path):
     assert all(runs_by_id[r]["outcome"]["status"] in ("FAILED", "ERROR") for r in view["run_ids"])
 
 
+def test_filter_counts_are_global_and_partition_the_outcome_axis(tmp_path):
+    """Runs-page redesign: filter_counts backs the chip count badges (and the
+    zero-count fade) — it must cover every chip queue_view knows about, the
+    four outcome buckets must partition every run exactly once (no run
+    double-counted or dropped), and — the property that actually matters for
+    the UI — it must NOT change depending on which filters are currently
+    active. A faceted ("how many more would clicking this add") count would
+    shrink as other filters narrow the result set; this is a plain global
+    count over the whole store, so a reader can see the corpus's shape before
+    touching any control."""
+    store = _store(tmp_path)
+    unfiltered = queue.queue_view(store)["filter_counts"]
+    assert set(unfiltered) == set(queue.FILTER_CHIPS)
+    assert (unfiltered["failed"] + unfiltered["passed"]
+            + unfiltered["undetermined"] + unfiltered["unverified"]) == len(ALL_FIXTURES)
+    # Same counts whether or not a filter is already applied.
+    filtered = queue.queue_view(store, filters=["failed"])["filter_counts"]
+    assert filtered == unfiltered
+
+
 def test_unreviewed_filter_reflects_workflow(tmp_path):
     store = _store(tmp_path)
     rid = queue.queue_view(store, filters=["failed"])["run_ids"][0]

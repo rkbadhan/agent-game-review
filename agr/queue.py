@@ -244,7 +244,19 @@ def queue_view(
     if grouping not in GROUPINGS:
         raise ValueError(f"unknown grouping {grouping!r}; known: {GROUPINGS}")
 
-    rows = read.list_runs(store)
+    all_rows = read.list_runs(store)
+    # Runs-page redesign: how many runs match EACH chip, over every run in the
+    # store — deliberately independent of which filters are currently active
+    # (not a faceted "how many more would this add" count). Computed once,
+    # before any filter narrows `rows` below, so a reader sees the shape of
+    # the whole corpus (which buckets actually have runs in them) before
+    # clicking anything, and a chip with zero matches can be told apart from
+    # one worth clicking — see runs.js/inbox.js for how the UI uses this to
+    # fade a zero-count chip instead of presenting it with the same weight as
+    # a chip that actually has 1,600 runs behind it.
+    filter_counts = {key: sum(1 for r in all_rows if pred(r)) for key, pred in FILTER_CHIPS.items()}
+
+    rows = all_rows
     for f in filters:
         rows = [r for r in rows if FILTER_CHIPS[f](r)]
     rows.sort(key=_sort_key(sort))
@@ -271,6 +283,7 @@ def queue_view(
         "filters": definition["filters"],
         "sort": sort,
         "grouping": grouping,
+        "filter_counts": filter_counts,
         "available_filters": sorted(FILTER_CHIPS),
         "available_sorts": list(SORTS),
         "available_groupings": list(GROUPINGS),
