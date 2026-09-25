@@ -1,0 +1,200 @@
+{
+ "run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
+ "task_id": "terminal-bench/nginx-request-logging",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-25T15:54:34Z",
+ "source_hash": "sha256:2e5caf712a06b4136b8a3b256fdc759677e4ee5c118c587b024e71a0e5b58209",
+ "moment_count": 2,
+ "selected_count": 2,
+ "moments": [
+  {
+   "moment_id": "mom_cand_unresolved_requirement_at_submission_terminal_bench_reward",
+   "run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
+   "source_capture_id": "capture_2e5caf712a06",
+   "candidate_id": "cand_unresolved_requirement_at_submission_terminal_bench_reward",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_013",
+    "evt_014",
+    "evt_016",
+    "evt_018"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "expected": null,
+     "observed": null,
+     "validation": "passed",
+     "recomputed": "failed"
+    },
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_013",
+       "quote": "Are you sure you want to mark the task as complete?"
+      },
+      {
+       "event_id": "evt_014",
+       "quote": "Need assess potential hidden grading issues before mark complete"
+      },
+      {
+       "event_id": "evt_016",
+       "quote": "{} mark_task_complete"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_013",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_014",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_016",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Requirement check terminal_bench_reward was still failing at submission.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 13,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "premature_completion_without_reverification",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "Before the confirming mark_task_complete at evt_016, run one small read-only verification batch (nginx -t; curl -sI localhost:8080; curl the missing-path 404; grep the log_format and limit_req_zone lines; tail the access log) and only confirm once its output is in hand.",
+   "instructional_value": "The agent's own reasoning at evt_014 explicitly flagged 'potential hidden grading issues', yet it converted the confirmation prompt into a formality and confirmed without gathering any fresh evidence. This is the canonical premature-completion pattern: a recognized risk, a free re-verification opportunity, and a decision to skip it.",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  },
+  {
+   "moment_id": "mom_cand_repeated_action_no_new_info_evt_016",
+   "run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
+   "source_capture_id": "capture_2e5caf712a06",
+   "candidate_id": "cand_repeated_action_no_new_info_evt_016",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_012",
+    "evt_016"
+   ],
+   "affected_checks": [],
+   "affected_contract_items": [],
+   "validated_facts": [
+    {
+     "type": "repetition",
+     "signature": [
+      "mark_task_complete",
+      "{}"
+     ],
+     "events": [
+      "evt_012",
+      "evt_016"
+     ],
+     "validation": "passed",
+     "recomputed": [
+      [
+       "mark_task_complete",
+       "{}"
+      ],
+      [
+       "mark_task_complete",
+       "{}"
+      ]
+     ]
+    },
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_013",
+       "quote": "Are you sure you want to mark the task as complete?"
+      },
+      {
+       "event_id": "evt_016",
+       "quote": "{} mark_task_complete"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_013",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_016",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    }
+   ],
+   "attribution_ceiling": "dependency_linked",
+   "rendered_statement": "The same action was repeated with no new information in between (evt_012, evt_016).",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 12,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 1,
+   "superseded_by": null,
+   "taxonomy_verdict": "benign_confirmation_flow_not_a_stall",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "No alternative action needed for the repeat itself; the genuine improvement (re-verify before confirming) is captured in the primary moment.",
+   "instructional_value": "Low instructional value: illustrates that a repeated completion call immediately following an explicit confirmation prompt is expected flow, not a stall. Detector false positive in this context.",
+   "eval_lesson_recommended": false,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

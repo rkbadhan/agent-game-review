@@ -44,21 +44,30 @@ workflow beside the immutable source (never mutating it) via :mod:`agr.workflow`
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 from . import argument_shapes, divergence, fleet, instrumentation, lessons, queue, read, version, versions, workflow
-from .store import Store
+from .store import InvalidRunId, Store
 
 _STATIC = Path(__file__).parent / "static"
 
 
-def create_app(store_root: str = ".agr-store"):
+def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None):
     """Build the FastAPI application bound to a store directory.
 
     Imported lazily so the rest of the package never requires FastAPI. Raises a
     clear :class:`RuntimeError` if the optional ``api`` extra is not installed.
+
+    ``read_only`` (P0-5): when true, every request that is not ``GET``/``HEAD``
+    is rejected with ``403`` before it reaches a route — the hosted-demo mode,
+    so a public reader can browse but never write. ``None`` (the default)
+    falls back to the ``AGR_READ_ONLY`` env var (``1``/``true``/``yes``), so a
+    container platform can flip the mode without a code-level flag.
     """
+    if read_only is None:
+        read_only = os.environ.get("AGR_READ_ONLY", "").strip().lower() in ("1", "true", "yes")
     try:
         from fastapi import Body, FastAPI, HTTPException, Query
         from fastapi.responses import HTMLResponse, JSONResponse
@@ -83,6 +92,29 @@ def create_app(store_root: str = ".agr-store"):
         version=version.READ_MODEL_VERSION,
         summary="Read-only forensic view over the deterministic review store.",
     )
+    app.state.agr_read_only = read_only
+
+    # P0-4: a run_id rejected by validate_run_id (e.g. path traversal like
+    # "..") is a not-found run to every route's caller, not a server error —
+    # a global handler covers every route (including the ones below that
+    # catch read.RunNotFound themselves) without each having to remember to
+    # also catch this.
+    @app.exception_handler(InvalidRunId)
+    def _invalid_run_id(request, exc: InvalidRunId):
+        return JSONResponse(status_code=404, content={"detail": "run not found"})
+
+    if read_only:
+        # P0-5: reject every write before it reaches a route or touches the
+        # store. No route starts model work today (a deterministic-only
+        # pipeline never calls out), so GET/HEAD is safe to leave wide open.
+        @app.middleware("http")
+        async def _reject_writes_in_read_only_mode(request, call_next):
+            if request.method not in ("GET", "HEAD"):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "read-only demo: write operations are disabled"},
+                )
+            return await call_next(request)
 
     def _run_or_404(fn, run_id: str):
         try:
@@ -106,7 +138,7 @@ def create_app(store_root: str = ".agr-store"):
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"status": "ok", "read_model_version": version.READ_MODEL_VERSION}
+        return {"status": "ok", "read_model_version": version.READ_MODEL_VERSION, "read_only": read_only}
 
     @app.get("/sweep")
     def sweep() -> dict:
@@ -437,12 +469,31 @@ def create_app(store_root: str = ".agr-store"):
 
     @app.post("/runs/{run_id:path}/lessons/{lesson_id}/experiment")
     def lesson_experiment(run_id: str, lesson_id: str, payload: dict = Body(default={})) -> dict:
-        """Generate (``action`` omitted) or approve (``action=approve``) the §13.2 proposal."""
+        """Generate, approve, or record the outcome of the §13.2 proposal.
+
+        ``action`` is ``propose`` (default), ``approve``, or ``record_outcome``
+        (GR-2) — the last records the experiment's result so a linked alternative
+        can be validated (or shown as failed/inconclusive) honestly.
+        """
         _ensure_run(run_id)
-        action = (payload or {}).get("action", "propose")
-        fn = lessons.approve_experiment if action == "approve" else lessons.propose_experiment
+        payload = payload or {}
+        action = payload.get("action", "propose")
         try:
-            lesson = fn(store, run_id, lesson_id, actor=(payload or {}).get("actor"))
+            if action == "record_outcome":
+                lesson = lessons.record_experiment_outcome(
+                    store, run_id, lesson_id,
+                    result=payload.get("result"),
+                    stated_benefit=payload.get("stated_benefit"),
+                    outcome_checks=payload.get("outcome_checks"),
+                    comparison_limits=payload.get("comparison_limits"),
+                    measured_improvement=payload.get("measured_improvement"),
+                    actor=payload.get("actor"))
+            elif action == "approve":
+                lesson = lessons.approve_experiment(
+                    store, run_id, lesson_id, actor=payload.get("actor"))
+            else:
+                lesson = lessons.propose_experiment(
+                    store, run_id, lesson_id, actor=payload.get("actor"))
         except lessons.LessonError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"lesson": lesson}

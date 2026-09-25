@@ -273,6 +273,28 @@ class Store:
         with open(os.path.join(d, self._review_filename(reviewer_key)), "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
 
+    def review_slot_path(self, run_id: str, capture_id: str, reviewer_key: str) -> str:
+        """Filesystem path of one reviewer's snapshot slot (it may not exist).
+
+        Exposed so a maintainer tool (``agr bake-reviews``) can stamp a baked
+        review with the real file time rather than an invented one.
+        """
+        return os.path.join(self._reviews_dir(run_id, capture_id),
+                            self._review_filename(reviewer_key))
+
+    def delete_review(self, run_id: str, capture_id: str, reviewer_key: str) -> bool:
+        """Remove one reviewer's snapshot slot; returns whether it existed.
+
+        Used to clear a previously-installed model slot before a demo rebuild so a
+        review that is no longer in the dataset (or was rejected as stale) cannot
+        remain served.
+        """
+        path = self.review_slot_path(run_id, capture_id, reviewer_key)
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+        return False
+
     def list_reviews(self, run_id: str, capture_id: str) -> list[str]:
         """Reviewer keys present for this capture, with lazy legacy migration.
 

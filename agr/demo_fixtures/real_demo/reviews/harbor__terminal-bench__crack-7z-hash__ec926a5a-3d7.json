@@ -1,0 +1,79 @@
+{
+ "run_id": "harbor__terminal-bench/crack-7z-hash__ec926a5a-3d7",
+ "task_id": "terminal-bench/crack-7z-hash",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:42:25Z",
+ "source_hash": "sha256:2f64a695be9a36567e29bc979b5bff56108188dd6f16f7deb0e161df79b850d1",
+ "moment_count": 1,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_cand_repeated_action_no_new_info_evt_092",
+   "run_id": "harbor__terminal-bench/crack-7z-hash__ec926a5a-3d7",
+   "source_capture_id": "capture_2f64a695be9a",
+   "candidate_id": "cand_repeated_action_no_new_info_evt_092",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_088",
+    "evt_092"
+   ],
+   "affected_checks": [],
+   "affected_contract_items": [],
+   "validated_facts": [
+    {
+     "type": "repetition",
+     "signature": [
+      "mark_task_complete",
+      "{}"
+     ],
+     "events": [
+      "evt_088",
+      "evt_092"
+     ],
+     "validation": "passed",
+     "recomputed": [
+      [
+       "mark_task_complete",
+       "{}"
+      ],
+      [
+       "mark_task_complete",
+       "{}"
+      ]
+     ]
+    }
+   ],
+   "attribution_ceiling": "dependency_linked",
+   "rendered_statement": "The same action was repeated with no new information in between (evt_088, evt_092).",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 88,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "redundant repeat of completion signal",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "after calling mark_task_complete once at evt_088, wait for its tool_result and proceed to final submission instead of re-issuing the identical call at evt_092",
+   "instructional_value": "illustrates low-cost redundancy at the termination boundary: even when the task passes, repeating a no-argument completion call wastes budget and signals weak tracking of already-executed actions",
+   "eval_lesson_recommended": false,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

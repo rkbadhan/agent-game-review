@@ -326,3 +326,18 @@ def test_fabricated_findings_on_clean_pass_counted():
     summary = rev.SetEval(runs=[ev]).metrics()
     assert summary["n_fabricated_on_clean_pass"] == 2
     assert summary["fabrication_on_clean_pass_rate"] == 1.0
+
+
+def test_all_proposals_rejected_gets_no_calibration_credit(tmp_path, monkeypatch):
+    """Finding 5: a review whose proposals were all rejected is an unsuccessful
+    review — it must not earn 'correct abstention' credit on a clean-pass gold
+    the way a completed no_decisive_moment review does."""
+    from agr import read as read_mod
+    gs = gold.GoldSet([_gold_traj("r", [], no_moment=True)])
+    monkeypatch.setattr(read_mod, "get_review",
+                        lambda store, run_id: {"review_status": "all_proposals_rejected"})
+    result = rev.evaluate_store(_store(tmp_path), gs)
+    (run,) = result.runs
+    assert run.abstained is True
+    assert run.calibrated is False
+    assert result.metrics()["no_moment_calibration"] == 0.0

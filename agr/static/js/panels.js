@@ -6,7 +6,7 @@
 //   run and the screen. Widths are dragged (or nudged with the arrow keys, since
 //   a drag handle nobody can reach by keyboard is not a control), clamped so
 //   neither panel can swallow the reading column, and remembered per browser.
-const PANEL_LIMITS = { queue: [220, 520, 296], evidence: [260, 620, 358] };
+const PANEL_LIMITS = { queue: [220, 520, 240], evidence: [260, 620, 358] };
 function panelWidth(name) {
   const [min, max, fallback] = PANEL_LIMITS[name];
   const stored = Number(localStorage.getItem("agr-" + name + "-w"));

@@ -1,0 +1,11 @@
+{
+ "run_id": "harbor__terminal-bench/polyglot-c-py__polyglot-c-p",
+ "task_id": "terminal-bench/polyglot-c-py",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:42:39Z",
+ "source_hash": "sha256:c1a0d8d82cb6f26bf1fbf14fc04cbda80bec1257d1f7963c2387e51bcba6c297",
+ "moment_count": 0,
+ "selected_count": 0,
+ "moments": []
+}

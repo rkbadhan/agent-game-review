@@ -103,6 +103,93 @@ def find_passing_sibling(store: Store, run_id: str) -> Optional[str]:
     return pool[0]["run_id"]
 
 
+# GR-2: the comparison-relevant fields an observed alternative discloses. A
+# field the source never captured stays absent (never fabricated) — unlike
+# ``_same_configuration``, this difference is *recorded*, not a reason to refuse
+# the comparison, because an observed alternative is an example, not a proof.
+_CONFIG_DIFF_FIELDS = (
+    "model", "temperature", "agent", "harness_version", "configuration_id", "sweep_id",
+)
+
+
+def _configuration_diff(target: dict, candidate: dict) -> dict:
+    """How a passing sibling differs from the target run (GR-2).
+
+    Only fields the source actually captured: a field neither run records is
+    omitted rather than shown as a difference of two ``None``s.
+    """
+    diff: dict = {}
+    for f in _CONFIG_DIFF_FIELDS:
+        tv, cv = target.get(f), candidate.get(f)
+        if tv != cv:
+            diff[f] = {"failed_run": tv, "passing_run": cv}
+    return diff
+
+
+def _action_text(action: Optional[dict]) -> str:
+    """A short human line for one aligned action (tool + content)."""
+    if not action:
+        return ""
+    tool = action.get("tool") or ""
+    content = (action.get("content") or "").strip()
+    if content:
+        content = content.splitlines()[0][:200]
+        return f"{tool}: {content}" if tool else content
+    return tool
+
+
+def observed_alternative(store: Store, run_id: str) -> Optional[dict]:
+    """A passing sibling's action at the first divergence point (GR-2).
+
+    Unlike :func:`find_passing_sibling` (which requires the SAME configuration
+    for the Compare view, AGR-12), an *observed alternative* is an example, not
+    a proof: it may come from a comparable-but-different run and records exactly
+    how that run differs (model, temperature, agent config). The result is keyed
+    to the failed run's action event so it can attach to the moment that anchors
+    it. Returns ``None`` — never a guess — when there is no passing sibling on
+    the same task or the two timelines share no divergence point.
+    """
+    runs = {r["run_id"]: r for r in read.list_runs(store)}
+    target = runs.get(run_id)
+    if target is None or not target.get("task_id"):
+        return None
+    # An observed alternative explains a FAILED run against a passing example; a
+    # passing run does not need one (and its absence of a failure is not a story).
+    if (target.get("outcome") or {}).get("status") == "PASSED":
+        return None
+    task_id = target["task_id"]
+    candidates = [
+        r for r in runs.values()
+        if r["run_id"] != run_id
+        and r.get("task_id") == task_id
+        and (r.get("outcome") or {}).get("status") == "PASSED"
+    ]
+    if not candidates:
+        return None
+
+    def _rank(r: dict) -> tuple[int, int]:
+        same_cfg = 0 if _same_configuration(target, r) else 1
+        same_sweep = 0 if (target.get("sweep_id") and r.get("sweep_id") == target.get("sweep_id")) else 1
+        return (same_cfg, same_sweep)
+
+    sibling = sorted(candidates, key=_rank)[0]
+    report = divergence_report(store, run_id, sibling_run_id=sibling["run_id"])
+    if report is None or not report.get("first_divergence"):
+        return None
+    failed = report["first_divergence"].get("failed_action") or {}
+    passing = report["first_divergence"].get("passing_action") or {}
+    proposal = _action_text(passing)
+    if not proposal and not failed.get("event_id"):
+        return None
+    return {
+        "event_id": failed.get("event_id"),
+        "proposal": proposal or "(the passing run took a different action here)",
+        "source": f"sibling:{sibling['run_id']}",
+        "sibling_diff": _configuration_diff(target, sibling) or None,
+        "attribution_ceiling": "dependency_linked",
+    }
+
+
 def _phase_kind_by_event(phases: list[dict]) -> dict[str, str]:
     lookup: dict[str, str] = {}
     for p in phases:
@@ -126,8 +213,13 @@ def _tool_call_sequence(store: Store, run_id: str, capture_id: str) -> tuple[lis
     file" — exactly the case ``action_signature`` (_util.py) exists to
     distinguish (R2).
     """
-    events = store.read_derived(run_id, capture_id, "events.json") or []
-    phases = store.read_derived(run_id, capture_id, "phases.json") or []
+    # GR-2: called from the analyze pipeline, not only the Compare endpoint, so a
+    # run that has no derived events yet (a minimal/synthetic store) yields an
+    # empty sequence instead of a FileNotFoundError.
+    events = store.read_derived(run_id, capture_id, "events.json") \
+        if store.has_derived(run_id, capture_id, "events.json") else []
+    phases = store.read_derived(run_id, capture_id, "phases.json") \
+        if store.has_derived(run_id, capture_id, "phases.json") else []
     phase_kind = _phase_kind_by_event(phases)
     seq: list[tuple] = []
     refs: list[dict] = []

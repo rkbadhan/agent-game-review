@@ -64,14 +64,14 @@ def test_success_then_failure_then_successful_retry_resolves_state(tmp_path):
     analyze(_load(FIXTURE), store, reviewer=ok)
     view = read.get_review(store, run_id)
     assert view["reviewer_key"] == "model:probe"
-    assert view["review_status"] == "ok"
+    assert view["review_status"] == "moments_found"
     assert view["review_errors"] == []
 
     # Attempt 2 — provider failure: explicit error state; the deterministic
     # baseline is served (the errored slot is not silently served as default).
     analyze(_load(FIXTURE), store, reviewer=_Broken({}, source="model:probe"))
     view = read.get_review(store, run_id)
-    assert view["review_status"] == "failed"
+    assert view["review_status"] == "review_failed"
     assert view["review_errors"]
     assert view["review_errors"][0]["reviewer_key"] == "model:probe"
 
@@ -80,7 +80,7 @@ def test_success_then_failure_then_successful_retry_resolves_state(tmp_path):
     analyze(_load(FIXTURE), store, reviewer=ok)
     view = read.get_review(store, run_id)
     assert view["reviewer_key"] == "model:probe"
-    assert view["review_status"] == "ok"
+    assert view["review_status"] == "moments_found"
     assert view["review_errors"] == []
 
     # History is retained: the attempt log shows all three, in order.

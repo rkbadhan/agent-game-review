@@ -23,6 +23,7 @@ Two deliberate boundaries keep this inside the deterministic core:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 from . import version
@@ -289,6 +290,33 @@ def confirm_contract(
         confirmed_by=confirmed_by if finalised else None,
         confirmed_at=confirmed_at if finalised else None,
         builder_version=contract.builder_version,
+    )
+
+
+def demo_confirm_contract(
+    contract: TaskContract,
+    confirmed_by: Optional[str] = "demo",
+    confirmed_at: Optional[str] = None,
+) -> TaskContract:
+    """Clear the watermark for a DEMO store WITHOUT claiming human confirmation.
+
+    The demo never edits the real source and never invents a human reviewer, so a
+    demo contract reaches ``demo_confirmed`` — a distinct status that clears the
+    watermark but is not ``human_confirmed``. The report (and the UI) can say
+    exactly that; ``demo_override`` on the confirmation record is what selects
+    this path, so it is never silently a human confirmation.
+
+    Item-level ``human_status`` is left UNCHANGED (normally ``unconfirmed``): no
+    human decided any item, so the structured report must not claim one did. Only
+    the contract-level status and the demo identity are set.
+    """
+    return replace(
+        contract,
+        contract_version=contract.contract_version + 1,
+        supersedes_contract_version=contract.contract_version,
+        status="demo_confirmed",
+        confirmed_by=confirmed_by if confirmed_by is not None else contract.confirmed_by,
+        confirmed_at=confirmed_at or contract.confirmed_at,
     )
 
 

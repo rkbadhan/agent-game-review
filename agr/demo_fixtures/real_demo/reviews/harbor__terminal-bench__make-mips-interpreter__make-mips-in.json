@@ -1,0 +1,212 @@
+{
+ "run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
+ "task_id": "terminal-bench/make-mips-interpreter",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-25T15:51:03Z",
+ "source_hash": "sha256:c9fb281f28ce27bdd8e422389336b7a3ea94ae0aa445f8f0c1f7749278c8f345",
+ "moment_count": 2,
+ "selected_count": 2,
+ "moments": [
+  {
+   "moment_id": "mom_sem_1",
+   "run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
+   "source_capture_id": "capture_c9fb281f28ce",
+   "candidate_id": "sem_1",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_116",
+    "evt_117",
+    "evt_120",
+    "evt_123"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_116",
+       "quote": "DoomGeneric initialized. Frames will be saved to /tmp/frame.bmp"
+      },
+      {
+       "event_id": "evt_117",
+       "quote": "VM_STATS=1 timeout 90 node --max-old-space-size=6000 vm.js --max-seconds=25 --quiet"
+      },
+      {
+       "event_id": "evt_120",
+       "quote": "Aborted"
+      },
+      {
+       "event_id": "evt_123",
+       "quote": "[Harbor trial hit its deadline: AgentTimeoutError]"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_116",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_117",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_120",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_123",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "termination",
+     "expected": "run_timed_out",
+     "validation": "passed",
+     "recomputed": "run_timed_out"
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Grounded in quoted run evidence (evt_116, evt_117, evt_120, evt_123), a likely explanation for the outcome.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 116,
+   "phase_id": "ph_04",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "over-refinement past a working state, ending in timeout with no consolidated final artifact",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "At evt_116, when 'DoomGeneric initialized' appeared, immediately snapshot vm.js, run one clean bounded verification (e.g. timeout 60 node vm.js), and stop editing \u2014 defer any further stats/tracing work only if time remains after the artifact is confirmed good.",
+   "instructional_value": "Teaches the time-boxing norm: once the required deliverable demonstrably works, the marginal value of extra instrumentation is negative if it consumes the remaining budget and risks leaving the artifact in a broken state at the deadline.",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  },
+  {
+   "moment_id": "mom_sem_2",
+   "run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
+   "source_capture_id": "capture_c9fb281f28ce",
+   "candidate_id": "sem_2",
+   "detector": "model",
+   "kind": "recovery",
+   "polarity": "positive",
+   "anchor_event_ids": [
+    "evt_110",
+    "evt_115",
+    "evt_116"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_110",
+       "quote": "ror at,t4,0x1b: hex=002c0ec2 op=0 rs=1 rt=12 rd=1 sa=27 funct=2"
+      },
+      {
+       "event_id": "evt_115",
+       "quote": "/* srl / ror */"
+      },
+      {
+       "event_id": "evt_116",
+       "quote": "DoomGeneric initialized. Frames will be saved to /tmp/frame.bmp"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_110",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_115",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_116",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Grounded in quoted run evidence (evt_110, evt_115, evt_116), a likely explanation for the outcome.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 2,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 110,
+   "phase_id": "ph_04",
+   "selected": true,
+   "selection_rank": 1,
+   "superseded_by": null,
+   "taxonomy_verdict": "evidence-driven diagnosis of an ISA decode bug (ror vs srl) that unblocked guest boot",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "No correction needed; this loop (hot-pc profiling -> disassembly lookup -> minimal decode patch -> re-run) is the behavior to repeat.",
+   "instructional_value": "Exemplary template for emulator debugging: use the guest's own hotspot profile to find the failing region, verify encodings against ground-truth disassembly, and patch narrowly rather than rewriting the decoder.",
+   "eval_lesson_recommended": false,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

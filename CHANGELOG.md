@@ -10,6 +10,137 @@ A hardening pass driven by two independent reviews of the deterministic
 core and the model-reviewer safety envelope (commit `82cc113` and this
 follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
+### Added
+
+- **GR-4 pre-computed demo reviews.** `agr demo` now builds the demo from the
+  **real Terminal-Bench runs** and their **pre-computed model reviews** instead
+  of a synthetic slice alone: the baked snapshots are installed into each run's
+  latest capture at build time, so the demo shows real model reviews with no
+  provider credential and no model call. Each review carries its **reviewer model
+  and date** (`review_meta.json`, surfaced as `review_model`/`reviewed_at` and a
+  header chip), and `agr demo` prints a deep link to a real failed run with a
+  model review. Installing a review requires its baked `source_hash` to match the
+  freshly-ingested run (a rejected review's slot is cleared, never left served),
+  and the demo clears the contract watermark under a distinct `demo_confirmed`
+  status — reported as a demo override, never as a human confirmation, with every
+  contract item's `human_status` left unconfirmed.
+  `agr --store … bake-reviews --out …` regenerates the committed
+  dataset (`demo_fixtures/real_demo/{runs,reviews}`) after a maintainer scores
+  the corpus; `demo-store`/`demo` take `--real-dir`/`--synthetic` to override.
+- **GR-3 idea-category coverage.** The four categories from the idea are a
+  deterministic *view* over behaviour tags (`taxonomy.IDEA_CATEGORIES`): the
+  model still emits tags, the system derives the category, so a category can
+  never be claimed without a tag — and the evidence behind it — existing.
+  `category_for_tag`/`category_for_tags`/`category_coverage` expose the mapping,
+  and an import-time invariant keeps every registry tag real, guided and in one
+  category. The served review adds `category`, `label`/`basis` and a
+  `review_counts.categories` coverage report (`agr/read.py`); coverage is
+  reported from the moments actually found, never padded.
+- **GR-3 bad-query judgment linked to argument-shape statistics.** The run's own
+  failing-call shape distribution (`argument_shapes.argument_shapes_for_events`)
+  now travels in the model packet, and a moment anchored on a failing tool call
+  is linked to that distribution deterministically
+  (`argument_shape_link` — structure only, never retained values). The prompt
+  states the judging-vs-suggesting rule explicitly: a query may be judged using
+  the later result that revealed its consequence, while only a *suggested*
+  alternative is bound by the information cutoff.
+- **GR-3 supported-recovery label with a mechanical basis.** A deterministic
+  recovery episode gives its moment the `good_recovery` tag (plus
+  `effective_replan` when the episode changed strategy), the category *Good
+  recovery from a failed plan*, and the label *Supported recovery* with
+  `basis: "mechanical"` — on deterministic-only runs too. The basis is tracked
+  per CATEGORY (`category_bases`), and every category a moment covers is shown on
+  its own (`category_details`): a model tag for one category never inherits the
+  mechanical basis the detector gives another, and no category is counted toward
+  coverage while staying invisible on the card. A detector only mechanically tags a moment when
+  it establishes the tag's meaning — the submission detector surfaces the
+  situation but not a victory claim, so it gets the neutral label *Requirement
+  unresolved at submission* and no category (*Claiming victory before verifying*
+  stays model-only). `.moment-category` / `.moment-shape` on the card
+  (`agr/static/js/moments.js`, `agr/static/app.css`) show the category, label,
+  basis and shape-link.
+- **GR-2 grounded alternatives: three kinds, kept apart and shown under their
+  actual status.** A reviewed moment now carries an `alternatives` list
+  (`agr/schema.py`): a *Suggested alternative* from the model's `better_action`,
+  an *Alternative observed in a comparable passing run* built from the passing
+  sibling at the divergence point (`agr/divergence.py`), and a *Validated by
+  replay* / *Validated by comparable experiment* alternative from a linked
+  experiment. Labels come from one `alternative_label()` function, so a
+  proposed/failed/inconclusive experiment is never rendered as validated. The
+  sibling- and experiment-backed kinds are derived at read time (`agr/read.py`),
+  so a sibling ingested or an experiment outcome recorded *after* the review was
+  computed is reflected without reanalysis, and they attach to deterministic
+  moments too.
+- **GR-2 information cutoff for suggestions.** Each suggested alternative names
+  the decision it replaces and the information available immediately before it
+  (`replaces_decision`, `information_available`) and carries structured
+  `assumptions`. The cutoff binds the assumptions as well as the information
+  list: assumptions are recomputed against only the evidence available at or
+  before the replacement decision. A check is gated by the event that revealed
+  its RESULT (a synthesized in-session check's own `sequence` is the tool call,
+  not its later result) and one with no determinable observation time is
+  excluded; a recovery claim is gated by the resolution evidence it uses; a
+  post-run verifier result can never ground a suggestion. A suggestion whose
+  information includes a later event, or whose assumptions do not recompute
+  against that cutoff context, is dropped and counted (`information_cutoff`,
+  `assumptions_unvalidated`, …) — never shown. The model may only propose; an
+  observed/validated alternative is produced by the system, never claimed in
+  prose.
+- **GR-2 experiment outcomes are recorded, and the validation rule is enforced.**
+  `lessons.record_experiment_outcome` records a linked experiment's result,
+  stated benefit, outcome checks and comparison limits; only when a validated
+  result carries all three does the alternative earn a "Validated by …" label.
+  A failed/inconclusive experiment stays visible with that status, and an
+  unverified one claims only its measured execution improvement. Exposed via
+  `POST /runs/{id}/lessons/{id}/experiment` with `action=record_outcome`.
+- **GR-2 alternatives on the moment card.** The card's `Alternatives` block
+  (`agr/static/js/moments.js`) renders each alternative under its resolved label,
+  shows the information cutoff beside a suggestion, the sibling diff beside an
+  observed one, and the experiment's benefit/checks/limits beside a validated
+  one, with a fallback to the legacy `better_action` string.
+- **GR-1 review status model: every served review ends in exactly one of six
+  explicit states** (`agr/read.py`): `moments_found`, `no_decisive_moment`,
+  `all_proposals_rejected` (with the rejection count in `review_counts`),
+  `not_configured` (no model reviewer; deterministic baseline only),
+  `review_failed`, and `incomplete`. Only the first two are successful outcomes;
+  a failed or unconfigured reviewer is never rendered as "no decisive moment".
+  The SPA vocabulary and the review-limits panel surface all six.
+- **GR-1 per-review budgets: cost estimate, latency, and the early-stop
+  `incomplete` state.** Every model round records a clearly-labelled
+  `cost_estimate_usd` (estimated tokens × a documented list-price table — the
+  provider's actual usage is never fabricated) and the attempt's `latency_ms`
+  is summed. A review stops before a round that would exceed the cost budget or
+  the 90 s time budget, recording an `incomplete` attempt (`timeout`,
+  `cost_budget`, `missing_chunks`) instead of a failure; `agr review
+  --cost-budget/--time-budget` (or `$AGR_REVIEW_COST_BUDGET_USD` /
+  `$AGR_REVIEW_TIME_BUDGET_S`) configure it, and the CLI counts an early stop as
+  not-served.
+- **GR-1 phase chunking for long traces, with a summary-never-evidence guard.**
+  A trace that does not fit the reviewer's packet budget is split into ordered
+  per-phase chunks that keep every event id; each chunk gets a bounded model
+  summary, and the final review call receives navigation summaries plus the
+  complete event-id index — never the summaries as evidence. Any original event,
+  including one whose excerpt had to be omitted, stays retrievable in full
+  through the expansion round, and a quote that does not match original event
+  text is dropped and counted as `summary_not_evidence`. A chunk that cannot be
+  summarised stops the review as `incomplete`/`missing_chunks`; a packet-budget
+  stop is now `incomplete`/`packet_budget` too.
+- **GR-1 review surfaces: one status chip, a clear "No model review" label, and
+  verifier-optional wording.** The run shell shows the review's single status up
+  front; when no model reviewer is configured the affordance reads "No model
+  review" (never presented as abstention), and a run without verifier results
+  reads "Task success unverified" while its moment list, evidence slices and
+  execution-quality summary are still served.
+- **GR-1 review follow-ups (PR #90).** Large phases are split into multiple
+  content-bearing chunks so no portion is summarised from ids alone; the prompt
+  explains the chunked evidence mode and requires original-event quotes via the
+  expansion round; provider/parsing failures stay `review_failed` (only a
+  genuinely missing summary is `missing_chunks`); an incomplete retry no longer
+  serves an older model snapshot as the default (the fallback is persisted as
+  the deterministic slot); `all_proposals_rejected` earns no abstention credit
+  in evaluation; the cost/time budgets are documented as pre-round targets; and
+  the SDK-missing test simulates the import so it is environment-independent.
+
 ### Fixed
 
 - **Runs page control bar redesigned: orientation before controls, chip

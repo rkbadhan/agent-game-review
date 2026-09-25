@@ -653,3 +653,79 @@ def test_review_mode_helper_precedence(tmp_path):
     assert read._review_mode(enriched, "incomplete") == "not_reviewable"
     assert read._review_mode(enriched, "complete") == "model_enriched"
     assert read._review_mode([], "partial") == "deterministic_only"
+
+
+# --- GR-3: category, mechanical label and basis on the served moments --------
+
+
+def test_recovery_moment_carries_supported_label_and_idea_category(tmp_path):
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    review = read.get_review(store, "solve_task__recovered")
+    recovery = next(m for m in review["moments"]
+                    if m["detector"] == "successful_recovery_via_strategy_change")
+    assert "good_recovery" in recovery["behaviour_tags"]
+    assert "effective_replan" in recovery["behaviour_tags"]  # strategy changed
+    assert recovery["category"] == "good_recovery_from_failed_plan"
+    assert recovery["category_label"] == "Good recovery from a failed plan"
+    assert recovery["label"] == "Supported recovery"
+    assert recovery["basis"] == "mechanical"
+
+
+def test_submission_moment_is_not_mechanically_labelled_as_claiming_victory(tmp_path):
+    """PR #92 review: the submission detector establishes a submission and a
+    failing check — NOT that the agent claimed success or knew the check failed.
+    So it gets a neutral mechanical label and no category."""
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    review = read.get_review(store, "chess_best_move__seed42")
+    submission = next(m for m in review["moments"]
+                      if m["detector"] == "unresolved_requirement_at_submission")
+    assert submission["behaviour_tags"] == []
+    assert submission["category"] is None
+    assert submission["label"] == "Requirement unresolved at submission"
+    assert submission["basis"] == "mechanical"
+
+
+def test_model_category_never_inherits_a_mechanical_basis(tmp_path):
+    """PR #92 review: a recovery moment with an extra model tag for another
+    category must not display that category with the detector's mechanical basis.
+    The basis is tracked per category, and the mechanical one is displayed."""
+    from agr import read as read_mod
+    moment = {
+        "moment_id": "m", "detector": "successful_recovery_via_strategy_change",
+        "behaviour_tags": ["poor_query"], "enrichment_source": "model:test",
+        "facts": [{"type": "state_transition", "strategy_changed": True}],
+    }
+    read_mod._apply_moment_enrichment([moment], [])
+    # The displayed category is the mechanically supported recovery one...
+    assert moment["category"] == "good_recovery_from_failed_plan"
+    assert moment["basis"] == "mechanical"
+    # ...and the model's own category stays visible with ITS basis, not the
+    # detector's.
+    assert moment["category_bases"] == {
+        "good_recovery_from_failed_plan": "mechanical",
+        "bad_query_in_tool_call": "model",
+    }
+    # Both categories are exposed for the card, each with its own basis, so the
+    # secondary category is not counted-but-invisible (PR #92 review).
+    by_id = {d["category_id"]: d for d in moment["category_details"]}
+    assert by_id["good_recovery_from_failed_plan"]["basis"] == "mechanical"
+    assert by_id["bad_query_in_tool_call"]["basis"] == "model"
+    assert by_id["bad_query_in_tool_call"]["label"] == "Bad query in a tool call"
+
+
+def test_review_counts_report_category_coverage_from_real_moments(tmp_path):
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    review = read.get_review(store, "solve_task__recovered")
+    categories = review["review_counts"]["categories"]
+    assert categories["covered"] == ["good_recovery_from_failed_plan"]
+    assert categories["counts"] == {"good_recovery_from_failed_plan": 1}
+
+
+def test_an_uncategorised_deterministic_moment_stays_uncategorised(tmp_path):
+    """A detector outside the idea's four categories gets no fabricated category."""
+    store = _store_with(tmp_path, "ignored_failure.atif.json")
+    review = read.get_review(store, "build_task__ignored_failure")
+    artifact = next(m for m in review["moments"]
+                    if m["detector"] == "required_artifact_absent")
+    assert artifact["category"] is None
+    assert artifact["basis"] is None

@@ -19,6 +19,7 @@ from .contract import (
     apply_confirmation,
     build_contract,
     declared_confirmation,
+    demo_confirm_contract,
     derive_observations,
 )
 from .detectors import DetectorContext, run_detectors
@@ -29,7 +30,7 @@ from .ingest import IngestResult, ingest
 from .opportunities import detect_opportunities
 from .phases import segment_phases
 from .recovery import UNRECOVERED, classify_recoveries
-from .reviewer import ReviewerContext, run_reviewer
+from .reviewer import ReviewBudgetExceededError, ReviewerContext, run_reviewer
 from .signature import SignatureRow, build_signature
 from .schema import (
     AuditFinding,
@@ -69,6 +70,15 @@ class Analysis:
     idempotent: bool
     review_moments: list[ReviewMoment] = field(default_factory=list)
     audit: list[AuditFinding] = field(default_factory=list)
+    # P0-3: the served result still carries the reviewer's fallback moments on
+    # a model failure (AGR-06), but callers that need to know a review is
+    # trustworthy — not just present — check this instead of assuming
+    # non-empty ``review_moments`` means the configured reviewer actually ran.
+    review_error: dict | None = None
+    # GR-1: the model review stopped early on its own budget/timeout (or a
+    # missing chunk). Distinct from ``review_error``: the attempt is recorded
+    # as 'incomplete', not 'failed', and the deterministic baseline is served.
+    review_incomplete: dict | None = None
 
     @property
     def candidates(self) -> list[Candidate]:
@@ -114,7 +124,14 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     confirmation = declared_confirmation(doc)
     if store.has_derived(rs.run_id, rs.source_capture_id, "contract_confirmation.json"):
         confirmation = store.read_derived(rs.run_id, rs.source_capture_id, "contract_confirmation.json")
-    contract = apply_confirmation(draft, confirmation)
+    if confirmation and confirmation.get("demo_override"):
+        # A demo confirmation clears the watermark under its OWN status
+        # (``demo_confirmed``) — it is never reported as a human confirmation.
+        contract = demo_confirm_contract(
+            draft, confirmed_by=confirmation.get("confirmed_by"),
+            confirmed_at=confirmation.get("confirmed_at"))
+    else:
+        contract = apply_confirmation(draft, confirmation)
     item_for_check: dict[str, list[str]] = {}
     for item in contract.items:
         for cid in item.mapped_checks:
@@ -198,8 +215,13 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # runs — persist only the rounds THIS attempt added, and stamp them with
     # the attempt id, so downstream run-cost aggregation cannot double-count.
     _rounds_before = len(getattr(reviewer, "telemetry", None) or [])
-    try:
-        review_moments = run_reviewer(ReviewerContext(
+    def _review_context() -> ReviewerContext:
+        # AGR-03/AGR-04: model discoveries meet the same capability
+        # requirements as detectors, absence claims validate against what the
+        # task declared, the complete task instruction travels as its own
+        # field (not a 220-character excerpt), and the verifier's post-run
+        # log output reaches the reviewer as explicit diagnostic evidence.
+        return ReviewerContext(
             run_id=rs.run_id,
             source_capture_id=rs.source_capture_id,
             candidates=[c for r in detector_results if r.evaluated for c in r.candidates],
@@ -208,18 +230,23 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
             events=events,
             recoveries=recoveries,
             contract=contract,
-            # AGR-03: model discoveries meet the same capability requirements as
-            # detectors, and absence claims validate against what the task declared.
             profile=profile,
             declared_artifacts=[a.get("path") for a in (doc.get("task") or {}).get("artifacts", [])
                                 if a.get("path")],
-            # AGR-04: the complete task instruction travels to the reviewer as its
-            # own field, not as a 220-character timeline excerpt.
             task_instruction=(doc.get("task") or {}).get("instruction"),
-            # F1 follow-up: the verifier's post-run log output reaches the
-            # reviewer as explicit diagnostic evidence, not just per-check rows.
             verifier_logs=(doc.get("verifier") or {}).get("log_excerpts", []),
-        ), reviewer=reviewer, telemetry=telemetry)
+        )
+
+    review_incomplete: dict | None = None
+    try:
+        review_moments = run_reviewer(_review_context(), reviewer=reviewer, telemetry=telemetry)
+    except ReviewBudgetExceededError as exc:
+        # GR-1: the review stopped early on its own budget/timeout — record an
+        # explicit 'incomplete' attempt (never a failure) and serve the
+        # deterministic baseline.
+        review_incomplete = exc.to_dict()
+        telemetry["incomplete"] = review_incomplete
+        review_moments = run_reviewer(_review_context())
     except Exception as exc:  # noqa: BLE001 — every failure state must be explicit
         # AGR-06: a model failure (malformed output, provider error) is an
         # explicit enrichment-error state — never silently a "no decisive
@@ -230,23 +257,7 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
             "message": str(exc)[:500],
         }
         telemetry["error"] = review_error
-        review_moments = run_reviewer(ReviewerContext(
-            run_id=rs.run_id,
-            source_capture_id=rs.source_capture_id,
-            candidates=[c for r in detector_results if r.evaluated for c in r.candidates],
-            slices=slices,
-            checks=checks,
-            events=events,
-            recoveries=recoveries,
-            contract=contract,
-            profile=profile,
-            declared_artifacts=[a.get("path") for a in (doc.get("task") or {}).get("artifacts", [])
-                                if a.get("path")],
-            task_instruction=(doc.get("task") or {}).get("instruction"),
-            # F1 follow-up: the verifier's post-run log output reaches the
-            # reviewer as explicit diagnostic evidence, not just per-check rows.
-            verifier_logs=(doc.get("verifier") or {}).get("log_excerpts", []),
-        ))
+        review_moments = run_reviewer(_review_context())
     # The stable slot key under which this reviewer's snapshot is persisted so a
     # later review by a different reviewer coexists rather than overwrites it
     # (the reviewer-diff view). The default reviewer's key is
@@ -302,7 +313,21 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # still mirrored as the most-recent review for backward compatibility with
     # older readers and the CLI eval harness until those are updated.
     review_payload = [m.to_dict() for m in review_moments]
-    if review_error is None:
+    if review_error is None and review_incomplete is not None:
+        # GR-1: an early stop writes no partial model snapshot and records no
+        # review error — the deterministic baseline stands and the attempt
+        # logs 'incomplete' with its reason. Persist that fallback in its own
+        # slot so the default view can honestly serve "the deterministic
+        # baseline" (finding 4) rather than a stale model snapshot.
+        store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
+        prior_attempts.append({
+            "attempt_id": attempt_id,
+            "reviewer_key": reviewer_key,
+            "outcome": "incomplete",
+            "incomplete": review_incomplete,
+        })
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
+    elif review_error is None:
         store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
         # F1 follow-up: a successful review RESOLVES this reviewer's active
         # error — the historical attempt log keeps what happened, but the
@@ -319,10 +344,14 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     else:
         # AGR-06: the model's slot stays EMPTY on failure — the deterministic
         # baseline (its own slot) is never overwritten, and the error state is
-        # explicit and separate. The fallback moments still mirror to the
-        # legacy file so older readers see a served review. F1 follow-up: the
-        # error record REPLACES this reviewer's previous active error (current
-        # status per reviewer), and carries the attempt id that failed.
+        # explicit and separate. GR-1: persist the fallback the pipeline just
+        # computed as the deterministic slot too (a run reviewed only by a model
+        # had none), so the default view serves the baseline it claims to serve
+        # instead of a stale model snapshot. The fallback moments still mirror
+        # to the legacy file so older readers see a served review. F1 follow-up:
+        # the error record REPLACES this reviewer's previous active error
+        # (current status per reviewer), and carries the attempt id that failed.
+        store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
         active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
         active.append({**review_error, "reviewer_key": reviewer_key, "attempt_id": attempt_id})
         store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
@@ -347,6 +376,13 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         attempt_rounds = rounds[_rounds_before:]
         if attempt_rounds:
             record["provider_rounds"] = [dict(r) for r in attempt_rounds]
+            # GR-1: per-review cost (estimated) and latency summed over THIS
+            # attempt's rounds only — a reused reviewer must not double-count.
+            record["cost_estimate_usd"] = round(sum(
+                r.get("cost_estimate_usd") or 0.0 for r in attempt_rounds), 6)
+            record["latency_ms"] = sum(r.get("latency_ms") or 0 for r in attempt_rounds)
+        record["cost_budget_usd"] = getattr(reviewer, "cost_budget_usd", None)
+        record["time_budget_s"] = getattr(reviewer, "time_budget_s", None)
         record["attempt_id"] = attempt_id
         store.write_derived(rs.run_id, rs.source_capture_id,
                             f"review_telemetry/{attempt_id}.json", record)
@@ -375,4 +411,5 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
         detector_results=detector_results, execution_quality=execution_quality,
         signature=signature, audit=audit,
         idempotent=result.idempotent, review_moments=review_moments,
+        review_error=review_error, review_incomplete=review_incomplete,
     )

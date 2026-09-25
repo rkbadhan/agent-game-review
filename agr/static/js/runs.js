@@ -14,8 +14,24 @@ function runsMatchesSearch(r, q) {
   if (!needle) return true;
   return (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
 }
+// R3 (coordinator review 2, item 2): a boilerplate main_finding must not
+// fall back to a verdict-shaped sentence here — the Outcome column already
+// shows the status badge and its own "X/Y checks" line right next to this
+// one, so "Failed — 0/1 checks." simply repeated it. chapters.js/moments.js
+// can fall back to a moment-specific "<Kind> during <Phase>" headline because
+// they hold the full moment (kind, phase_id, anchor step); this table's row
+// is the lightweight queue summary (agr/read.py's list_runs) — outcome
+// status/passed/total only, no moment kind or phase — and adding either
+// would mean changing that backend summary, out of scope here. The honest
+// fallback is a plain "no finding text" statement, styled the same as the
+// "no finding at all" case below, rather than fabricating check names this
+// row does not carry.
+function runRowFindingText(r) {
+  const finding = r.main_finding;
+  return groundedBoilerplateIds(finding) ? null : finding;
+}
 
-// Redesign follow-up: the page used to go straight from the eyebrow to the
+// The page used to go straight from the eyebrow to the
 // controls with no orientation — a reader couldn't tell how big the corpus
 // was, or how much of it still needed review, without scrolling to the
 // table's own meta line below the fold. sweepIdentityText (inbox.js) is the
@@ -44,13 +60,17 @@ function renderRunsStatLine() {
 }
 
 function renderRunsSurface(main) {
+  // Coordinator review 2, item 7: one page title ("Runs"), with the stat
+  // line ("27 runs · 27 unreviewed · …") as its subtitle right below —
+  // "Sweep triage queue" read as a second, competing title sitting directly
+  // above the stat line's own big "27 runs" count.
   const nav = el("div", "review-nav runs-page-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Sweep triage queue"));
+  head.append(el("span", "eyebrow", "Runs"));
   nav.append(head);
   const util = el("div", "review-util");
   if (state.runId) {
-    const back = el("button", "seg", "‹ Back to review");
+    const back = el("button", "seg"); back.append(icon("chevron-left"), document.createTextNode(" Back to review"));
     back.addEventListener("click", () => { state.view = "review"; render(); });
     util.append(back);
   }
@@ -79,7 +99,7 @@ function renderRunsControls(host) {
   host.textContent = "";
   let clear;
   const searchWrap = el("div", "runs-search-wrap");
-  const searchIcon = el("span", "runs-search-icon", "⌕");
+  const searchIcon = el("span", "runs-search-icon"); searchIcon.append(icon("search"));
   searchIcon.setAttribute("aria-hidden", "true");
   searchWrap.append(searchIcon);
   const search = el("input", "runs-search");
@@ -149,16 +169,26 @@ function renderRunsTable(host) {
   const all = (state.queue && state.queue.runs) || [];
   const runs = all.filter(r => runsMatchesSearch(r, state.runsSearch));
   const card = el("div", "card card-pad runs-table-card");
-  const tableMeta = el("div", "runs-table-meta");
-  const count = state.runsSearch
-    ? runs.length + " of " + all.length + (all.length === 1 ? " run" : " runs")
-    : runs.length + (runs.length === 1 ? " run" : " runs");
-  tableMeta.append(el("strong", null, count));
-  const sortLabel = (SORT_OPTIONS.find(([value]) => value === state.sort) || [null, "Triage priority"])[1];
-  tableMeta.append(el("span", null, "Sorted by " + sortLabel.toLowerCase()));
-  card.append(tableMeta);
+  // Coordinator review 2, item 7: this used to always repeat "N runs ·
+  // Sorted by …" — a duplicate of the page's own stat line above whenever
+  // nothing was actually narrowing the table (the overwhelmingly common
+  // case), and "Sorted by" duplicates what the Sort control's own selected
+  // option already says. It's worth a line only when a search or a filter
+  // has made this table's count differ from the sweep's total.
+  if (state.runsSearch || state.filters.size) {
+    const tableMeta = el("div", "runs-table-meta");
+    // `all` is already filter-narrowed (state.queue.runs, loaded with the
+    // active filters applied server-side) — only the client-side search
+    // narrows further, so "N of M" only makes sense against the search.
+    const label = state.runsSearch
+      ? runs.length + " of " + all.length + (all.length === 1 ? " run" : " runs") + " match your search"
+      : runs.length + (runs.length === 1 ? " run" : " runs") + " match the selected filters";
+    tableMeta.append(el("strong", null, label));
+    card.append(tableMeta);
+  }
   if (!runs.length) {
     const empty = el("div", "runs-empty");
+    empty.append(icon("search", "runs-empty-icon"));
     empty.append(el("strong", null, state.runsSearch
       ? "No runs match that search"
       : state.filters.size ? "No runs match the selected filters" : "No runs in this sweep"));
@@ -199,10 +229,17 @@ function renderRunsTable(host) {
   const t = el("table", "vs-table runs-table"
     + (showDuration ? " has-duration" : "")
     + (showCost ? " has-cost" : ""));
-  const headers = ["Session", "Outcome", "Main finding", "Review status"];
-  if (showDuration) headers.push("Duration");
-  if (showCost) headers.push("Cost");
-  t.append(rowEls("tr", headers, "th"));
+  // table-layout:auto with a shrink-to-fit hint on the short
+  // columns (.col-compact, width:1% in app.css) replaces the old ~20 lines
+  // of has-duration/has-cost nth-child width percentages — Session and Main
+  // finding (no compact class) simply take whatever space is left over.
+  const headerDefs = [["Session", null], ["Outcome", "col-compact"],
+    ["Main finding", null], ["Review status", "col-compact"]];
+  if (showDuration) headerDefs.push(["Duration", "col-compact num"]);
+  if (showCost) headerDefs.push(["Cost", "col-compact num"]);
+  const headRow = el("tr");
+  for (const [label, cls] of headerDefs) headRow.append(el("th", cls, label));
+  t.append(headRow);
 
   // Declared before runsRow so its `open()` (below) closes over the LIVE
   // value — read fresh at click time, not the 0 this had when runsRow was
@@ -230,27 +267,49 @@ function renderRunsTable(host) {
     tr.append(outTd);
 
     const mfTd = el("td", "runs-finding");
-    if (r.main_finding) {
+    const text = runRowFindingText(r);
+    if (text) {
       const finding = el("span",
         "runs-finding-text " + (r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg"),
-        leadFinding(r.main_finding, 112));
+        leadFinding(text, 112));
+      finding.title = r.main_finding;
+      mfTd.append(finding);
+    } else if (r.main_finding) {
+      // The generated "Grounded in quoted run evidence (evt_…)" summary: say
+      // what it is rather than repeat a list of event ids in the table.
+      const n = groundedBoilerplateIds(r.main_finding).length;
+      const finding = el("span", "runs-finding-text runs-finding-neg",
+        "Evidence-grounded finding · " + n + (n === 1 ? " quoted event" : " quoted events"));
       finding.title = r.main_finding;
       mfTd.append(finding);
     } else {
-      mfTd.append(el("span", "panel-dim", "No decisive finding"));
+      mfTd.append(el("span", "runs-finding-text runs-finding-none", "No decisive finding"));
     }
     tr.append(mfTd);
 
+    // A pill only when review status is something other than the
+    // default (U3 — every row showing the same bordered "Unreviewed" pill is
+    // noise, not signal). Unreviewed instead shows a small empty-circle icon;
+    // its label stays in the DOM as .sr-only text, not dropped, so a test's
+    // .inner_text() or a screen reader still reads "Unreviewed".
     const wf = r.workflow || {};
     const handled = wf.review_progress === "handled";
+    const inProgress = wf.review_progress === "in_progress";
+    const rsCls = handled ? "handled" : inProgress ? "progress" : "unreviewed";
     const rsTd = el("td");
-    const rsCls = handled ? "handled" : wf.review_progress === "in_progress" ? "progress" : "";
-    rsTd.append(el("span", "review-state " + rsCls,
-      handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label));
+    const label = handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label;
+    if (handled || inProgress) {
+      rsTd.append(el("span", "review-state " + rsCls, label));
+    } else {
+      const rs = el("span", "review-state unreviewed-icon");
+      rs.append(icon("circle"), el("span", "sr-only", label));
+      rs.title = label;
+      rsTd.append(rs);
+    }
     tr.append(rsTd);
 
-    if (showDuration) tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate"));
-    if (showCost) tr.append(td(fmtCost(r.cost) || "—", "vs-rate"));
+    if (showDuration) tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate num"));
+    if (showCost) tr.append(td(fmtCost(r.cost) || "—", "vs-rate num"));
 
     // U2 follow-up: `shown` is saved alongside the scroll offset so a return
     // to this table (below) can restore ENOUGH rows for that offset to mean
@@ -271,7 +330,7 @@ function renderRunsTable(host) {
   // happens here; outcome/status filtering is server-side via /queue), so
   // revealing more needs no extra request, just the next slice.
   const moreRow = el("tr", "runs-load-more-row");
-  const moreCell = el("td"); moreCell.colSpan = headers.length;
+  const moreCell = el("td"); moreCell.colSpan = headerDefs.length;
   const moreBtn = el("button", "seg", "");
   moreCell.append(moreBtn);
   moreRow.append(moreCell);

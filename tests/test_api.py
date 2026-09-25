@@ -37,6 +37,74 @@ def test_healthz(tmp_path):
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+    assert resp.json()["read_only"] is False
+
+
+# --- P0-5: read-only serve mode -----------------------------------------------
+
+def test_read_only_mode_rejects_every_write(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    with open(os.path.join(FIXTURES, "chess_best_move.atif.json"), encoding="utf-8") as fh:
+        analyze(json.load(fh), store)
+    client = TestClient(create_app(str(tmp_path / "store"), read_only=True))
+
+    assert client.get("/healthz").json()["read_only"] is True
+    # Reads still work.
+    assert client.get("/runs/chess_best_move__seed42").status_code == 200
+
+    # No route can start model work today, so every non-GET/HEAD request is
+    # rejected outright — the write routes as a representative sample.
+    assert client.post("/runs/chess_best_move__seed42/workflow",
+                        json={"disposition": "reviewed"}).status_code == 403
+    assert client.post("/runs/chess_best_move__seed42/feedback",
+                        json={"moment_id": "m1", "kind": "agree"}).status_code == 403
+    assert client.post("/runs/chess_best_move__seed42/lessons", json={}).status_code == 403
+    assert client.post("/events", json={"events": []}).status_code == 403
+
+
+def test_read_only_mode_off_by_default(tmp_path):
+    client, _ = _client(tmp_path, "chess_best_move.atif.json")
+    resp = client.post("/runs/chess_best_move__seed42/workflow",
+                        json={"disposition": "reviewed"})
+    assert resp.status_code != 403
+
+
+def test_read_only_mode_from_env_var(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGR_READ_ONLY", "1")
+    client = TestClient(create_app(str(tmp_path / "store")))
+    assert client.get("/healthz").json()["read_only"] is True
+    assert client.post("/events", json={"events": []}).status_code == 403
+
+
+def test_cmd_serve_read_only_flag_reaches_create_app(tmp_path, monkeypatch):
+    import argparse
+    import uvicorn
+    from agr import cli
+
+    captured = {}
+
+    class _FakeApp:
+        def __init__(self, read_only):
+            self.state = argparse.Namespace(agr_read_only=bool(read_only))
+
+    def fake_create_app(store, read_only=None):
+        captured["read_only"] = read_only
+        return _FakeApp(read_only)
+
+    def fake_run(app, host, port):
+        captured["app"] = app
+
+    monkeypatch.setattr("agr.api.create_app", fake_create_app)
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    args = argparse.Namespace(store=str(tmp_path / "store"), host="127.0.0.1", port=8000, read_only=True)
+    assert cli.cmd_serve(args) == 0
+    assert captured["read_only"] is True
+    assert isinstance(captured["app"], _FakeApp)
+
+    captured.clear()
+    args = argparse.Namespace(store=str(tmp_path / "store"), host="127.0.0.1", port=8000, read_only=False)
+    assert cli.cmd_serve(args) == 0
+    assert captured["read_only"] is None
 
 
 def test_index_serves_the_spa(tmp_path):
@@ -200,6 +268,24 @@ def test_unknown_run_is_404(tmp_path):
     for suffix in ("", "/forensic", "/source", "/reviews"):
         resp = client.get(f"/runs/missing_run{suffix}")
         assert resp.status_code == 404
+
+
+def test_invalid_run_id_is_404_not_500(tmp_path):
+    """P0-4: a run_id that fails validate_run_id (path traversal) must not
+    surface as an unhandled 500 from the store's own path validation.
+
+    A literal ".." is percent-encoded so the HTTP client doesn't collapse the
+    dot-segment itself before the request even reaches the server — the
+    traversal attempt has to actually arrive as run_id="..".
+    """
+    client, _ = _client(tmp_path, "chess_best_move.atif.json")
+    for suffix in ("", "/forensic", "/source", "/reviews", "/audit", "/divergence"):
+        resp = client.get(f"/runs/%2e%2e{suffix}")
+        assert resp.status_code == 404, f"{suffix!r}: got {resp.status_code}"
+    resp = client.get("/runs/%2e%2e/compare", params={"left": "a", "right": "b"})
+    assert resp.status_code == 404
+    resp = client.post("/runs/%2e%2e/workflow", json={"disposition": "reviewed"})
+    assert resp.status_code == 404
 
 
 # --- runs surface + write path (§4.3, §4.13, §4.17) --------------------------

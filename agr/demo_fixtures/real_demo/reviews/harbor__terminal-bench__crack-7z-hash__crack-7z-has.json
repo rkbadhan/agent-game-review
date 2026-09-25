@@ -1,0 +1,11 @@
+{
+ "run_id": "harbor__terminal-bench/crack-7z-hash__crack-7z-has",
+ "task_id": "terminal-bench/crack-7z-hash",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:42:11Z",
+ "source_hash": "sha256:7586eeb24abb6daf10b362566b581cd1a24d36bcc7b79d89f4e7b6dc3dc9bd1b",
+ "moment_count": 0,
+ "selected_count": 0,
+ "moments": []
+}

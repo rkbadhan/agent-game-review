@@ -272,3 +272,65 @@ def test_lessons_are_written_beside_the_immutable_source(tmp_path, load_fixture)
     after = read.get_source(store, RUN)
     assert after["verified"] is True
     assert after["computed_source_hash"] == before["computed_source_hash"]
+
+
+# --- GR-2: the linked experiment becomes a validated alternative ---------------
+
+
+def _approved_experiment(store):
+    ln = _lesson(store)
+    lessons.set_lesson_status(store, RUN, ln["lesson_id"], base_version=0,
+                              actor="rk", status="approved_for_test")
+    lessons.propose_experiment(store, RUN, ln["lesson_id"], actor="rk")
+    return ln["lesson_id"]
+
+
+def test_validated_alternative_needs_the_full_rule(tmp_path, load_fixture):
+    """Validated only when the experiment supports a benefit, records outcome
+    checks, AND discloses comparison limits — all three."""
+    store = _enriched_store(tmp_path, load_fixture)
+    lid = _approved_experiment(store)
+    lessons.record_experiment_outcome(
+        store, RUN, lid, result="validated", actor="rk",
+        stated_benefit="submissions are gated on the full candidate set",
+        outcome_checks=["C1 passed on the new run"],
+        comparison_limits=["single task family; 3 seeds"])
+    alt = lessons.validated_alternative(store, RUN)
+    assert alt["validation"]["status"] == "validated_by_comparable_experiment"
+    assert alt["moment_id"]
+    assert not any("No outcome verification" in lim for lim in alt["limits"])
+
+
+def test_validated_result_without_disclosures_stays_proposed(tmp_path, load_fixture):
+    store = _enriched_store(tmp_path, load_fixture)
+    lid = _approved_experiment(store)
+    # result says validated, but comparison limits are missing → rule not met.
+    lessons.record_experiment_outcome(
+        store, RUN, lid, result="validated", actor="rk",
+        stated_benefit="x", outcome_checks=["C1 passed"], comparison_limits=[],
+        measured_improvement="12% fewer tokens")
+    alt = lessons.validated_alternative(store, RUN)
+    assert alt["validation"]["status"] == "proposed"
+    assert any("No outcome verification" in lim for lim in alt["limits"])
+    assert any("12% fewer tokens" in lim for lim in alt["limits"])
+
+
+def test_failed_experiment_stays_visible(tmp_path, load_fixture):
+    store = _enriched_store(tmp_path, load_fixture)
+    lid = _approved_experiment(store)
+    lessons.record_experiment_outcome(store, RUN, lid, result="failed", actor="rk")
+    alt = lessons.validated_alternative(store, RUN)
+    assert alt["validation"]["status"] == "failed"
+
+
+def test_record_outcome_validates_the_result_token(tmp_path, load_fixture):
+    store = _enriched_store(tmp_path, load_fixture)
+    lid = _approved_experiment(store)
+    with pytest.raises(lessons.LessonError):
+        lessons.record_experiment_outcome(store, RUN, lid, result="maybe", actor="rk")
+
+
+def test_no_experiment_means_no_validated_alternative(tmp_path, load_fixture):
+    store = _enriched_store(tmp_path, load_fixture)
+    _lesson(store)  # a lesson, but no experiment proposal
+    assert lessons.validated_alternative(store, RUN) is None

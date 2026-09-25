@@ -7,6 +7,8 @@ name = "agent-game-review"
 version = "0.2.0"
 description = "Deterministic core for Agent Game Review (post-hoc behavioural review of agent runs)."
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [project.scripts]
 agr = "agr.cli:main"
@@ -47,7 +49,10 @@ packages = ["agr"]
 # all three must ship or the installed demo renders unstyled and dead (AGR-01:
 # the wheel previously omitted the CSS and every script). demo_fixtures/*.json
 # backs `agr demo-store`.
-agr = ["static/*.html", "static/*.css", "static/js/*.js", "demo_fixtures/*.json"]
+agr = ["static/*.html", "static/*.css", "static/js/*.js", "static/*.svg",
+       "static/fonts/*.woff2", "static/fonts/*.txt", "static/ICONS-LICENSE",
+       "demo_fixtures/*.json",
+       "demo_fixtures/real_demo/runs/*.json", "demo_fixtures/real_demo/reviews/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

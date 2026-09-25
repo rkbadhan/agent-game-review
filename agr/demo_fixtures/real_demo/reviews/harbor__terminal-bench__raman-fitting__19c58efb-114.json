@@ -1,0 +1,229 @@
+{
+ "run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
+ "task_id": "terminal-bench/raman-fitting",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-25T15:47:19Z",
+ "source_hash": "sha256:1f0cfef86f9bd640e506bfe55aff7a28210fd4c4e73e5eae65906569ef243707",
+ "moment_count": 2,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_sem_1",
+   "run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
+   "source_capture_id": "capture_1f0cfef86f9b",
+   "candidate_id": "sem_1",
+   "detector": "model",
+   "kind": "omission",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_028",
+    "evt_033",
+    "evt_058",
+    "evt_078",
+    "evt_083"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_028",
+       "quote": "Neither NumPy nor SciPy is installed"
+      },
+      {
+       "event_id": "evt_033",
+       "quote": "That region is unrelated to the requested first-order graphene G band"
+      },
+      {
+       "event_id": "evt_058",
+       "quote": "The global peak search is dominated by three narrow artifacts near 3,750, 6,330, and 10,300"
+      },
+      {
+       "event_id": "evt_078",
+       "quote": "The focused diagnostic confirms the spectrum is in wavelength units and contains the 632.9 nm reference line"
+      },
+      {
+       "event_id": "evt_083",
+       "quote": "[Harbor trial hit its deadline: AgentTimeoutError]"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_028",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_033",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_058",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_078",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_083",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "termination",
+     "expected": "run_timed_out",
+     "validation": "passed",
+     "recomputed": "run_timed_out"
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Grounded in quoted run evidence (evt_028, evt_033, evt_058, evt_078, evt_083), a likely explanation for the outcome.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 28,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "strategy drift: prolonged investigation, deliverable never produced",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [
+    {
+     "locus": "environment",
+     "rank": 2,
+     "rationale": "NumPy and SciPy were absent (evt_028), so the fit had to be hand-rolled in stdlib Python, raising the cost of having deferred it to the end.",
+     "detail": null
+    }
+   ],
+   "better_action": "Once the decimal-comma two-column format was confirmed (~evt_024), time-box exploration: commit to the best current axis hypothesis, hand-code a simple Lorentzian grid/least-squares fit over the two candidate G/2D windows, and write out the four parameters as a best-effort answer before any further diagnosis.",
+   "instructional_value": "Canonical case of investigation consuming the entire run budget while the required deliverable is never produced \u2014 the agent correctly identified irrelevant features (evt_033) yet kept exploring for ~50 more events and timed out with nothing. Teaches deliver-first discipline and time-boxing under a hard deadline.",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  },
+  {
+   "moment_id": "mom_sem_2",
+   "run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
+   "source_capture_id": "capture_1f0cfef86f9b",
+   "candidate_id": "sem_2",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_048",
+    "evt_063",
+    "evt_073"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_048",
+       "quote": "The x axis is almost certainly absolute optical wavenumber, not Raman shift"
+      },
+      {
+       "event_id": "evt_063",
+       "quote": "rather than Raman shift: the strong 6,329 feature is the familiar 632.8 nm calibration/laser line"
+      },
+      {
+       "event_id": "evt_073",
+       "quote": "strongly identifies the excitation as a 632.8 nm (HeNe) laser rather than 532 nm"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_048",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_063",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_073",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Grounded in quoted run evidence (evt_048, evt_063, evt_073), a likely explanation for the outcome.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 48,
+   "phase_id": "ph_03",
+   "selected": false,
+   "selection_rank": null,
+   "superseded_by": "mom_sem_1",
+   "taxonomy_verdict": "hypothesis churn without commitment (analysis paralysis)",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "At evt_063, freeze 'wavelength axis with a 632.8 nm reference line' as the working hypothesis and immediately attempt the G/2D Lorentzian fit near the predicted band positions; only reopen the calibration question if that concrete fit fails.",
+   "instructional_value": "Shows how repeatedly re-litigating one interpretive decision blocks all downstream deliverables; teaches the commit-and-test loop (hypothesize, fit, falsify) over open-ended diagnose-and-reopen.",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

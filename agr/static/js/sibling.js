@@ -73,7 +73,7 @@ function renderSiblingReport(report) {
     t.append(tr);
   });
   scroll.append(t);
-  const details = el("details", "vs-drill");
+  const details = el("details", "vs-drill disclosure");
   details.append(el("summary", null, "Full aligned timeline (" + report.aligned.length + " actions)"));
   details.append(scroll);
   card.append(details);

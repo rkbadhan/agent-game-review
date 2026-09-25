@@ -1,0 +1,100 @@
+{
+ "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
+ "task_id": "terminal-bench/polyglot-c-py",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-25T15:56:42Z",
+ "source_hash": "sha256:742d09baa518b7d45dc35d32be26026a49916a588af9f33945a54aa69304e129",
+ "moment_count": 1,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_sem_1",
+   "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
+   "source_capture_id": "capture_742d09baa518",
+   "candidate_id": "sem_1",
+   "detector": "model",
+   "kind": "omission",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_028",
+    "evt_029"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    },
+    {
+     "type": "termination",
+     "expected": "run_completed",
+     "validation": "passed",
+     "recomputed": "run_completed"
+    },
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_029",
+       "quote": "[Harbor trial closed normally \u2014 no observed submission signal]"
+      },
+      {
+       "event_id": "evt_028",
+       "quote": "no server running on /tmp/tmux-0/default"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_029",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_028",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Requirement check terminal_bench_reward was still failing at submission.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 2,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 28,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "prolonged off-task hardening without submission",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "once both runtimes printed correct Fibonacci values (evt_008), do one final confirmation run of the exact acceptance surface (python3 main.py.c N and gcc build + run for the tested Ns) and stop, submitting the existing file rather than chasing warning-free -Werror compilation and 64-bit overflow parity",
+   "instructional_value": "teaches satisficing against the actual task contract: a correct deliverable existed early, and unbounded hardening plus heavyweight self-verification consumed the run; learners should time-box polish and submit the working artifact first",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

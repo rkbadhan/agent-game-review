@@ -75,7 +75,7 @@ def _page(browser, **kwargs):
 
 
 @contextlib.contextmanager
-def _serving(store_root):
+def _serving(store_root, read_only=False):
     """Serve one store on a free port for the duration of a test."""
     import uvicorn
 
@@ -84,7 +84,7 @@ def _serving(store_root):
     port = sock.getsockname()[1]
     sock.close()
 
-    config = uvicorn.Config(create_app(store_root), host="127.0.0.1", port=port,
+    config = uvicorn.Config(create_app(store_root, read_only=read_only), host="127.0.0.1", port=port,
                             log_level="warning")
     srv = uvicorn.Server(config)
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -284,6 +284,36 @@ def test_version_comparison_surface(versions_server):
         assert _query(other.url)["run"]
 
         browser.close()
+
+
+def test_read_only_mode_hides_save_comparison(tmp_path):
+    """P0-5 follow-up: the version-comparison surface's Save button is a
+    write action (POST /comparisons) not covered by the original read-only
+    audit — it must be hidden like Agree/disposition/lesson controls, since
+    a visitor clicking it would only ever see "Save failed" (the server
+    rejects it independently)."""
+    from agr import demo  # noqa: PLC0415
+
+    demo.build_demo_store(Store(str(tmp_path / "store")), FIXTURES)
+    with _serving(str(tmp_path / "store"), read_only=True) as base:
+        with sync_playwright() as pw:
+            browser = _launch(pw)
+            page = _page(browser)
+            page.goto(base)
+            page.wait_for_selector(".run-header")
+
+            page.click("#versions-button")
+            page.wait_for_selector(".vs-construct")
+
+            # Preview is a read (GET /comparisons/preview) and stays available.
+            assert page.query_selector('button:has-text("Preview match")') is not None
+            page.click('button:has-text("Preview match")')
+            page.wait_for_selector(".vs-report")
+
+            # Save (POST /comparisons) is a write and must be gone.
+            assert page.query_selector('button:has-text("Save comparison")') is None
+
+            browser.close()
 
 
 def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server):
@@ -509,6 +539,9 @@ def test_browser_back_to_runs_refreshes_the_table_under_restored_filters(server)
         # Both fixture runs have a failing check (overall outcome FAILED), so
         # "Passed" is guaranteed to actually shrink the queue (to 0) rather
         # than coincidentally leaving it at 2 either way.
+        # The sidebar's filter chips and sort now sit behind a
+        # collapsed-by-default "Filter" disclosure — open it first.
+        page.click(".queue-filter-disclosure summary")
         page.click('#queue-controls .fchip:has-text("Passed")')
         page.wait_for_function("() => location.search.includes('filter=passed')")
 
@@ -577,6 +610,12 @@ def test_execution_quality_matrix_expands_to_the_runs_behind_it(patterns_server)
         page.wait_for_selector(".run-header")
 
         page.click("#fleet-button")
+        # This fixture's two runs carry no generation telemetry at all, so
+        # every dimension is unevaluated and the table sits behind a
+        # collapsed-by-default disclosure (mostly-unevaluated matrices lead
+        # the page with dead rows otherwise) — open it first.
+        page.wait_for_selector(".eq-table-disclosure summary")
+        page.click(".eq-table-disclosure summary")
         page.wait_for_selector(".eq-table")
         headers = [h.inner_text().upper() for h in page.query_selector_all(".eq-table th")]
         assert "DIMENSION" in headers and "PASS" in headers and "FAIL" in headers
@@ -741,11 +780,12 @@ def test_workspace_and_full_trace(server):
         for block in ("situation", "observed consequence", "ai interpretation"):
             assert block in card
 
-        # §4.2 shell: the header states the review mode and the harness version,
-        # and the eyebrow carries the run's position in the active queue.
+        # §4.2 shell: the header states the review mode and the harness version.
+        # The run's position in the active queue is the top bar's stepper
+        # (#topbar-stepper), not the header itself.
         assert "Deterministic review" in page.query_selector(".shell-meta").inner_text()
         assert "harbor-0.9" in page.query_selector(".run-subtitle").inner_text()
-        assert "OF 2" in page.query_selector(".run-header .eyebrow").inner_text().upper()
+        assert "OF 2" in page.query_selector("#topbar-stepper").inner_text().upper()
 
         # Evidence panel (§4.9): trust cards carry evidence grade + attribution in
         # plain language, and evidence is grouped by claim.
@@ -768,6 +808,19 @@ def test_workspace_and_full_trace(server):
         # generation_usage / generation_timestamps added alongside the detectors.
         assert len(page.query_selector_all("#trace-body .caps .cap")) == 12
         assert len(page.query_selector_all("#trace-body .fsteps .step")) == 9
+
+        # P0-2: no panel body ever renders a stringified DOM node.
+        assert "[object " not in page.query_selector("#trace-body").inner_text()
+        # The drawer opens with the first step already selected and its own
+        # panel lit (agent_message for s1) — not four "Select a step."
+        # placeholders — so a reader sees real content immediately; the other
+        # panes collapse to their header only, per the existing "collapse
+        # empty panels" behaviour.
+        assert page.query_selector("#trace-body .step.active").get_attribute("data-step-id") == "s1"
+        lit0 = page.query_selector("#trace-body .pane.lit")
+        assert lit0.get_attribute("data-panel") == "agent_message"
+        placeholders = page.query_selector_all("#trace-body .panels .pane.empty .pb .dim")
+        assert len(placeholders) == 0  # collapsed panes hide their body outright, not a placeholder
 
         # Selecting the artifact step lights the artifact panel (synchronization).
         page.click('#trace-body .step[data-step-id="s7"]')
@@ -835,6 +888,37 @@ def test_workspace_and_full_trace(server):
         browser.close()
 
 
+def test_zero_count_filter_chips_are_not_oversized(server):
+    """A generic .empty "no content" placeholder style (padding:26px 14px, for
+    panels like "No runs in this sweep") used to collide with the filter
+    chips' own same-named zero-count state class, at equal CSS specificity —
+    the placeholder's padding won the cascade and blew up every zero-count
+    chip (and zero-count "More filters" option) into a huge circle instead of
+    the small fade the chip actually wants."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        # The sidebar's filter chips sit behind a collapsed-by-default
+        # "Filter" disclosure — open it first.
+        page.click(".queue-filter-disclosure summary")
+        page.wait_for_selector(".fchip")
+
+        heights = page.eval_on_selector_all(
+            ".filters .fchip", "els => els.map(e => e.getBoundingClientRect().height)")
+        assert heights, "expected at least one filter chip"
+        assert max(heights) - min(heights) < 2, f"chip heights should match regardless of state: {heights}"
+        assert max(heights) < 36, f"a filter chip should stay pill-sized, not balloon: {heights}"
+
+        # At least one chip in this fixture set has a zero count (e.g.
+        # Passed), and it must carry the renamed state class, not the
+        # colliding generic one.
+        assert page.query_selector(".fchip.is-empty") is not None
+        assert page.query_selector(".fchip.empty") is None
+
+        browser.close()
+
+
 def test_triage_inbox_disposition_and_feedback(server):
     """The runs inbox (§4.3): sweep summary, filter chips, disposition menu, and
     Tier-1 moment feedback all round-trip through the write API and update in place."""
@@ -842,6 +926,9 @@ def test_triage_inbox_disposition_and_feedback(server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
+        # The sweep summary and filter chips sit behind a collapsed-by-
+        # default "Filter" disclosure — open it first.
+        page.click(".queue-filter-disclosure summary")
 
         # Sweep summary + full queue (no filter) lists both fixtures.
         page.wait_for_selector("#sweep-summary .sweep-stats")
@@ -925,8 +1012,12 @@ def test_rapid_run_switch_never_lets_a_stale_response_win(server):
 
         assert page.query_selector("#crumb-task").inner_text() == "greeting-report"
         assert page.query_selector('.run[data-run-id="greeting_report__seed7"].active') is not None
-        mono = page.query_selector(".run-subtitle .mono")
-        assert mono.inner_text() == "greeting_report__seed7"
+        # The header meta line shows a short id (a copy icon copies the full
+        # one) instead of the full id wrapped in mono — the full value is
+        # still there, in the short id's own title tooltip.
+        short_id = page.query_selector(".run-subtitle .run-id-short")
+        assert short_id.inner_text() == "seed7"
+        assert short_id.get_attribute("title") == "greeting_report__seed7"
 
         assert errors == []
         browser.close()
@@ -1057,6 +1148,9 @@ def test_entry_preference_chooses_where_a_run_opens(server):
 
         # Switch the preference to the fast path; the next run opens on Key moments.
         # The stored value is "first_moment" for that choice.
+        # Open the sidebar's collapsed-by-default "Filter" disclosure to
+        # reach "Open at".
+        page.click(".queue-filter-disclosure summary")
         page.select_option('.sort-row:has-text("Open at") select', "first_moment")
         page.click('.run[data-run-id="greeting_report__seed7"]')
         _wait_chip(page, "Key moments")
@@ -1122,9 +1216,13 @@ def test_first_session_guidance_and_glossary(server):
         page.wait_for_selector("#intro-modal.open", state="hidden")
 
         # The glossary is reachable from the app bar and defines terms in plain
-        # language, grouped by kind — the same labels the badges carry.
+        # language, grouped by kind — the same labels the badges carry. It is
+        # the Glossary tab of the same help dialog Shortcuts opened above
+        # (#help-modal), not a separate modal.
         page.click("#glossary-button")
-        page.wait_for_selector("#glossary-modal.open")
+        page.wait_for_selector("#help-modal.open")
+        assert page.query_selector("#help-tab-glossary").get_attribute("class").split() == ["help-tab", "active"]
+        assert page.is_visible("#help-panel-glossary")
         gloss = page.query_selector("#glossary-body").inner_text()
         assert "REVIEW MODE" in gloss.upper() and "ATTRIBUTION" in gloss.upper()  # group headings
         assert "Deterministic review" in gloss and "Linked to outcome" in gloss  # defined terms
@@ -1137,7 +1235,8 @@ def test_first_session_guidance_and_glossary(server):
         page.click(".trace-chip")
         page.wait_for_selector("#trace-drawer.open")
         page.keyboard.press("g")
-        page.wait_for_selector("#glossary-modal.open")
+        page.wait_for_selector("#help-modal.open")
+        assert page.is_visible("#help-panel-glossary")
 
         browser.close()
 
@@ -1228,6 +1327,9 @@ def test_review_position_is_shareable_in_the_url(server):
         page.wait_for_selector(".opp-table")
         assert _query(page.url)["chapter"] == ["opportunities"]
         assert "moment" not in _query(page.url)  # not a moment chapter
+        # The sidebar's filter chips sit behind a collapsed-by-default
+        # "Filter" disclosure — open it first.
+        page.click(".queue-filter-disclosure summary")
         page.click('.fchip:has-text("Failed")')
         page.wait_for_function("() => location.search.includes('filter=failed')")
         assert _query(page.url)["filter"] == ["failed"]
@@ -1264,6 +1366,11 @@ def test_review_position_is_shareable_in_the_url(server):
         # .fchip-label, not the chip's own inner_text — a non-zero match
         # count now renders as a sibling .fchip-count badge (the redesign's
         # per-chip counts), which inner_text would otherwise fold in.
+        # Open the sidebar's collapsed-by-default "Filter" disclosure on
+        # this freshly-loaded page too. The shared
+        # link also reopens the trace drawer, whose shade covers the
+        # sidebar, so this sets .open directly rather than clicking through it.
+        other.evaluate("document.querySelector('.queue-filter-disclosure').open = true")
         assert other.query_selector(".fchip.on .fchip-label").inner_text() == "Failed"
 
         # A link to a run this store does not hold falls back to the queue rather
@@ -1286,8 +1393,9 @@ def test_compare_surface_names_the_sides_it_is_comparing(compare_server):
         page.wait_for_selector(".run-header")
 
         # Two reviews exist, so comparing them is reachable through the unified
-        # Compare control (T1/§4.16) and defaults to baseline → model.
-        page.click('.compare-menu summary')
+        # Compare control (T1/§4.16) and defaults to baseline → model. "More
+        # analysis" and "Compare" share one merged "⋯" trigger (.more-analysis).
+        page.click('.more-analysis summary')
         page.click('.compare-item:has-text("Between reviewers")')
         page.wait_for_selector(".compare-list")
         q = _query(page.url)
@@ -1368,8 +1476,10 @@ def test_side_panels_resize_and_remember(server):
         assert width("queue") == 504
 
         # Double-click restores the default.
+        # The sidebar's default width is 240px (nav + queue), not the old
+        # run-queue-only column's 296px.
         page.query_selector("#queue-resizer").dblclick()
-        assert width("queue") == 296
+        assert width("queue") == 240
 
         browser.close()
 
@@ -1395,6 +1505,64 @@ def lesson_server(tmp_path):
               reviewer=ScriptedReviewer(payload, source="model:test"))
     with _serving(root) as base:
         yield base
+
+
+@pytest.fixture
+def read_only_lesson_server(tmp_path):
+    """Same store shape as lesson_server, but served with --read-only, so the
+    P0-5 test below can check every write control it would otherwise show."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "chess_best_move.atif.json")
+    payload = {"moments": [{
+        "candidate_id": m["candidate_id"], "anchor_event_ids": m["anchor_event_ids"],
+        "kind": m["kind"], "polarity": m["polarity"], "affected_checks": m["affected_checks"],
+        "structured_facts": _grounded_facts(m),
+        "behaviour_tags": ["stopped_enumeration"],
+        "better_action": "Check the complete candidate set before submission",
+        "root_cause_candidates": [{"locus": "evaluation_harness",
+                                   "rationale": "Add an unresolved-requirement submission gate"}],
+        "eval_lesson_recommended": True,
+    } for m in read.get_review(store, CHESS)["review_moments"] if m.get("selected")]}
+    _analyzed(store, "chess_best_move.atif.json",
+              reviewer=ScriptedReviewer(payload, source="model:test"))
+    with _serving(root, read_only=True) as base:
+        yield base
+
+
+def test_read_only_mode_hides_write_controls(read_only_lesson_server):
+    """P0-5: a run in a --read-only demo shows no Agree, disposition, or
+    lesson-action control — the server rejects the writes independently, but
+    the UI should not offer a button that only comes back 403."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(read_only_lesson_server)
+
+        page.wait_for_selector(".run")
+        page.click(f'.run[data-run-id="{CHESS}"]')
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+
+        # Moment-level write actions are gone; "View evidence" (read) stays.
+        assert page.query_selector('.moment-actions button:has-text("Agree")') is None
+        assert page.query_selector('.moment-actions button:has-text("Not decisive")') is None
+        assert page.query_selector('.moment-actions button:has-text("Correct label")') is None
+        assert page.query_selector('.moment-actions .primary') is not None
+
+        # The disposition control in the bottom bar is gone.
+        assert page.query_selector('.disp-wrap') is None
+        assert page.query_selector('.bottom-bar button:has-text("Open full trace")') is not None
+
+        # The lesson section still shows its content, but no write actions.
+        det = page.query_selector(".moment-lesson")
+        assert det is not None
+        det.click()
+        page.wait_for_selector(".moment-lesson-body .kv-block")
+        assert page.query_selector(".lesson-actions") is None
+
+        browser.close()
 
 
 def test_eval_lesson_lifecycle_and_experiment(lesson_server):
@@ -1571,10 +1739,12 @@ def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tm
 
             page.click('.run[data-run-id="unverified__seed10"]')
             page.wait_for_function("() => { const l = document.querySelector('.finding-outcome');"
-                                   " return l && /no verifier checks/i.test(l.textContent); }")
+                                   " return l && /no verifier evidence/i.test(l.textContent); }")
             headline = page.query_selector(".main-finding-title").inner_text()
             outcome_line = page.query_selector(".finding-outcome").inner_text()
-            assert "no verifier checks" in outcome_line.lower()
+            # GR-1: verifier-optional runs state task success as unverified.
+            assert "task success unverified" in headline.lower()
+            assert "no verifier evidence" in outcome_line.lower()
             assert "passed" not in headline.lower() and "passed" not in outcome_line.lower()
 
             assert errors == []
@@ -1702,3 +1872,233 @@ def test_superseded_check_never_makes_a_reconciled_pass_read_as_failed(tmp_path)
 
             assert errors == []
             browser.close()
+
+
+@pytest.fixture
+def alternatives_server(tmp_path):
+    """A store whose chess moment carries a grounded SUGGESTED alternative with an
+    information cutoff (GR-2), so the moment card's Alternatives block is live and
+    the observed/validated kinds are correctly absent."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "chess_best_move.atif.json")
+    payload = {"moments": [{
+        "candidate_id": m["candidate_id"], "anchor_event_ids": m["anchor_event_ids"],
+        "kind": m["kind"], "polarity": m["polarity"], "affected_checks": m["affected_checks"],
+        "structured_facts": _grounded_facts(m),
+        "better_action": "Check the complete candidate set before submission",
+        "alternatives": [{
+            "kind": "suggested",
+            "proposal": "Enumerate every winning move before submitting.",
+            "replaces_decision": {"event_id": m["anchor_event_ids"][0],
+                                  "description": "submitted without enumerating"},
+            "information_available": [m["anchor_event_ids"][0]],
+        }],
+    } for m in read.get_review(store, CHESS)["review_moments"] if m.get("selected")]}
+    _analyzed(store, "chess_best_move.atif.json",
+              reviewer=ScriptedReviewer(payload, source="model:test"))
+    with _serving(root) as base:
+        yield base
+
+
+def test_moment_card_shows_grounded_alternatives_by_kind(alternatives_server):
+    """GR-2: a suggestion renders under "Suggested alternative" with its
+    information cutoff, and no alternative is labelled validated without a linked
+    experiment."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(alternatives_server)
+
+        page.wait_for_selector(".run")
+        page.click(f'.run[data-run-id="{CHESS}"]')
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+        page.click(".moment-detail summary")
+
+        text = page.query_selector(".moment-card").inner_text()
+        assert "Suggested alternative" in text
+        # The information cutoff is shown beside the suggestion it constrains.
+        assert "information available before it" in text.lower()
+        # Neither of the store-backed kinds exists here, so neither is shown, and
+        # no "Validated by …" label is invented.
+        assert "observed in a comparable passing run" not in text.lower()
+        assert "Validated by" not in text
+
+        browser.close()
+
+
+@pytest.fixture
+def recovery_server(tmp_path):
+    """A store with a deterministic good-recovery moment, so the GR-3 supported
+    label, its idea category and its mechanical basis are live on the card."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "tool_failure_recovery.atif.json")
+    with _serving(root) as base:
+        yield base
+
+
+def test_moment_card_shows_supported_recovery_category_and_basis(recovery_server):
+    """GR-3: a recovery moment renders its idea category, the mechanically
+    supported label, and the basis behind it — on a deterministic-only review."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(recovery_server)
+
+        page.wait_for_selector(".run")
+        page.click('.run[data-run-id="solve_task__recovered"]')
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+
+        text = page.query_selector(".moment-card").inner_text()
+        assert "Good recovery from a failed plan" in text
+        assert "Supported recovery" in text
+        assert "mechanical basis" in text
+
+        browser.close()
+
+
+@pytest.fixture
+def multi_category_server(tmp_path):
+    """A recovery run whose moment ALSO carries a model `poor_query` tag, so the
+    card must render two categories, each with its own basis (PR #92 review)."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "tool_failure_recovery.atif.json")
+    payload = {"moments": [{
+        "candidate_id": m["candidate_id"], "anchor_event_ids": m["anchor_event_ids"],
+        "kind": m["kind"], "polarity": m["polarity"], "affected_checks": m["affected_checks"],
+        "structured_facts": _grounded_facts(m),
+        "behaviour_tags": ["poor_query"],
+    } for m in read.get_review(store, "solve_task__recovered")["review_moments"] if m.get("selected")]}
+    _analyzed(store, "tool_failure_recovery.atif.json",
+              reviewer=ScriptedReviewer(payload, source="model:test"))
+    with _serving(root) as base:
+        yield base
+
+
+def test_moment_card_shows_every_category_with_its_own_basis(multi_category_server):
+    """PR #92 review: a secondary category must not be counted toward coverage but
+    left invisible — both categories render, each with its own basis."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(multi_category_server)
+
+        page.wait_for_selector(".run")
+        page.click('.run[data-run-id="solve_task__recovered"]')
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+
+        text = page.query_selector(".moment-card").inner_text()
+        assert "Good recovery from a failed plan" in text
+        assert "Bad query in a tool call" in text
+        chips = page.query_selector_all(".moment-category-chip")
+        assert len(chips) == 2
+        assert "mechanical basis" in text
+        assert "model basis" in text
+
+        browser.close()
+
+
+@pytest.fixture
+def neutral_label_server(tmp_path):
+    """A deterministic submission moment whose only label is the neutral
+    "Requirement unresolved at submission" (no category) — its mechanical basis
+    must still render (UI regression from the per-category-basis change)."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "chess_best_move.atif.json")
+    with _serving(root) as base:
+        yield base
+
+
+def test_neutral_label_without_a_category_still_shows_its_basis(neutral_label_server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(neutral_label_server)
+
+        page.wait_for_selector(".run")
+        page.click(f'.run[data-run-id="{CHESS}"]')
+        _wait_chip(page, "Overview")
+        page.click('.outline > .ochip:has-text("Key moments")')
+        page.wait_for_selector(".moment-card")
+
+        text = page.query_selector(".moment-card").inner_text()
+        assert "Requirement unresolved at submission" in text
+        assert "mechanical basis" in text  # the basis must not be dropped
+        assert not page.query_selector_all(".moment-category-name")
+
+        browser.close()
+
+
+@pytest.fixture
+def review_meta_server(tmp_path):
+    """A chess run with a pre-computed model review + its model/date metadata, so
+    the header's GR-4 provenance chip is live."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    _analyzed(store, "chess_best_move.atif.json",
+              reviewer=ScriptedReviewer({"moments": []},
+                                        source="model:accounts/fireworks/models/kimi-k3"))
+    cap = store.latest_capture_id(CHESS)
+    store.write_derived(CHESS, cap, "review_meta.json", {
+        "model:accounts/fireworks/models/kimi-k3": {
+            "model": "accounts/fireworks/models/kimi-k3",
+            "reviewed_at": "2026-08-24T12:00:00Z", "origin": "precomputed"}})
+    with _serving(root) as base:
+        yield base
+
+
+def test_review_header_shows_precomputed_reviewer_model_and_date(review_meta_server):
+    """GR-4: a pre-computed review names its reviewer model and date in the header."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(review_meta_server)
+
+        page.wait_for_selector(".run")
+        page.click(f'.run[data-run-id="{CHESS}"]')
+        _wait_chip(page, "Overview")
+
+        text = page.query_selector(".shell-meta").inner_text()
+        assert "accounts/fireworks/models/kimi-k3" in text
+        assert "2026-08-24" in text
+
+        browser.close()
+
+
+@pytest.fixture
+def demo_override_server(tmp_path):
+    """The synthetic demo (demo_confirmed contracts), so the header's GR-4 demo
+    override chip is live."""
+    root = str(tmp_path / "store")
+    store = Store(root)
+    from agr import demo as _demo
+    _demo.build_demo_store(store, FIXTURES)
+    with _serving(root) as base:
+        yield base
+
+
+def test_review_header_labels_a_demo_contract_override(demo_override_server):
+    """GR-4: a demo contract is not human-confirmed, and the header says so."""
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(demo_override_server)
+
+        page.wait_for_selector(".run")
+        page.click(".run")
+        _wait_chip(page, "Overview")
+
+        text = page.query_selector(".shell-meta").inner_text()
+        assert "Demo override" in text
+        assert "not human-confirmed" in text
+
+        browser.close()

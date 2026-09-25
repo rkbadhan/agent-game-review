@@ -1,7 +1,10 @@
 "use strict";
 
 // --- state -------------------------------------------------------------------
-const state = { runId: null, view: "review", chapter: "moments", forensic: null, review: null,
+// P0-5: read-only demo mode (set from /healthz during boot) hides write
+// controls (Agree, disposition, lessons); the server enforces the same
+// restriction independently, so this is a UI convenience, not the boundary.
+const state = { readOnly: false, runId: null, view: "review", chapter: "moments", forensic: null, review: null,
   // F4: bumped on every run or reviewer selection so an out-of-order response
   // to an EARLIER selection can tell it is stale (its captured token no
   // longer matches state.loadToken) and discard itself instead of overwriting

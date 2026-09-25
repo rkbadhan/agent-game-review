@@ -44,7 +44,12 @@ function chapterMeta() {
     overview: { available: true },
     moments: { available: moments.length > 0, corrected: hasCorrection(),
       reason: rv.review_mode === "not_reviewable" ? "The captured evidence is insufficient for a trustworthy review."
-        : rv.review_mode === "model_enriched" ? "No decisive moment was selected." : "No candidate moment was flagged deterministically." },
+        : rv.review_status === "no_decisive_moment" ? "No decisive moment established."
+        : rv.review_status === "all_proposals_rejected" ? "All proposals were rejected by evidence validation."
+        : rv.review_status === "review_failed" ? "The model review failed; the deterministic baseline is shown."
+        : rv.review_status === "incomplete" ? "Review processing stopped early."
+        : rv.review_status === "moments_found" ? "No decisive moment was selected for this view."
+        : "No candidate moment was flagged deterministically." },
     checks: { available: true },
     opportunities: { available: (rv.opportunity_rows || []).length > 0,
       reason: "This run reached no opportunity window this review could measure." },
@@ -77,7 +82,7 @@ function renderChapterFooter(main) {
   // primary Overview → Key moments → Checks sequence, so they get a way back
   // instead of a broken position in that cycle.
   if (i < 0) {
-    const back = el("button", "button subtle", "‹ Back to Overview");
+    const back = el("button", "button subtle"); back.append(icon("chevron-left"), document.createTextNode(" Back to Overview"));
     back.addEventListener("click", () => setChapter("overview"));
     foot.append(back);
     foot.append(el("span", "chapter-progress", "More analysis"));
@@ -109,8 +114,29 @@ function durationOf(run) {
 
 // --- guided workspace --------------------------------------------------------
 const MOMENT_ICONS = {};
-function momentTypeLabel(m) { return m.taxonomy_verdict ? m.taxonomy_verdict : (m.polarity === "positive" ? "Strength" : "Concern"); }
+// taxonomy_verdict is a raw backend token ("strategy_drift") —
+// display-only sentence case ("Strategy drift"), never touching the stored
+// value or any correction/relabel flow that reads the raw token.
+function humanizeToken(s) { const t = String(s).replace(/_/g, " "); return t.charAt(0).toUpperCase() + t.slice(1); }
+function momentTypeLabel(m) { return m.taxonomy_verdict ? humanizeToken(m.taxonomy_verdict) : (m.polarity === "positive" ? "Strength" : "Concern"); }
 function momentTagClass(m) { return m.polarity === "positive" ? "strength" : "concern"; }
+// R3 boilerplate headline (coordinator review 2, item 2): the fallback used to
+// be the run's OVERALL verdict sentence — the same sentence the persistent
+// header line and, on Overview, the finding card's own "Task outcome" line
+// already state — so a boilerplate moment's headline read as if THIS moment
+// were the reason the whole run passed or failed, and the same sentence
+// appeared three times on one page. The headline is moment-specific instead:
+// "<Kind> during <Phase>" (both already sentence case), or "<Kind> at step N"
+// when the moment has no phase (indexEvents, above, stamps _stepIdx onto
+// every moment from its first anchor event); "<Kind>" alone as the last
+// resort. Evidence ids still render underneath wherever this is used.
+function momentHeadline(m, rv) {
+  const kind = momentTypeLabel(m);
+  const phase = ((rv && rv.phases) || []).find(p => p.phase_id === m.phase_id);
+  if (phase && phase.label) return kind + " during " + phase.label;
+  if (m._stepIdx != null) return kind + " at step " + (m._stepIdx + 1);
+  return kind;
+}
 function fmtVal(v) { return v == null ? "—" : (Array.isArray(v) ? v.join(", ") : String(v)); }
 
 // Map every event id to the source step that emitted it, and stamp each moment
@@ -187,8 +213,8 @@ function renderOverviewChapter(main) {
   // unknown requirement coverage could read "All checks passed." here while
   // the header (or the outcome pill right below) correctly said otherwise.
   const narrative = outcomeNarrative(rv) || {
-    tone: "warn", headline: "Unverified —",
-    detail: "no atomic check evidence was captured, so nothing here should be read as a pass.",
+    tone: "warn", headline: "Task success unverified —",
+    detail: "no atomic check evidence was captured, so nothing here should be read as a pass; supported execution findings still appear below.",
   };
   const mf = mainFinding();
 
@@ -202,10 +228,21 @@ function renderOverviewChapter(main) {
     // finding naming every failing check can run to several lines, which
     // defeats "headline"; the untruncated statement is always one click away
     // via "Open in Key moments →" below.
-    const headline = el("h2", "main-finding-title " + (mf.polarity === "positive" ? "pass" : "fail"),
-      leadFinding(mf.summary, 220));
-    if (leadFinding(mf.summary, 220) !== mf.summary) headline.title = mf.summary;
+    card.classList.add(mf.polarity === "positive" ? "pass" : "fail");
+    // R3: the generated "Grounded in quoted run evidence (evt_…)" summary is a
+    // list of event ids, not a headline — display-only, lead with the moment's
+    // kind and phase instead and show the ids as small mono links.
+    const boilerIds = groundedBoilerplateIds(mf.summary);
+    const headlineText = boilerIds ? momentHeadline(mf, rv) : leadFinding(mf.summary, 220);
+    const headline = el("h2", "main-finding-title", headlineText);
+    if (!boilerIds && headlineText !== mf.summary) headline.title = mf.summary;
     card.append(headline);
+    if (boilerIds) {
+      const evRow = el("div", "moment-anchors");
+      evRow.append(el("span", "moment-anchors-label", "Evidence"));
+      evRow.append(evidenceCell(boilerIds, f));
+      card.append(evRow);
+    }
     if (mf.polarity === "positive")
       card.append(el("p", "finding-sub", "Strongest behaviour observed in this run."));
     // One important content rule (spec): keep tool failure, recovery, and the
@@ -219,7 +256,8 @@ function renderOverviewChapter(main) {
     }
   } else {
     const tone = narrative.tone === "pass" ? "pass" : narrative.tone === "fail" ? "fail" : "warn";
-    card.append(el("h2", "main-finding-title " + tone, narrative.headline.replace(/\s*—$/, "")));
+    card.classList.add(tone);
+    card.append(el("h2", "main-finding-title", narrative.headline.replace(/\s*—$/, "")));
     card.append(el("p", "finding-sub", rv.review_mode === "not_reviewable"
       ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
       : "No decisive finding was selected for this run."));
@@ -296,20 +334,34 @@ function renderOverviewChapter(main) {
   }
   // AGR-06: explicit review states — a model failure is never rendered as
   // "no decisive moment", and a valid empty review is named as such.
+  // GR-1: every review ends in exactly one status. The first two are the only
+  // successful outcomes; the rest are explicit non-abstentions, never rendered
+  // as "no decisive moment".
   if ((rv.review_errors || []).length) {
     for (const e of rv.review_errors) {
-      const r = el("div", "limit-item"); r.append(el("span", "chip", "model review failed"));
+      const r = el("div", "limit-item"); r.append(el("span", "chip", vocab("review_status", "review_failed").label.toLowerCase()));
       r.append(document.createTextNode((e.reviewer_key || "model") + " — " + (e.error_type || "error") +
         "; the deterministic baseline is shown. " + (e.message || "")));
       limits.append(r);
     }
-  } else if (rv.review_status === "empty") {
-    const r = el("div", "limit-item"); r.append(el("span", "chip", "review complete"));
-    r.append(document.createTextNode("The model review returned no moments for this run."));
+  } else if (rv.review_status === "no_decisive_moment") {
+    const r = el("div", "limit-item"); r.append(el("span", "chip", vocab("review_status", rv.review_status).label));
+    r.append(document.createTextNode("The model review completed and found nothing it could ground — it is not padded."));
     limits.append(r);
-  } else if (rv.review_status === "no_selection") {
-    const r = el("div", "limit-item"); r.append(el("span", "chip", "no grounded moments"));
-    r.append(document.createTextNode("Moments were proposed but none passed evidence validation; none are shown."));
+  } else if (rv.review_status === "all_proposals_rejected") {
+    const rejected = (rv.review_counts || {}).rejected;
+    const r = el("div", "limit-item"); r.append(el("span", "chip", vocab("review_status", rv.review_status).label));
+    r.append(document.createTextNode(rejected != null
+      ? rejected + " proposal(s) failed evidence validation; none are shown."
+      : "Every proposed moment failed evidence validation; none are shown."));
+    limits.append(r);
+  } else if (rv.review_status === "incomplete") {
+    const r = el("div", "limit-item"); r.append(el("span", "chip", vocab("review_status", rv.review_status).label));
+    r.append(document.createTextNode("Processing stopped early (budget, timeout or missing evidence chunks); the deterministic baseline is shown."));
+    limits.append(r);
+  } else if (rv.review_status === "not_configured") {
+    const r = el("div", "limit-item"); r.append(el("span", "chip", vocab("review_status", rv.review_status).label));
+    r.append(document.createTextNode("No model reviewer is configured for this store; the deterministic baseline is shown."));
     limits.append(r);
   }
   if (rv.watermark) {
@@ -332,20 +384,32 @@ function renderExecutionQuality(rv, forensic) {
   };
   const table = el("table", "sig-table");
   table.append(rowEls("tr", ["Dimension", "Status", "Evidence"], "th"));
+  // Status is a small dot + label, not a mono pill that wraps a
+  // two-word status onto two lines; a dimension with nothing to measure
+  // never earns its own table row at all — every "not evaluated" dimension
+  // collapses into one summary line below instead (with a disclosure for
+  // which dimension and what capability each one is missing).
+  let evaluatedRows = 0;
+  const unevaluated = [];
   for (const key of Object.keys(labels)) {
     const metric = efficiency[key] || {
       evaluated: false, status: "unevaluated", unmet_capabilities: ["not captured"],
     };
-    const tr = el("tr"); tr.append(td(labels[key]));
     const status = metric.status || (metric.evaluated ? "healthy" : "unevaluated");
+    if (status === "unevaluated") {
+      unevaluated.push({ label: labels[key], missing: metric.unmet_capabilities || [] });
+      continue;
+    }
+    evaluatedRows++;
+    const tr = el("tr"); tr.append(td(labels[key]));
     const statusCell = el("td");
-    statusCell.append(el("span", "chip eq-" + status,
-      status === "issue" ? "⚠ issue" : status === "healthy" ? "✓ healthy" : "— not evaluated"));
+    const statusEl = el("span", "eq-status");
+    statusEl.append(el("span", "dot " + (status === "issue" ? "partial" : "complete")));
+    statusEl.append(document.createTextNode(status === "issue" ? "Issue" : "Healthy"));
+    statusCell.append(statusEl);
     tr.append(statusCell);
     const evidence = el("td");
-    if (!metric.evaluated) {
-      evidence.append(document.createTextNode("Missing: " + (metric.unmet_capabilities || []).join(", ")));
-    } else if (key === "context_bloat" && metric.violations) {
+    if (key === "context_bloat" && metric.violations) {
       evidence.append(document.createTextNode(metric.violations + " generation(s) · peak "
         + fmtCompact(metric.peak_input_tokens) + " input tokens"));
     } else if (key === "latency" && metric.violations) {
@@ -365,7 +429,18 @@ function renderExecutionQuality(rv, forensic) {
     }
     tr.append(evidence); table.append(tr);
   }
-  card.append(table);
+  if (evaluatedRows) card.append(table);
+  if (unevaluated.length) {
+    const allMissing = [...new Set(unevaluated.flatMap(u => u.missing))];
+    const det = el("details", "eq-unevaluated disclosure");
+    if (evaluatedRows) det.classList.add("eq-unevaluated-under-table");
+    det.append(el("summary", null, unevaluated.length + " dimension" + (unevaluated.length === 1 ? "" : "s")
+      + " not measurable — missing " + allMissing.join(", ")));
+    const body = el("div", "eq-unevaluated-body");
+    for (const u of unevaluated) body.append(el("div", null, u.label + ": missing " + u.missing.join(", ")));
+    det.append(body);
+    card.append(det);
+  }
   const findings = eq.findings || [];
   if (findings.length) {
     const titles = {
@@ -376,7 +451,7 @@ function renderExecutionQuality(rv, forensic) {
     const list = el("div", "eq-findings");
     for (const finding of findings) {
       const facts = finding.structured_facts || [];
-      const item = el("details", "eq-finding");
+      const item = el("details", "eq-finding disclosure");
       const summary = el("summary");
       summary.append(el("strong", null, titles[finding.detector] || finding.detector));
       summary.append(document.createTextNode(" · " + facts.length + " event-level violation(s)"));
@@ -522,7 +597,7 @@ function renderChecksChapter(main) {
     const bits = [];
     if (supersededCount) bits.push(supersededCount + " superseded by a later check");
     if (staleCount) bits.push(staleCount + " stale (invalidated by a later action)");
-    csec.append(el("p", "check-warn", "⚠ " + bits.join("; ") + " — excluded from the current outcome below."));
+    csec.append(el("p", "check-warn callout callout-warn", "⚠ " + bits.join("; ") + " — excluded from the current outcome below."));
   }
   const list = el("div", "check-list");
   for (const c of checks) {
@@ -543,18 +618,18 @@ function renderChecksChapter(main) {
     d.append(sum);
     const body = el("div", "check-body");
     if (c.superseded_by)
-      body.append(el("div", "check-warn", "⚠ superseded by " + c.superseded_by
+      body.append(el("div", "check-warn callout callout-warn", "⚠ superseded by " + c.superseded_by
         + " — this observation (historical status: " + (c.status || "?").toUpperCase()
         + ") no longer counts toward the run's outcome."));
     else if (c.stale_reason)
-      body.append(el("div", "check-warn", "⚠ stale — " + c.stale_reason
+      body.append(el("div", "check-warn callout callout-warn", "⚠ stale — " + c.stale_reason
         + "; this " + (c.status || "?").toUpperCase() + " no longer counts as a current pass."));
     body.append(kvLine("Expected", fmt(c.expected) || "—"));
     body.append(kvLine("Observed", fmt(c.observed) || "—"));
     const mapped = (c.contract_item_ids || []).map(id => (itemById[id] || {}).description || id);
     body.append(kvLine("Covers contract", mapped.length ? mapped.join("; ") : "No mapped contract item"));
     for (const w of (contract.warnings || []).filter(w => (w.check_ids || []).includes(c.check_id)))
-      body.append(el("div", "check-warn", "⚠ " + warnKind(w.warning_type) + " — " + w.message));
+      body.append(el("div", "check-warn callout callout-warn", "⚠ " + warnKind(w.warning_type) + " — " + w.message));
     d.append(body); list.append(d);
   }
   if (!checks.length) list.append(el("p", "chapter-lede", "This run recorded no atomic verifier checks."));
@@ -567,7 +642,7 @@ function renderChecksChapter(main) {
     const wsec = el("div", "card card-pad");
     wsec.append(el("p", "eyebrow", "Requirement warnings"));
     for (const w of warns) {
-      const row = el("div", "warn-row");
+      const row = el("div", "warn-row callout callout-warn");
       row.append(el("div", "warn-kind", warnKind(w.warning_type)));
       row.append(el("div", "warn-msg", w.message));
       wsec.append(row);
@@ -700,18 +775,22 @@ function renderLessonInline(container, m) {
   av.append(el("span", "lesson-status", "Status · " + status)); approval.append(av);
   container.append(approval);
 
-  const done = status === "rejected" || status === "superseded";
-  const actions = el("div", "lesson-actions");
-  actions.append(lessonButton("Approve for test", "primary",
-    status === "proposed", () => approveLessonForTest(m)));
-  actions.append(lessonButton("Edit lesson", "", !done,
-    () => renderLessonEditor(container, m, lesson)));
-  actions.append(lessonButton("Reject", "",
-    status === "proposed" || status === "approved_for_test", () => rejectLesson(m)));
-  actions.append(lessonButton("Create regression-eval proposal", "",
-    status === "approved_for_test" && !(lesson && lesson.experiment_proposal),
-    () => proposeExperiment(lesson)));
-  container.append(actions);
+  // P0-5: read-only demo mode hides the lesson write actions outright — the
+  // server rejects the write independently (agr/api.py).
+  if (!state.readOnly) {
+    const done = status === "rejected" || status === "superseded";
+    const actions = el("div", "lesson-actions");
+    actions.append(lessonButton("Approve for test", "primary",
+      status === "proposed", () => approveLessonForTest(m)));
+    actions.append(lessonButton("Edit lesson", "", !done,
+      () => renderLessonEditor(container, m, lesson)));
+    actions.append(lessonButton("Reject", "",
+      status === "proposed" || status === "approved_for_test", () => rejectLesson(m)));
+    actions.append(lessonButton("Create regression-eval proposal", "",
+      status === "approved_for_test" && !(lesson && lesson.experiment_proposal),
+      () => proposeExperiment(lesson)));
+    container.append(actions);
+  }
 
   if (lesson && lesson.experiment_proposal) container.append(experimentProposalCard(lesson));
 }
@@ -741,7 +820,7 @@ function experimentProposalCard(lesson) {
   wrap.append(kvBlock("Primary measure", p.primary_measure || "—"));
   wrap.append(kvBlock("Guardrails", (p.guardrails || []).join(", ") || "—"));
   wrap.append(el("p", "chapter-lede", "Numeric success thresholds are set by the experiment owner — the generator does not invent them."));
-  if (p.status !== "approved") {
+  if (p.status !== "approved" && !state.readOnly) {
     const actions = el("div", "lesson-actions");
     actions.append(lessonButton("Approve proposal", "primary", true, () => approveExperiment(lesson)));
     wrap.append(actions);

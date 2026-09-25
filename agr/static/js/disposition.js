@@ -16,22 +16,26 @@ function renderBottomBar(main) {
   traceBtn.addEventListener("click", () => openTrace(null));
   bar.append(traceBtn);
 
-  const dispWrap = el("div", "disp-wrap");
-  const dispBtn = el("button", "button");
-  const dispLabel = wf.review_progress === "handled" && wf.disposition ? vocab("disposition", wf.disposition).label + " ✓" : "Set disposition";
-  dispBtn.append(document.createTextNode(dispLabel)); dispBtn.append(el("span", "shortcut", "D"));
-  // F4: disposition writes to state.runId at click time (writeWorkflow below)
-  // — disabled while a newer run/reviewer selection is still loading, same
-  // reasoning as the moment-level annotation actions in moments.js.
-  if (state.loading) { dispBtn.disabled = true; dispBtn.title = "Loading the selected run — try again once it finishes."; }
-  dispBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleDisposition(); });
-  const menu = el("div", "disp-menu" + (state.dispOpen ? " open" : "")); menu.id = "disp-menu";
-  for (const [val, label] of DISPOSITIONS) {
-    const b = el("button", null, label);
-    b.addEventListener("click", () => setDisposition(val));
-    menu.append(b);
+  // P0-5: read-only demo mode hides the disposition control outright — the
+  // server rejects the write independently (agr/api.py).
+  if (!state.readOnly) {
+    const dispWrap = el("div", "disp-wrap");
+    const dispBtn = el("button", "button");
+    const dispLabel = wf.review_progress === "handled" && wf.disposition ? vocab("disposition", wf.disposition).label + " ✓" : "Set disposition";
+    dispBtn.append(document.createTextNode(dispLabel)); dispBtn.append(el("span", "shortcut", "D"));
+    // F4: disposition writes to state.runId at click time (writeWorkflow below)
+    // — disabled while a newer run/reviewer selection is still loading, same
+    // reasoning as the moment-level annotation actions in moments.js.
+    if (state.loading) { dispBtn.disabled = true; dispBtn.title = "Loading the selected run — try again once it finishes."; }
+    dispBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleDisposition(); });
+    const menu = el("div", "disp-menu" + (state.dispOpen ? " open" : "")); menu.id = "disp-menu";
+    for (const [val, label] of DISPOSITIONS) {
+      const b = el("button", null, label);
+      b.addEventListener("click", () => setDisposition(val));
+      menu.append(b);
+    }
+    dispWrap.append(dispBtn, menu); bar.append(dispWrap);
   }
-  dispWrap.append(dispBtn, menu); bar.append(dispWrap);
 
   const nextBtn = el("button", "button moss");
   nextBtn.append(document.createTextNode("Next unhandled → ")); nextBtn.append(el("span", "shortcut", "N"));

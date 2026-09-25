@@ -11,62 +11,71 @@
 <script>try{var t=localStorage.getItem('agr-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 </head>
 <body>
-<header class="appbar">
-  <button class="icon-button mobile-toggle" id="queue-toggle" aria-label="Open run queue">☰</button>
-  <div class="brand"><div class="brand-mark"></div><span>Agent Game Review</span></div>
-  <div class="crumbs"><span id="crumb-sweep">Sweep</span><span>›</span><strong id="crumb-task">Select a run</strong></div>
-  <div class="app-actions">
-    <!-- T1 primary navigation: Runs · Patterns · Compare versions. -->
-    <button class="icon-button appbar-action" id="runs-button"
-            title="Runs: the sweep triage queue">Runs</button>
-    <button class="icon-button appbar-action" id="fleet-button"
-            title="Patterns: tool failures and recovery episodes across every run (F)">Patterns</button>
-    <button class="icon-button appbar-action" id="versions-button"
-            title="Compare versions on a matched task slice (V)">Compare versions</button>
-    <button class="icon-button appbar-action" id="glossary-button"
-            title="Glossary of review terms (G)">Glossary</button>
-    <button class="icon-button" id="help-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
-    <button class="icon-button" id="theme-toggle" aria-label="Toggle light/dark" title="Toggle theme">◐</button>
-    <!-- Narrow-screen overflow: on mobile the labelled nav buttons above are
-         hidden and reached through this menu instead. Each item is a thin proxy
-         that clicks its real (hidden) button, so there is one set of handlers. -->
-    <details class="appbar-menu" id="appbar-menu">
-      <summary class="icon-button" aria-label="More actions" title="More">⋯</summary>
-      <div class="appbar-menu-list">
-        <button type="button" data-proxy="runs-button">Runs</button>
-        <button type="button" data-proxy="fleet-button">Patterns</button>
-        <button type="button" data-proxy="versions-button">Compare versions</button>
-        <button type="button" data-proxy="glossary-button">Glossary</button>
-        <button type="button" data-proxy="help-button">Keyboard shortcuts</button>
-        <button type="button" data-proxy="theme-toggle">Toggle light / dark</button>
-      </div>
-    </details>
-    <div class="avatar" id="reviewer-avatar" title="Reviewer">RK</div>
-  </div>
-</header>
-
+<div class="shade" id="sidebar-shade"></div>
 <div class="workspace" id="workspace">
-  <aside class="queue" id="queue">
-    <div class="queue-head">
-      <p class="eyebrow">Runs inbox</p>
-      <div id="sweep-summary"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="brand"><div class="brand-mark"></div><span>Agent Game Review</span></div>
+      <button class="icon-button mobile-toggle sidebar-close" id="sidebar-close" aria-label="Close menu"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#x"></use></svg></button>
+      <button class="icon-button sidebar-collapse" id="sidebar-collapse" aria-label="Collapse sidebar" title="Collapse sidebar">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-left"></use></svg>
+      </button>
     </div>
-    <div class="queue-tools" id="queue-controls"></div>
-    <div id="run-list"></div>
+    <nav class="sidebar-nav">
+      <button class="sidebar-nav-item" id="runs-button" title="Runs: the sweep triage queue">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#list-tree"></use></svg><span class="sidebar-nav-label">Runs</span></button>
+      <button class="sidebar-nav-item" id="fleet-button" title="Patterns: tool failures and recovery episodes across every run (F)">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#layers"></use></svg><span class="sidebar-nav-label">Patterns</span></button>
+      <button class="sidebar-nav-item" id="versions-button" title="Compare versions on a matched task slice (V)">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#git-compare"></use></svg><span class="sidebar-nav-label">Compare versions</span></button>
+    </nav>
+
+    <!-- The run queue only makes sense while investigating a run — a
+         workspace destination (Runs/Patterns/Compare) hides it via
+         body.workspace-mode below, leaving the nav above as the sidebar's
+         only content there. -->
+    <aside class="queue" id="queue">
+      <details class="queue-filter-disclosure">
+        <summary><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-down"></use></svg>Filter</summary>
+        <div class="queue-head">
+          <p class="eyebrow">Runs inbox</p>
+          <div id="sweep-summary"></div>
+        </div>
+        <div class="queue-tools" id="queue-controls"></div>
+      </details>
+      <div id="run-list"></div>
+    </aside>
+
+    <div class="sidebar-bottom">
+      <button class="icon-button" id="help-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#keyboard"></use></svg></button>
+      <button class="icon-button" id="glossary-button" aria-label="Glossary" title="Glossary of review terms (G)">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#book-open"></use></svg></button>
+      <button class="icon-button" id="theme-toggle" aria-label="Toggle light/dark" title="Toggle theme"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#moon"></use></svg></button>
+      <div class="avatar" id="reviewer-avatar" title="Reviewer">RK</div>
+    </div>
   </aside>
 
-  <button class="resizer" id="queue-resizer" aria-label="Resize the runs inbox"
+  <button class="resizer" id="queue-resizer" aria-label="Resize the sidebar"
           aria-orientation="vertical" title="Drag to resize · double-click to reset"></button>
 
-  <main class="review-space" id="main">
-    <div class="empty" id="placeholder" style="margin-top:60px">Select a run to begin the review.</div>
-  </main>
+  <div class="main-col">
+    <div class="topbar">
+      <button class="icon-button mobile-toggle" id="queue-toggle" aria-label="Open menu"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#menu"></use></svg></button>
+      <div class="crumbs"><span id="crumb-sweep">Sweep</span><span>›</span><strong id="crumb-task">Select a run</strong></div>
+      <div class="topbar-stepper" id="topbar-stepper"></div>
+    </div>
+    <main class="review-space" id="main">
+      <div class="empty" id="placeholder">Select a run to begin the review.</div>
+    </main>
+  </div>
 
   <button class="resizer" id="evidence-resizer" aria-label="Resize the evidence panel"
           aria-orientation="vertical" title="Drag to resize · double-click to reset"></button>
 
   <aside class="evidence-panel" id="evidence-panel">
-    <button class="evidence-tab" id="evidence-tab" aria-label="Toggle evidence panel">Evidence</button>
+    <button class="evidence-tab" id="evidence-tab" aria-label="Toggle evidence panel">
+      <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-left"></use></svg>Evidence</button>
     <div id="evidence-body"><div class="panel-dim">Evidence for the selected moment appears here.</div></div>
   </aside>
 </div>
@@ -109,23 +118,36 @@
   </section>
 </div>
 
+<!-- One help dialog, two tabs: #help-button/"?" opens on Shortcuts,
+     #glossary-button/"G" opens on Glossary — the glossary is help content,
+     not a nav-level destination of its own. -->
 <div class="modal-shade" id="help-modal" aria-hidden="true">
-  <section class="modal">
-    <h2>Review shortcuts</h2>
-    <p>Move quickly without sacrificing evidence checks.</p>
-    <div class="shortcut-grid">
-      <kbd>[ / ]</kbd><span>Previous / next review chapter (Overview · Key moments · Checks)</span>
-      <kbd>J / K</kbd><span>Next / previous key moment</span>
-      <kbd>E</kbd><span>Focus evidence for this moment</span>
-      <kbd>D</kbd><span>Open disposition menu</span>
-      <kbd>N</kbd><span>Open next unhandled run</span>
-      <kbd>T</kbd><span>Open full trace</span>
-      <kbd>C</kbd><span>Compare reviewer outputs (two reviews of this run)</span>
-      <kbd>V</kbd><span>Compare versions on a matched task slice</span>
-      <kbd>F</kbd><span>Patterns: tool failures and recovery episodes across every run</span>
-      <kbd>G</kbd><span>Open the glossary of review terms</span>
-      <kbd>?</kbd><span>Show this guide</span>
-      <kbd>Esc</kbd><span>Close the active layer</span>
+  <section class="modal modal-wide">
+    <div class="help-tabs" role="tablist">
+      <button class="help-tab active" id="help-tab-shortcuts" role="tab" aria-selected="true" aria-controls="help-panel-shortcuts">Shortcuts</button>
+      <button class="help-tab" id="help-tab-glossary" role="tab" aria-selected="false" aria-controls="help-panel-glossary">Glossary</button>
+    </div>
+    <div class="help-tab-panel" id="help-panel-shortcuts" role="tabpanel">
+      <p>Move quickly without sacrificing evidence checks.</p>
+      <div class="shortcut-grid">
+        <kbd>[ / ]</kbd><span>Previous / next review chapter (Overview · Key moments · Checks)</span>
+        <kbd>J / K</kbd><span>Next / previous key moment</span>
+        <kbd>E</kbd><span>Focus evidence for this moment</span>
+        <kbd>D</kbd><span>Open disposition menu</span>
+        <kbd>N</kbd><span>Open next unhandled run</span>
+        <kbd>T</kbd><span>Open full trace</span>
+        <kbd>C</kbd><span>Compare reviewer outputs (two reviews of this run)</span>
+        <kbd>V</kbd><span>Compare versions on a matched task slice</span>
+        <kbd>F</kbd><span>Patterns: tool failures and recovery episodes across every run</span>
+        <kbd>G</kbd><span>Open the glossary of review terms</span>
+        <kbd>?</kbd><span>Show this guide</span>
+        <kbd>Esc</kbd><span>Close the active layer</span>
+      </div>
+    </div>
+    <div class="help-tab-panel" id="help-panel-glossary" role="tabpanel" hidden>
+      <p>Plain-language definitions of the review terms. The interface leads with these
+         labels; the backend keeps its precise vocabulary behind them.</p>
+      <div id="glossary-body" class="glossary"></div>
     </div>
     <div class="modal-actions">
       <button class="button subtle" id="open-intro">What do these terms mean?</button>
@@ -134,21 +156,11 @@
   </section>
 </div>
 
-<div class="modal-shade" id="glossary-modal" aria-hidden="true">
-  <section class="modal modal-wide">
-    <h2>Glossary</h2>
-    <p>Plain-language definitions of the review terms. The interface leads with these
-       labels; the backend keeps its precise vocabulary behind them.</p>
-    <div id="glossary-body" class="glossary"></div>
-    <div class="modal-actions"><button class="button primary" data-close-modal>Done</button></div>
-  </section>
-</div>
-
 <div class="modal-shade" id="intro-modal" aria-hidden="true">
   <section class="modal">
     <h2>Reading a review</h2>
     <p>Four ideas carry the whole surface. You can reopen them any time from
-       <strong>Glossary</strong> in the top bar.</p>
+       <strong>Glossary</strong> in the sidebar.</p>
     <dl class="intro-list">
       <dt>Review mode</dt>
       <dd>Whether this run got only mechanically derived facts (<em>Deterministic</em>),

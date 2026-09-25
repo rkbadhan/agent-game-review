@@ -561,23 +561,43 @@ def _selector_arg(raw: str) -> dict:
     return {field: value}
 
 
-def cmd_demo_store(args) -> int:
-    """Build a synthetic two-configuration slice so §4.16 has something to compare.
+def _build_demo(store: Store, args) -> dict:
+    """Build the real demo when its dataset is present, else the synthetic slice.
 
-    The shipped fixtures are one harness with no sweep, so a fresh store shows the
-    comparison surface's empty state. This ingests them twice under two sweep ids,
-    improving most tasks on the candidate side, and leaves one unmatched run per
-    side so the match report's exclusions are real. Every run it writes is marked
-    ``synthetic_demo``.
+    GR-4: the real demo (real Terminal-Bench runs + their pre-computed model
+    reviews) is the default because it is what ``agr demo`` is meant to open on.
+    ``--synthetic`` forces the old behavior. Either way the synthetic comparison
+    slice is included so the Compare surface still has matched data.
     """
     from . import demo
-    fixtures_dir = demo.find_fixtures_dir(args.fixtures)
-    store = Store(args.store)
+    if not getattr(args, "synthetic", False):
+        real_dir = demo.find_real_demo_dir(getattr(args, "real_dir", None))
+        if real_dir is not None:
+            definition = demo.build_real_demo_store(store, real_dir)
+            print(f"Built the real demo store in {args.store!r} (real Terminal-Bench runs)")
+            print(f"  real runs     {definition['real_runs']}")
+            print(f"  model reviews {definition['model_reviews']} (pre-computed; no API key)")
+            if definition.get("stale_reviews"):
+                print(f"  WARNING      {definition['stale_reviews']} review(s) skipped: "
+                      "source hash does not match the run (re-bake with agr bake-reviews)",
+                      file=sys.stderr)
+            if definition.get("landing_run"):
+                print(f"  opens on      {definition['landing_run']}")
+            print(f"  comparison    {definition['axis']}")
+            return definition
+    fixtures_dir = demo.find_fixtures_dir(getattr(args, "fixtures", None))
     definition = demo.build_demo_store(store, fixtures_dir)
     print(f"Built a synthetic demo slice in {args.store!r} (source_type=synthetic_demo)")
     print(f"  baseline   {definition['baseline']}")
     print(f"  candidate  {definition['candidate']}")
     print(f"  axis       {definition['axis']}")
+    return definition
+
+
+def cmd_demo_store(args) -> int:
+    """Build the demo store (GR-4: real runs + pre-computed reviews, else synthetic)."""
+    store = Store(args.store)
+    _build_demo(store, args)
     print()
     print("  python3 -m agr serve --store " + args.store)
     print("  then: Compare versions (V) -> Preview match")
@@ -587,31 +607,45 @@ def cmd_demo_store(args) -> int:
 def cmd_demo(args) -> int:
     """Build the demo store and start the server — the five-minute path.
 
-    One command from clone to browsing the demo sweep:
+    One command from clone to browsing the demo:
 
         pip install .[api]
         agr demo
 
-    Builds a synthetic two-configuration slice in the store, then starts the
-    read API server so you can open the evidence-browser SPA in your browser.
-    All contracts are auto-confirmed so no watermarks appear.
+    Builds the real Terminal-Bench demo (with pre-computed model reviews, so no
+    API key is needed), then starts the read API server so you can open the
+    evidence-browser SPA in your browser. All contracts are auto-confirmed so no
+    watermarks appear.
     """
-    from . import demo
     # Default to a dedicated demo store so the working store is not polluted.
     # User can override via the global --store argument.
     if not args.store_explicit and args.store == ".agr-store":
         args.store = ".agr-demo"
-    fixtures_dir = demo.find_fixtures_dir(args.fixtures)
     store = Store(args.store)
-    definition = demo.build_demo_store(store, fixtures_dir)
-    print(f"Demo store built in {args.store!r}")
-    print(f"  baseline   {definition['baseline']['sweep_id']}")
-    print(f"  candidate  {definition['candidate']['sweep_id']}")
-    print(f"  axis       {definition['axis']}")
-    print(f"  runs       12 (5 matched + 2 unmatched)")
+    definition = _build_demo(store, args)
+    landing = definition.get("landing_run")
+    if landing:
+        print(f"  deep link  http://{args.host}:{args.port}/?run={landing}")
     print()
     _start_server(args)
     return 0
+
+
+def cmd_bake_reviews(args) -> int:
+    """GR-4: export real runs + their pre-computed model reviews into a dataset.
+
+    Run after scoring the corpus with the model reviewer, e.g.
+    ``agr review --all --provider … --model …``. The committed ``runs/`` and
+    ``reviews/`` let ``agr demo`` reproduce the reviews with no credential.
+    """
+    from . import demo
+    store = Store(args.store)
+    result = demo.bake_reviews(store, args.out, model=args.model)
+    print(f"Baked {result['runs']} review(s) into {result['out_dir']!r} "
+          f"(reviewer model {result['model']})")
+    print("  runs/    real trajectory sources")
+    print("  reviews/ pre-computed reviews (moments + reviewer model + date)")
+    return 0 if result["runs"] else 1
 
 
 def _start_server(args) -> None:
@@ -873,6 +907,9 @@ def cmd_eval(args) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
+            print(f"cannot run model reviewer: {exc}", file=sys.stderr)
+            return 3
         # Re-score the same runs with the model reviewer (overwrites the persisted
         # review moments with the model-enriched ones), then compare.
         try:
@@ -1012,6 +1049,22 @@ def _review_all(store: Store, reviewer, settings: dict, force: bool = False) -> 
             print(f"  ✗ {run_id} — model reviewer failed: {exc}", file=sys.stderr)
             failed += 1
             continue
+        # P0-3: analyze() falls back to the deterministic baseline instead of
+        # raising when the model reviewer errors (AGR-06) — a run whose
+        # Analysis carries review_error never ran the model, so it counts as
+        # failed, not as a served review.
+        if analysis.review_error is not None:
+            print(f"  ✗ {run_id} — model reviewer failed: "
+                  f"{analysis.review_error.get('message', analysis.review_error)}", file=sys.stderr)
+            failed += 1
+            continue
+        # GR-1: an early stop (budget, timeout, missing chunks) is not a served
+        # review either — count it as failed and name the reason.
+        if analysis.review_incomplete is not None:
+            print(f"  ✗ {run_id} — model reviewer stopped early: "
+                  f"{analysis.review_incomplete.get('reason', analysis.review_incomplete)}", file=sys.stderr)
+            failed += 1
+            continue
         moments = len(getattr(analysis, "review_moments", []) or [])
         print(f"  ✓ {run_id} — {moments} moment(s) · reviewer {reviewer.reviewer_key}")
         done += 1
@@ -1045,14 +1098,26 @@ def cmd_review(args) -> int:
     from .model_reviewer import make_reviewer
     from .userconfig import resolve_review_settings
 
+    # A bare usage error is checked before setting up a reviewer — no point
+    # demanding credentials/SDK for a command that has nothing to review.
+    if not getattr(args, "all", False) and not args.run_id:
+        print("nothing to review: give a run_id or use --all for the whole store", file=sys.stderr)
+        return 1
+
     # Settings resolve --flag > $AGR_REVIEW_MODEL / $OPENAI_BASE_URL > saved
     # `agr config` file > the provider's built-in default.
     settings = resolve_review_settings(args.provider, args.model, args.base_url)
     try:
-        reviewer = make_reviewer(settings["provider"], settings["model"], settings["base_url"])
+        reviewer = make_reviewer(
+            settings["provider"], settings["model"], settings["base_url"],
+            cost_budget_usd=getattr(args, "cost_budget", None),
+            time_budget_s=getattr(args, "time_budget", None))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
+        print(f"cannot run model reviewer: {exc}", file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 - auth/network error while constructing the client
         print(f"model reviewer failed: {exc}", file=sys.stderr)
         print("check credentials (ANTHROPIC_API_KEY / OPENAI_API_KEY) and connectivity",
@@ -1062,9 +1127,6 @@ def cmd_review(args) -> int:
     if getattr(args, "all", False):
         return _review_all(store, reviewer, settings, force=getattr(args, "force", False))
 
-    if not args.run_id:
-        print("nothing to review: give a run_id or use --all for the whole store", file=sys.stderr)
-        return 1
     try:
         analysis = _review_one(store, args.run_id, reviewer)
     except KeyError as exc:
@@ -1077,6 +1139,22 @@ def cmd_review(args) -> int:
         print(f"model reviewer failed: {exc}", file=sys.stderr)
         print("check credentials (ANTHROPIC_API_KEY / OPENAI_API_KEY) and connectivity",
               file=sys.stderr)
+        return 4
+    # P0-3: a caught model failure inside analyze() serves the deterministic
+    # fallback instead of raising (AGR-06) — treat that the same as any other
+    # review failure rather than reporting success.
+    if analysis.review_error is not None:
+        print(f"model reviewer failed: "
+              f"{analysis.review_error.get('message', analysis.review_error)}", file=sys.stderr)
+        print("check credentials (ANTHROPIC_API_KEY / OPENAI_API_KEY) and connectivity",
+              file=sys.stderr)
+        return 4
+    # GR-1: stopped early on the review's own budget/timeout — the run was not
+    # actually reviewed, so it does not report success.
+    if analysis.review_incomplete is not None:
+        print(f"model reviewer stopped early: "
+              f"{analysis.review_incomplete.get('reason', analysis.review_incomplete)}"
+              " — the deterministic baseline is served", file=sys.stderr)
         return 4
     _print_show(analysis)
     return 0
@@ -1129,6 +1207,9 @@ def cmd_config(args) -> int:
     except ValueError as exc:
         print(f"\nconfiguration error: {exc}", file=sys.stderr)
         return 2
+    except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
+        print(f"\nMISSING SDK: {exc}", file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 - auth/network error while constructing the client
         print(f"\nFAILED: {exc}", file=sys.stderr)
         print("hints: check the API key env (ANTHROPIC_API_KEY / OPENAI_API_KEY), "
@@ -1159,8 +1240,13 @@ def cmd_serve(args) -> int:
         print(f"cannot start server: {exc}", file=sys.stderr)
         print("install the API extras with:  pip install .[api]", file=sys.stderr)
         return 3
-    app = create_app(args.store)
-    print(f"serving read API for store {args.store!r} at http://{args.host}:{args.port}")
+    # P0-5: --read-only takes the flag; otherwise create_app falls back to the
+    # AGR_READ_ONLY env var, so a container platform can set it without a
+    # code-level flag.
+    read_only = True if getattr(args, "read_only", False) else None
+    app = create_app(args.store, read_only=read_only)
+    mode = " (read-only)" if getattr(app.state, "agr_read_only", False) else ""
+    print(f"serving read API for store {args.store!r} at http://{args.host}:{args.port}{mode}")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
@@ -1221,7 +1307,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     psv = sub.add_parser(
         "synthesize-verifier",
-        help="extract in-session pytest/npm/cargo/go test results into a --verifier sidecar (item 25)")
+        help="extract in-session pytest/npm/cargo/go test results into a --verifier sidecar")
     psv.add_argument("--adapter", required=True, choices=adapter_names(),
                      help="adapter to convert the source with (no ingest — pure preprocessing)")
     psv.add_argument("path", help="path to the harness log")
@@ -1231,7 +1317,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prs = sub.add_parser(
         "run-sweep",
-        help="run a task set through claude -p and ingest every result (item 26)")
+        help="run a task set through claude -p and ingest every result")
     prs.add_argument("task_set", help="path to a task-set JSON file (configuration_id + tasks)")
     prs.add_argument("--keep-workdir", action="store_true",
                      help="do not delete each task's working directory afterward (debugging)")
@@ -1273,14 +1359,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr.set_defaults(func=cmd_runs)
 
     pe = sub.add_parser("episodes",
-                        help="fleet view: group recovery episodes across every run (item 30)")
+                        help="fleet view: group recovery episodes across every run")
     pe.add_argument("--group-by", default="tool,error_signature",
                     help="comma-separated grouping dimensions: tool, error (alias for "
                          "error_signature), error_signature (default: tool,error_signature)")
     pe.set_defaults(func=cmd_episodes)
 
     pas = sub.add_parser("argument-shapes",
-                         help="argument-shape distribution per failing-call signature (item 31)")
+                         help="argument-shape distribution per failing-call signature")
     pas.add_argument("--min-group-size", type=int, default=1,
                      help="only show groups with at least this many failing calls (default: 1)")
     pas.set_defaults(func=cmd_argument_shapes)
@@ -1291,7 +1377,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pbeq.set_defaults(func=cmd_backfill_execution_quality)
 
-    pd = sub.add_parser("disposition", help="record a human review disposition on a run (§4.3.4)")
+    pd = sub.add_parser("disposition", help="record a human review disposition on a run")
     pd.add_argument("run_id", help="logical run id")
     pd.add_argument("--disposition", choices=list(workflow.DISPOSITIONS),
                     help="review disposition to set")
@@ -1305,13 +1391,17 @@ def build_parser() -> argparse.ArgumentParser:
     pd.set_defaults(func=cmd_disposition)
 
     pm = sub.add_parser("metrics",
-                        help="derived product measures over the analytics log (§4.21)")
+                        help="derived product measures over the analytics log")
     pm.set_defaults(func=cmd_metrics)
 
     pds = sub.add_parser("demo-store",
-                         help="build a synthetic two-configuration slice to demo §4.16")
+                         help="build the demo store (real runs + pre-computed reviews; --synthetic for the old slice)")
     pds.add_argument("--fixtures", default=None,
                      help="ATIF fixtures directory (default: built-in package data)")
+    pds.add_argument("--real-dir", default=None,
+                     help="real demo dataset dir (default: built-in package data)")
+    pds.add_argument("--synthetic", action="store_true",
+                     help="force the synthetic two-configuration slice instead of the real demo")
     pds.set_defaults(func=cmd_demo_store)
 
     pdemo = sub.add_parser("demo",
@@ -1322,14 +1412,26 @@ def build_parser() -> argparse.ArgumentParser:
                        help="bind port (default: $PORT, else 8000)")
     pdemo.add_argument("--fixtures", default=None,
                        help="ATIF fixtures directory (default: built-in package data)")
+    pdemo.add_argument("--real-dir", default=None,
+                       help="real demo dataset dir (default: built-in package data)")
+    pdemo.add_argument("--synthetic", action="store_true",
+                       help="force the synthetic two-configuration slice instead of the real demo")
     pdemo.set_defaults(func=cmd_demo)
 
+    pbr = sub.add_parser("bake-reviews",
+                         help="GR-4: export real runs + pre-computed model reviews into a demo dataset")
+    pbr.add_argument("--out", required=True,
+                     help="output directory (writes runs/ and reviews/)")
+    pbr.add_argument("--model", default=None,
+                     help="reviewer-model substring to export (default: kimi-k3)")
+    pbr.set_defaults(func=cmd_bake_reviews)
+
     pcf = sub.add_parser("configurations",
-                         help="list the pinned configurations available to compare (§4.16.1)")
+                         help="list the pinned configurations available to compare")
     pcf.set_defaults(func=cmd_configurations)
 
     pcv = sub.add_parser("compare-versions",
-                         help="matched comparison of two configurations on one task slice (§4.16)")
+                         help="matched comparison of two configurations on one task slice")
     pcv.add_argument("--baseline", required=True, metavar="FIELD=VALUE",
                      help="baseline side selector, e.g. sweep_id=sweep_141")
     pcv.add_argument("--candidate", required=True, metavar="FIELD=VALUE",
@@ -1355,11 +1457,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="OpenAI/Anthropic-compatible endpoint for --provider (any model)")
     pe.add_argument("--manifest", default=None, metavar="PATH",
                     help="write a reproducibility manifest (versions, gold hashes, "
-                         "adjudication status, invocation) to PATH (AGR-07)")
+                         "adjudication status, invocation) to PATH")
     pe.set_defaults(func=cmd_eval)
 
     prv = sub.add_parser(
-        "review", help="run the Stage F model reviewer over a run (needs a 'model-*' extra + key)")
+        "review", help="run the model reviewer over a run (needs a 'model-*' extra + key)")
     prv.add_argument("run_id", nargs="?", default=None,
                      help="logical run id (omit when --all)")
     prv.add_argument("--all", action="store_true",
@@ -1375,6 +1477,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="OpenAI/Anthropic-compatible endpoint URL (use any model: "
                           "OpenRouter, Together, a local vLLM/Ollama server, …). "
                           "Falls back to OPENAI_BASE_URL for --provider openai.")
+    prv.add_argument("--cost-budget", type=float, default=None, metavar="USD",
+                     help="estimated-cost budget target: a round that would START past "
+                          "it is skipped (status: incomplete). Checked before each round, "
+                          "so one in-flight round can finish over it. Default $0.15, "
+                          "0 disables (also $AGR_REVIEW_COST_BUDGET_USD)")
+    prv.add_argument("--time-budget", type=float, default=None, metavar="SECONDS",
+                     help="elapsed-time budget target: a round that would START past it "
+                          "is skipped (status: incomplete). Default 90, 0 disables "
+                          "(also $AGR_REVIEW_TIME_BUDGET_S)")
     prv.set_defaults(func=cmd_review)
 
     pcfg = sub.add_parser(
@@ -1395,6 +1506,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="bind host (default: $AGR_HOST, else 127.0.0.1; use 0.0.0.0 in a container)")
     pv.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")),
                     help="bind port (default: $PORT, else 8000)")
+    pv.add_argument("--read-only", action="store_true",
+                    help="reject every non-GET/HEAD request with 403 (also: $AGR_READ_ONLY=1); "
+                         "for a hosted public demo that must never be written to")
     pv.set_defaults(func=cmd_serve)
     return p
 
