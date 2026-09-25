@@ -117,6 +117,26 @@ def test_cmd_config_test_failure_is_actionable(cfg_path, capsys, monkeypatch):
     assert rc == 4 and "FAILED" in err and "API key" in err
 
 
+def test_config_test_missing_sdk_is_not_blamed_on_credentials(cfg_path, capsys, monkeypatch):
+    """`agr config --test` used to catch make_reviewer's RuntimeError (missing
+    SDK) with the generic `except Exception`, so it printed 'FAILED' with
+    API-key hints and exited 4 — the dedicated 'MISSING SDK' / exit 3 branch
+    lower down (around reviewer._complete) never ran because make_reviewer
+    itself now raises before getting there (P0-3's fail-fast check)."""
+    from agr.cli import main
+    import agr.model_reviewer as mr
+
+    def _boom(*a, **k):
+        raise RuntimeError("The Anthropic model reviewer requires the 'anthropic' SDK.")
+
+    monkeypatch.setattr(mr, "make_reviewer", _boom)
+    rc = main(["config", "--provider", "anthropic", "--model", "x", "--test"])
+    err = capsys.readouterr().err
+    assert rc == 3
+    assert "MISSING SDK" in err
+    assert "FAILED" not in err and "API key" not in err
+
+
 # --- `agr review --all` ---------------------------------------------------------
 
 def _ingest_two_runs(tmp_path):
@@ -179,6 +199,36 @@ def test_review_all_failure_is_isolated(cfg_path, capsys, monkeypatch, tmp_path)
     for run_id in run_ids:
         keys = store.list_reviews(run_id, store.latest_capture_id(run_id))
         assert "deterministic" in keys
+
+
+def test_review_all_counts_a_mid_run_model_failure_as_failed(cfg_path, capsys, monkeypatch, tmp_path):
+    """P0-3: analyze() falls back to the deterministic baseline instead of
+    raising when the model reviewer errors mid-review (AGR-06) — `--all` must
+    not report that run as a successful review."""
+    from agr.cli import main
+    from agr.model_reviewer import ScriptedReviewer
+
+    class _Broken(ScriptedReviewer):
+        review_mode = "model_enriched"
+
+        def propose(self, ctx):
+            raise RuntimeError("provider unavailable")
+
+    store, run_ids = _ingest_two_runs(tmp_path)
+    monkeypatch.setattr("agr.model_reviewer.make_reviewer", lambda *a, **k: _Broken({"moments": []}))
+    rc = main(["--store", str(store.root), "review", "--all"])
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert "reviewed 0 · skipped 0 · failed 2" in out
+    assert "provider unavailable" in err
+    # rc is non-zero: every run failed to get a real model review.
+    assert rc != 0
+
+    # A single-run review of the same broken reviewer must also fail, not
+    # silently print a "successful" deterministic-fallback review.
+    rc = main(["--store", str(store.root), "review", run_ids[0]])
+    err = capsys.readouterr().err
+    assert rc != 0 and "provider unavailable" in err
 
 
 def test_review_without_run_id_or_all_hints(cfg_path, capsys, tmp_path):

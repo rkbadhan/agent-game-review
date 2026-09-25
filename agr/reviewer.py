@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Protocol
 
 from . import version
@@ -43,6 +43,7 @@ from .execution_quality import generation_token_counts, generation_wall_ms
 from .recovery import GOOD_RECOVERY, UNRECOVERED, raw_failure_lead
 from .schema import (
     ATTRIBUTION_LEVELS,
+    Alternative,
     Candidate,
     CapabilityProfile,
     DerivedEvent,
@@ -51,12 +52,32 @@ from .schema import (
     ReviewMoment,
     TaskContract,
     VerifierCheck,
+    alternative_label,
 )
 
 _ATTR_RANK = {level: i for i, level in enumerate(ATTRIBUTION_LEVELS)}
 # The deterministic core never licenses attribution language above this level
 # (README "relevance is not causality"; §8.4). The gate caps every ceiling here.
 _DET_CEILING = "dependency_linked"
+
+
+class ReviewBudgetExceededError(RuntimeError):
+    """GR-1: the review stopped early on its own budget, not a provider error.
+
+    Raised by the model reviewer when the per-review time or cost budget is
+exhausted (or when GR-1's chunked path reports a missing chunk). The pipeline
+    records the attempt as ``incomplete`` — never ``failed`` — serves the
+    deterministic baseline, and exposes the reason. ``reason`` is one of
+    ``timeout``, ``cost_budget`` or ``missing_chunks``.
+    """
+
+    def __init__(self, reason: str, message: str, detail: Optional[dict] = None):
+        super().__init__(message)
+        self.reason = reason
+        self.detail = dict(detail or {})
+
+    def to_dict(self) -> dict:
+        return {"reason": self.reason, **self.detail}
 
 # Review quota (spec §8.10).
 _MAX_NEGATIVE = 3
@@ -109,6 +130,10 @@ class Enrichment:
     micro_abilities: list[str] = field(default_factory=list)
     root_cause_candidates: list[dict] = field(default_factory=list)
     better_action: Optional[str] = None
+    # GR-2: the model's raw alternative proposals, each carrying its information
+    # cutoff. Validated (and possibly dropped) in run_reviewer before anything is
+    # attached to a moment.
+    alternatives: list[dict] = field(default_factory=list)
     instructional_value: Optional[str] = None
     eval_lesson_recommended: bool = False
     # Optional quoted spans the model cites as observational support for its
@@ -590,6 +615,17 @@ def _facts_valid(validated: list[dict]) -> bool:
     if any(f.get("validation") == "failed" for f in validated):
         return False
     return any(f.get("validation") == "passed" for f in validated)
+
+
+def _quote_only_failure(m: "ReviewMoment") -> bool:
+    """GR-1: the moment failed only because a quote did not match original text.
+
+    That is the signature of a claim grounded in a chunk summary (or invented
+    prose) instead of the original events: the summary is never evidence, so the
+    drop is counted separately from generic fact recomputation failures.
+    """
+    failed = [f for f in (m.validated_facts or []) if f.get("validation") == "failed"]
+    return bool(failed) and all(f.get("type") == "event_support" for f in failed)
 
 
 def _fact_errors(validated: list[dict]) -> list[dict]:
@@ -1180,6 +1216,158 @@ def _explanation_attribution(enr: Enrichment, ceiling: str) -> str:
     return "within_ceiling"
 
 
+def _check_observed_seq(check: VerifierCheck, seq_of: dict[str, int]) -> Optional[int]:
+    """The sequence at which a check's RESULT was revealed, or ``None`` (GR-2).
+
+    A synthesized in-session check carries ``sequence`` = the TOOL CALL's index
+    while its status comes from the later tool RESULT (``source_pointers`` =
+    [call, result]). Gating on ``check.sequence`` therefore admitted a check
+    whose result the agent had not yet seen. The observation time is the latest
+    source pointer that resolves to a real event; a check whose observation
+    time cannot be established (a post-run verifier, or no resolvable pointer)
+    is excluded rather than assumed available.
+    """
+    if check.timing != "during_run":
+        return None  # a post-run verifier result is never information the agent had
+    seqs = [seq_of.get(p) for p in (check.source_pointers or [])]
+    seqs = [s for s in seqs if s is not None]
+    return max(seqs) if seqs else None
+
+
+def _recovery_available(ep: RecoveryEpisode, seq_of: dict[str, int], decision_seq: int) -> bool:
+    """Whether a recovery episode's claim is grounded at the decision (GR-2).
+
+    The failure must be known by the decision, and — when the episode claims a
+    resolution — so must the resolution evidence it uses. An unresolved episode
+    (no resolution event) is available once its failure is; a resolved one whose
+    resolution came later is not.
+    """
+    fseq = seq_of.get(ep.failure_event_id)
+    if fseq is None or fseq > decision_seq:
+        return False
+    if ep.resolution_event_id is not None:
+        rseq = seq_of.get(ep.resolution_event_id)
+        return rseq is not None and rseq <= decision_seq
+    return True
+
+
+def _cutoff_context(ctx: ReviewerContext, decision_seq: int) -> ReviewerContext:
+    """A context limited to evidence available at or before a decision (GR-2).
+
+    An assumption may only be grounded in what the agent could already have
+    known: events at or before the decision; checks whose RESULT was revealed at
+    or before it (gated by the revealing event, not the tool call — see
+    :func:`_check_observed_seq`); and recovery episodes whose evidence was
+    observed at or before it. Task-level inputs (contract, instruction, declared
+    artifacts) are carried through unchanged.
+    """
+    seq_of = {e.event_id: e.sequence for e in ctx.events if e.sequence is not None}
+    events = [e for e in ctx.events if e.sequence is not None and e.sequence <= decision_seq]
+    checks = [
+        c for c in ctx.checks
+        if (obs := _check_observed_seq(c, seq_of)) is not None and obs <= decision_seq
+    ]
+    recoveries = [
+        r for r in ctx.recoveries if _recovery_available(r, seq_of, decision_seq)
+    ]
+    return replace(ctx, events=events, checks=checks, recoveries=recoveries)
+
+
+def _build_suggested_alternatives(
+    enr: Enrichment, cand: Candidate, ctx: ReviewerContext,
+    ceiling: str, seq_of: dict[str, int],
+) -> tuple[list[Alternative], dict[str, int]]:
+    """Validate the model's alternative proposals and keep the grounded ones (GR-2).
+
+    Only a ``suggested`` alternative is accepted from the model — an observed or
+    validated one must come from a real sibling/experiment, never from prose. A
+    suggestion is kept only when its *information cutoff* holds: the decision it
+    replaces is a real event, every ``information_available`` event exists and
+    occurs at or before that decision, and its structured assumptions recompute.
+    Every rejection is counted by reason so the per-run drop count is measurable.
+    """
+    kept: list[Alternative] = []
+    drops: dict[str, int] = {}
+
+    def _drop(reason: str) -> None:
+        drops[reason] = drops.get(reason, 0) + 1
+
+    for raw in (enr.alternatives or []):
+        if not isinstance(raw, dict):
+            _drop("malformed")
+            continue
+        # A model may only PROPOSE a suggestion; it cannot assert an observed or
+        # validated alternative from prose.
+        if raw.get("kind") not in (None, "suggested"):
+            _drop("reserved_kind")
+            continue
+        proposal = str(raw.get("proposal") or raw.get("better_action") or "").strip()
+        if not proposal:
+            _drop("missing_proposal")
+            continue
+        decision = raw.get("replaces_decision") or {}
+        if not isinstance(decision, dict):
+            decision = {}
+        decision_eid = decision.get("event_id")
+        decision_seq = seq_of.get(decision_eid)
+        if decision_seq is None:
+            _drop("decision_unknown")
+            continue
+        info_out: list[dict] = []
+        cutoff_ok = True
+        for ref in (raw.get("information_available") or []):
+            eid = ref.get("event_id") if isinstance(ref, dict) else ref
+            seq = seq_of.get(eid)
+            # A later event cannot justify what the agent should already have
+            # known — the cutoff is a hard gate, not a note.
+            if seq is None or seq > decision_seq:
+                cutoff_ok = False
+                break
+            info_out.append({"event_id": eid, "sequence": seq})
+        if not cutoff_ok:
+            _drop("information_cutoff")
+            continue
+        assumptions = [a for a in (raw.get("assumptions") or []) if isinstance(a, dict)]
+        assumption_results: list[dict] = []
+        if assumptions:
+            temp = Candidate(
+                candidate_id=f"{cand.candidate_id}_alt",
+                run_id=cand.run_id,
+                source_capture_id=cand.source_capture_id,
+                detector="model_alternative",
+                kind="behaviour",
+                anchor_event_ids=list(cand.anchor_event_ids),
+                polarity=cand.polarity,
+                affected_checks=list(cand.affected_checks),
+                affected_contract_items=list(cand.affected_contract_items),
+                structured_facts=assumptions,
+            )
+            # The cutoff binds the ASSUMPTIONS too (PR #91 review): validating
+            # them against the full context let a suggestion rely on a later
+            # event or a post-run verifier result while its
+            # ``information_available`` list named only pre-decision ids. Only
+            # evidence available at the replacement decision can ground it.
+            assumption_results = validate_facts(temp, _cutoff_context(ctx, decision_seq))
+            if any(f.get("validation") != "passed" for f in assumption_results):
+                _drop("assumptions_unvalidated")
+                continue
+        kept.append(Alternative(
+            kind="suggested",
+            label=alternative_label("suggested"),
+            proposal=proposal,
+            source=enr.source or "model",
+            attribution_ceiling=ceiling,
+            limits=list(cand.limits),
+            replaces_decision={
+                "event_id": decision_eid,
+                "description": str(decision.get("description") or ""),
+            },
+            information_available=info_out,
+            assumptions=assumption_results,
+        ))
+    return kept, drops
+
+
 def _apply_enrichment(moment: ReviewMoment, enr: Enrichment) -> None:
     """Copy an :class:`Enrichment` onto a moment, filtered to the active taxonomy.
 
@@ -1220,6 +1408,10 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
     phase_of = {e.event_id: e.phase_id for e in ctx.events}
 
     moments: list[ReviewMoment] = []
+    # GR-2: per-run alternative accounting — what was proposed, what survived the
+    # information-cutoff / assumption checks, and what was dropped by reason.
+    alternatives_proposed = 0
+    alternative_drops: dict[str, int] = {}
     for proposal in reviewer.propose(ctx):
         cand = proposal.candidate
         validated = validate_facts(cand, ctx)
@@ -1330,8 +1522,18 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         )
         # Enrichment only survives on a moment whose facts validated — a card the
         # envelope will not publish never carries a model verdict.
-        if enr is not None and _facts_valid(validated):
-            _apply_enrichment(moment, enr)
+        if enr is not None:
+            alternatives_proposed += len(enr.alternatives or [])
+            if _facts_valid(validated):
+                _apply_enrichment(moment, enr)
+                suggested, alt_drops = _build_suggested_alternatives(
+                    enr, cand, ctx, ceiling, seq_of)
+                moment.alternatives = list(moment.alternatives) + suggested
+                for reason, count in alt_drops.items():
+                    alternative_drops[reason] = alternative_drops.get(reason, 0) + count
+            elif enr.alternatives:
+                alternative_drops["moment_unvalidated"] = (
+                    alternative_drops.get("moment_unvalidated", 0) + len(enr.alternatives))
         moments.append(moment)
 
     select_moments(moments)
@@ -1357,11 +1559,19 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
                           else _link_gate(m) if gate == "contract_link"
                           else result == _REJECTION_GATES[gate])
                 if not ok:
-                    rejections[gate] = rejections.get(gate, 0) + 1
+                    key = gate
+                    if gate == "fact_validation" and _quote_only_failure(m):
+                        key = "summary_not_evidence"
+                    rejections[key] = rejections.get(key, 0) + 1
                     break
             else:
                 rejections["quota"] = rejections.get("quota", 0) + 1
         telemetry["rejections"] = rejections
         telemetry["proposed"] = len(moments)
         telemetry["selected"] = sum(1 for m in moments if m.selected)
+        telemetry["alternatives"] = {
+            "proposed": alternatives_proposed,
+            "attached": sum(len(m.alternatives) for m in moments),
+            "dropped": alternative_drops,
+        }
     return moments

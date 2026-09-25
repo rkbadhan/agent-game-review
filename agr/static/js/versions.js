@@ -31,7 +31,7 @@ function renderVersionsSurface(main) {
   head.append(el("span", "eyebrow", "Compare versions · matched comparison across a task slice"));
   nav.append(head);
   const util = el("div", "review-util");
-  const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");
+  const back = el("button", "seg"); back.append(icon("chevron-left"), document.createTextNode(state.runId ? " Back to review" : " Back to runs"));
   back.addEventListener("click", () => { state.view = state.runId ? "review" : "runs"; render(); });
   util.append(back);
   nav.append(util);
@@ -118,18 +118,26 @@ function renderVersionConstruct(v) {
   const go = el("button", "button primary", "Preview match");
   go.addEventListener("click", () => previewComparison());
   row.append(go);
-  const save = el("button", "button", "Save comparison");
-  save.disabled = !v.result || v.result.match_status !== "valid";
-  save.title = save.disabled ? "Preview a valid matched slice first." : "Freeze this definition and share its link.";
-  save.addEventListener("click", () => saveComparison());
-  row.append(save);
+  // P0-5: read-only demo mode hides this write control outright — the
+  // server rejects the write independently (agr/api.py) — rather than
+  // showing a button that would just come back with a 403 ("Save failed").
+  if (!state.readOnly) {
+    const save = el("button", "button", "Save comparison");
+    save.disabled = !v.result || v.result.match_status !== "valid";
+    save.title = save.disabled ? "Preview a valid matched slice first." : "Freeze this definition and share its link.";
+    save.addEventListener("click", () => saveComparison());
+    row.append(save);
+  }
   card.append(row);
 
   const keys = el("div", "vs-keys");
   keys.append(el("span", "vs-counts", "Match keys:"));
   for (const key of MATCH_KEYS) {
     const on = v.keys.includes(key);
-    const chip = el("button", "fchip" + (on ? " on" : ""), key);
+    // C1: neutral, mono outline chips — clearly a static definition of the
+    // slice, not an accent-filled action button (.fchip.on elsewhere reads
+    // as "this is a live, primary control", which a match key is not).
+    const chip = el("button", "fchip match-key-chip" + (on ? " on" : ""), key);
     chip.setAttribute("aria-pressed", on ? "true" : "false");
     chip.addEventListener("click", () => {
       v.keys = on ? v.keys.filter(k => k !== key) : MATCH_KEYS.filter(k => v.keys.includes(k) || k === key);
@@ -208,26 +216,44 @@ function renderVersionResult(main, r) {
   main.append(head);
 
   if (r.blocked_reasons.length) {
-    const b = el("div", "card card-pad");
-    b.append(el("div", "vs-blocked", "Not a matched comparison — "
+    // C2: one fail callout directly under the title — no card wrapping a
+    // box around a box.
+    const b = el("div", "vs-blocked callout callout-fail", "Not a matched comparison — "
       + r.blocked_reasons.map(x => x.replace(/_/g, " ").replace(":", ": ")).join("; ")
-      + ". The match report below shows what was and was not comparable."));
+      + ". The match report below shows what was and was not comparable.");
     main.append(b);
   }
 
-  // Match report + exclusions, before any result (§4.16.1).
+  // Match report + exclusions, before any result (§4.16.1). C3: seven equal
+  // stat boxes buried the two numbers that actually matter — matched run
+  // pairs (the comparison's real sample size) and how much was excluded —
+  // among five others of secondary interest. Those two are now headline
+  // stats; the rest sit in a compact key:value grid. .vs-report itself
+  // still wraps both groups so its own text keeps every figure searchable.
   const rep = el("div", "card card-pad");
   rep.append(el("p", "eyebrow", "Match report"));
   const cells = el("div", "vs-report");
-  const cell = (n, lbl) => { const d = el("div", "vs-cell");
-    d.append(el("strong", null, String(n)), el("span", null, lbl)); return d; };
-  cells.append(
-    cell(r.baseline.run_count, "baseline runs"), cell(r.candidate.run_count, "candidate runs"),
-    cell(r.report.exact_matched_tasks, "exact matched tasks"),
-    cell(r.report.matched_run_pairs, "matched run pairs"),
-    cell(r.report.repeated_run_strata, "repeated-run strata"),
-    cell(r.report.excluded_baseline_runs, "excluded baseline"),
-    cell(r.report.excluded_candidate_runs, "excluded candidate"));
+  const headline = el("div", "vs-report-headline");
+  const hstat = (n, lbl, sub) => {
+    const d = el("div", "vs-headline-stat");
+    d.append(el("strong", null, String(n)), el("span", null, lbl));
+    if (sub) d.append(el("span", "vs-headline-sub", sub));
+    return d;
+  };
+  const excludedTotal = (r.report.excluded_baseline_runs || 0) + (r.report.excluded_candidate_runs || 0);
+  headline.append(
+    hstat(r.report.matched_run_pairs, "matched run pairs"),
+    hstat(excludedTotal, "excluded",
+      r.report.excluded_baseline_runs + " baseline · " + r.report.excluded_candidate_runs + " candidate"));
+  cells.append(headline);
+  const grid = el("div", "vs-report-grid");
+  const kv = (n, lbl) => { const d = el("div", "vs-report-kv");
+    d.append(el("span", null, lbl), el("strong", null, String(n))); return d; };
+  grid.append(
+    kv(r.baseline.run_count, "baseline runs"), kv(r.candidate.run_count, "candidate runs"),
+    kv(r.report.exact_matched_tasks, "exact matched tasks"),
+    kv(r.report.repeated_run_strata, "repeated-run strata"));
+  cells.append(grid);
   rep.append(cells);
   rep.append(el("div", "vs-counts", "Match keys used: "
     + (r.match_keys_used.join(", ") || "none") + " · " + r.match_key_version));
@@ -235,7 +261,7 @@ function renderVersionResult(main, r) {
     rep.append(el("div", "vs-caveat", "Unresolved keys: " + r.unresolved_keys.join(", ")));
   for (const caveat of r.caveats) rep.append(el("div", "vs-caveat", caveat));
   for (const group of r.report.exclusions_by_reason) {
-    const d = el("details", "vs-drill");
+    const d = el("details", "vs-drill disclosure");
     d.append(el("summary", null, group.side + " · " + group.reason.replace(/_/g, " ")
       + " · " + group.count + " run(s)"));
     d.addEventListener("toggle", () => { if (d.open)
@@ -328,7 +354,7 @@ function evidenceForMetric(row, result) {
   const contributing = new Set(row.contributing_pair_ids || []);
   const feeding = result.pairs.filter(p => contributing.has(p.pair_id));
   if (feeding.length) {
-    const d = el("details", "vs-drill");
+    const d = el("details", "vs-drill disclosure");
     d.append(el("summary", null, feeding.length + " matched run pair(s) behind this row"));
     const list = el("div", "vs-pairs");
     for (const p of feeding) {

@@ -352,6 +352,10 @@ def _experiment_proposal(lesson: dict) -> dict:
         "status": "proposed",
         "approved_by": None,
         "approved_at": None,
+        # GR-2: the recorded result of running the experiment. ``None`` until run;
+        # a validated alternative is only ever claimed from a recorded outcome
+        # (result + stated benefit + outcome checks + comparison limits).
+        "outcome": None,
     }
 
 
@@ -423,3 +427,132 @@ def approve_experiment(
     _bump(lesson, actor=actor, now=now, edited_fields=["experiment_proposal"])
     store.write_derived(run_id, capture_id, LESSONS_RECORD, lessons)
     return lesson
+
+
+# GR-2: the outcome fields a validated alternative requires. A run that records
+# no outcome cannot produce a "Validated by …" label.
+EXPERIMENT_RESULTS = ("validated", "failed", "inconclusive")
+
+
+def record_experiment_outcome(
+    store: Store,
+    run_id: str,
+    lesson_id: str,
+    *,
+    result: str,
+    stated_benefit: Optional[str] = None,
+    outcome_checks: Optional[list[str]] = None,
+    comparison_limits: Optional[list[str]] = None,
+    measured_improvement: Optional[str] = None,
+    actor: Optional[str],
+    now: Optional[str] = None,
+) -> dict:
+    """Record the result of running a lesson's experiment (GR-2).
+
+    This is what turns a proposal into either a *validated* alternative (only
+    when ``result == "validated"`` and a stated benefit, outcome checks and
+    comparison limits are all recorded) or a visible failed/inconclusive one.
+    The record carries whatever the experiment actually measured — the measured
+    execution improvement is kept even when outcome verification is absent, so
+    an unvalidated alternative never claims more than it measured.
+    """
+    if result not in EXPERIMENT_RESULTS:
+        raise LessonError(
+            f"experiment result must be one of {EXPERIMENT_RESULTS}, got {result!r}")
+    now = now or _now()
+    capture_id = _require_capture(store, run_id)
+    lessons = read_lessons(store, run_id)
+    lesson = _find(lessons, lesson_id)
+    if lesson is None:
+        raise LessonError(f"lesson {lesson_id!r} not found on run {run_id!r}")
+    proposal = lesson.get("experiment_proposal")
+    if not proposal:
+        raise LessonError(
+            f"lesson {lesson_id!r} has no experiment proposal to record a result for")
+    proposal["outcome"] = {
+        "result": result,
+        "stated_benefit": stated_benefit,
+        "outcome_checks": list(outcome_checks or []),
+        "comparison_limits": list(comparison_limits or []),
+        "measured_improvement": measured_improvement,
+        "recorded_by": actor,
+        "recorded_at": now,
+    }
+    _bump(lesson, actor=actor, now=now, edited_fields=["experiment_proposal"])
+    store.write_derived(run_id, capture_id, LESSONS_RECORD, lessons)
+    return lesson
+
+
+def _alternative_validation(proposal: dict) -> dict:
+    """Apply the GR-2 validation rule to an experiment proposal.
+
+    An alternative is marked validated only when a linked experiment supports a
+    stated benefit, records the relevant outcome checks, and discloses comparison
+    limits. Anything else is labelled by what actually happened (proposed /
+    failed / inconclusive), never silently upgraded to "validated".
+    """
+    outcome = proposal.get("outcome") or {}
+    result = outcome.get("result")
+    stated_benefit = outcome.get("stated_benefit")
+    outcome_checks = outcome.get("outcome_checks") or []
+    comparison_limits = outcome.get("comparison_limits") or []
+    rule_met = bool(stated_benefit and outcome_checks and comparison_limits)
+    if result == "validated" and rule_met:
+        status = "validated_by_comparable_experiment"
+    elif result in ("failed", "inconclusive"):
+        status = result
+    else:
+        # No recorded outcome (or an incomplete one): still a proposal. It may
+        # claim only the measured execution improvement, if any.
+        status = "proposed"
+    return {
+        "status": status,
+        "stated_benefit": stated_benefit,
+        "outcome_checks": outcome_checks,
+        "comparison_limits": comparison_limits,
+        "measured_improvement": outcome.get("measured_improvement"),
+    }
+
+
+def validated_alternative(store: Store, run_id: str) -> Optional[dict]:
+    """The linked-experiment alternative for a run's moment, if one exists (GR-2).
+
+    Prefers a validated experiment, then a failed/inconclusive one, then a merely
+    proposed one — so the strongest honest status is shown. Keyed to the source
+    moment so the envelope can attach it. Returns ``None`` when the run has no
+    lesson with an experiment proposal.
+    """
+    candidates: list[dict] = []
+    for lesson in read_lessons(store, run_id):
+        proposal = lesson.get("experiment_proposal")
+        if not proposal:
+            continue
+        validation = _alternative_validation(proposal)
+        rank = {
+            "validated_by_comparable_experiment": 0,
+            "failed": 1,
+            "inconclusive": 1,
+            "proposed": 2,
+        }.get(validation["status"], 3)
+        candidates.append((rank, lesson, proposal, validation))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])
+    _, lesson, proposal, validation = candidates[0]
+    source_moments = list(lesson.get("source_moments") or [])
+    change = proposal.get("proposed_change") or {}
+    limits: list[str] = []
+    if validation["status"] != "validated_by_comparable_experiment":
+        limits.append(
+            "No outcome verification recorded: this alternative claims only the "
+            "measured execution improvement, not a better outcome.")
+    if validation.get("measured_improvement"):
+        limits.append(f"Measured improvement: {validation['measured_improvement']}")
+    return {
+        "moment_id": source_moments[0] if source_moments else None,
+        "proposal": change.get("description") or proposal.get("hypothesis") or "",
+        "source": f"experiment:{proposal.get('experiment_id') or lesson.get('lesson_id')}",
+        "validation": validation,
+        "limits": limits,
+        "attribution_ceiling": "dependency_linked",
+    }

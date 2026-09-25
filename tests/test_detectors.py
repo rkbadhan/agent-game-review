@@ -395,3 +395,14 @@ def test_placeholder_detector_is_distinct_from_evaluated_no_issue(tmp_path, load
     # Contrast: an evaluated detector that found nothing reports evaluated=True.
     rec = next(r for r in a.detector_results if r.detector == "successful_recovery_via_strategy_change")
     assert rec.evaluated is True and rec.placeholder is False
+
+
+def test_good_recovery_category_keeps_the_timed_out_false_positive_fixed():
+    """GR-3 row 3: the submission detector stays silent on a run the harness
+    killed (no submission), and the terminal-failure detector — not the
+    submission one — is what covers that run. This is the false positive the
+    idea table records as already fixed; GR-3 must not regress it."""
+    from agr.detectors import TerminalFailureWithFailingChecks, UnresolvedRequirementAtSubmission
+    ctx = _terminal_ctx("run_timed_out", [_failed_check()])  # no final_submission
+    assert UnresolvedRequirementAtSubmission().run(ctx).candidates == []
+    assert len(TerminalFailureWithFailingChecks().run(ctx).candidates) == 1

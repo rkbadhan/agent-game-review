@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from agr import read
 from agr.adapter import adapter_names, get_adapter
 from agr.ingest_claude import CLAUDE_ADAPTER, convert
 from agr.pipeline import analyze
@@ -213,6 +214,25 @@ def test_verifier_optional_honest_limited_view(tmp_path, load_fixture):
     a2 = analyze(with_verifier.doc, store2)
     assert a2.outcome["status"] == "PASSED"
     assert a2.outcome["passed"] == 1 and a2.outcome["total"] == 1
+
+
+def test_verifier_optional_still_reviews_the_run(tmp_path):
+    """GR-1: verifier results are optional. Without them, task success stays
+    UNVERIFIED, and the run still gets a full review view — its moment list,
+    evidence slices and execution-quality summary are served, never withheld
+    because a verifier was absent."""
+    doc = convert(_write_session(tmp_path, _sample_session())).doc
+    store = Store(str(tmp_path / "store"))
+    a = analyze(doc, store)
+    view = read.get_review(store, a.run_source.run_id)
+    assert view["outcome"]["status"] == "UNVERIFIED"
+    assert view["review_status"] == "not_configured"
+    assert view["review_status_success"] is False
+    # The absent verifier does not empty the review: the ordinary trace is
+    # first-class, with its own moments and execution-quality record.
+    assert view["moments"]
+    assert view["execution_quality"]
+    assert "evidence_slices" in view
 
 
 def test_empty_session_is_a_protocol_failure_not_a_completion(tmp_path):

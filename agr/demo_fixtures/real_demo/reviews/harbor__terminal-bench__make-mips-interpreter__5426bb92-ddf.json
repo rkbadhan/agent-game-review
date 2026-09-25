@@ -1,0 +1,136 @@
+{
+ "run_id": "harbor__terminal-bench/make-mips-interpreter__5426bb92-ddf",
+ "task_id": "terminal-bench/make-mips-interpreter",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-25T14:34:33Z",
+ "source_hash": "sha256:64816c410391606af676d6c3d5e08c4884dcfdefff1afa7ac681d7e2921fb730",
+ "moment_count": 1,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_sem_1",
+   "run_id": "harbor__terminal-bench/make-mips-interpreter__5426bb92-ddf",
+   "source_capture_id": "capture_64816c410391",
+   "candidate_id": "sem_1",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_149",
+    "evt_151",
+    "evt_160",
+    "evt_164",
+    "evt_165"
+   ],
+   "affected_checks": [
+    "terminal_bench_reward"
+   ],
+   "affected_contract_items": [
+    "V-terminal_bench_reward"
+   ],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_149",
+       "quote": "We need now implement vm.js."
+      },
+      {
+       "event_id": "evt_151",
+       "quote": "nl -ba doomgeneric/doomgeneric/my_stdlib.c | sed -n '900,1235p'"
+      },
+      {
+       "event_id": "evt_160",
+       "quote": "We need now implement."
+      },
+      {
+       "event_id": "evt_164",
+       "quote": "Current Terminal Screen:"
+      },
+      {
+       "event_id": "evt_165",
+       "quote": "[Harbor trial hit its deadline: AgentTimeoutError]"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_149",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_151",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_160",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_164",
+       "matched": true,
+       "event_present": true
+      },
+      {
+       "event_id": "evt_165",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "termination",
+     "expected": "run_timed_out",
+     "validation": "passed",
+     "recomputed": "run_timed_out"
+    },
+    {
+     "type": "absence",
+     "declared_artifact": "/app/vm.js",
+     "validation": "passed",
+     "recomputed": "absent"
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "terminal_bench_reward",
+     "status_at_submission": "failed",
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "rendered_statement": "Grounded in quoted run evidence (evt_149, evt_151, evt_160, evt_164, evt_165), a likely explanation for the outcome.",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 149,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "strategy_drift",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "Once the instruction census and syscall ABI were established (around evt_144-150), write a best-effort vm.js implementing the identified 87-mnemonic MIPS subset and the known syscalls via a single heredoc, then iterate against real execution errors, treating remaining source questions only as they block concrete runs.",
+   "instructional_value": "A clean, extreme example of investigation consuming 100% of the budget on a build task: the agent's own notes show the analysis was sufficient long before the deadline, yet zero implementation was attempted. Teaching time-boxed reconnaissance plus deliverable-first iteration directly addresses this failure mode.",
+   "eval_lesson_recommended": true,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

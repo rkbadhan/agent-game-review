@@ -1,0 +1,11 @@
+{
+ "run_id": "harbor__terminal-bench/fix-git__fix-git__sTx",
+ "task_id": "terminal-bench/fix-git",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:43:24Z",
+ "source_hash": "sha256:93e7875b323eff40efaebc0a25629f88d32c65f2442bc6443803ac0ed56c3a19",
+ "moment_count": 0,
+ "selected_count": 0,
+ "moments": []
+}

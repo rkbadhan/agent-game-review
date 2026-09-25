@@ -300,3 +300,60 @@ def test_identical_timelines_have_no_divergence(tmp_path):
     report = divergence.divergence_report(store, "fail-identical")
     assert report["first_divergence"] is None
     assert all(a["tag"] == "equal" for a in report["aligned"])
+
+
+# --- GR-2: observed alternative from a comparable passing run ------------------
+
+
+def test_observed_alternative_allows_a_different_configuration(tmp_path):
+    """GR-2: unlike the Compare view, an OBSERVED alternative is an example, not a
+    proof — a comparable-but-different passing run is allowed, and the difference
+    is recorded so the reader can judge it."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(model="m", agent="a", harness_version="h"), store)
+    analyze(_passing_run_doc(run_id="pass-other-config", model="m2",
+                             agent="a2", harness_version="h2"), store)
+    alt = divergence.observed_alternative(store, "fail-run")
+    assert alt is not None
+    assert alt["source"] == "sibling:pass-other-config"
+    assert alt["proposal"]
+    # The diff names every comparison-relevant field that actually differs.
+    assert alt["sibling_diff"]["model"] == {"failed_run": "m", "passing_run": "m2"}
+    assert alt["sibling_diff"]["agent"] == {"failed_run": "a", "passing_run": "a2"}
+
+
+def test_observed_alternative_is_none_without_a_sibling(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(), store)
+    assert divergence.observed_alternative(store, "fail-run") is None
+
+
+def test_observed_alternative_is_none_when_timelines_do_not_diverge(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    steps = _shared_prefix() + [
+        {"step_id": "s6", "kind": "final_submission", "actor": "main_agent", "content": "done"},
+    ]
+    analyze(_doc("fail-identical", "fix-bug", steps, passed=False), store)
+    analyze(_doc("pass-identical", "fix-bug", steps, passed=True), store)
+    assert divergence.observed_alternative(store, "fail-identical") is None
+
+
+def test_observed_alternative_is_none_for_a_passing_run(tmp_path):
+    """An observed alternative explains a FAILED run; a passing run gets none."""
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(), store)
+    analyze(_passing_run_doc(), store)
+    assert divergence.observed_alternative(store, "pass-run") is None
+
+
+def test_observed_alternative_appears_when_sibling_ingested_after_the_failure(tmp_path):
+    """PR #91 review: the failing run is analyzed BEFORE the passing sibling, so
+    the alternative cannot be baked in at analyze time. Attaching it at read time
+    means it still appears once the sibling exists."""
+    from agr import read
+    store = Store(str(tmp_path / "store"))
+    analyze(_failing_run_doc(), store)   # no sibling exists yet
+    analyze(_passing_run_doc(), store)   # sibling ingested afterwards
+    moments = read.get_review(store, "fail-run")["moments"]
+    kinds = [a["kind"] for m in moments for a in (m.get("alternatives") or [])]
+    assert "observed" in kinds

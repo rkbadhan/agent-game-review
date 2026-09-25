@@ -154,7 +154,7 @@ async function saveCorrection(moment, draft, evInput) {
   }
 }
 function openModal(sel) { const m = $(sel); m.classList.add("open"); m.setAttribute("aria-hidden", "false"); }
-function closeModals() { for (const id of ["#correct-modal", "#help-modal", "#correction-modal", "#glossary-modal", "#intro-modal"]) {
+function closeModals() { for (const id of ["#correct-modal", "#help-modal", "#correction-modal", "#intro-modal"]) {
   const m = $(id); m.classList.remove("open"); m.setAttribute("aria-hidden", "true"); }
   const err = $("#correction-error"); if (err) err.textContent = ""; }
 document.querySelectorAll("[data-close-modal]").forEach(b => b.addEventListener("click", closeModals));

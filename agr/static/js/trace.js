@@ -2,9 +2,21 @@
 
 // --- full-trace drawer (forensic synchronized panels) ------------------------
 const PANELS = [["agent_message","Agent messages"],["tool_io","Tool I/O"],["environment","Environment"],["artifact","Artifacts"]];
+// Which pane a reader is looking at overrides the step's own synchronized
+// ("lit") one — set by clicking a tab, cleared whenever a different step is
+// selected so the tabs go back to following that step's own panel. null
+// means "follow the lit panel", same as no override at all.
+let traceActiveTab = null;
 function openTrace(stepId) {
   track("full_trace_opened", { run_id: state.runId, step_id: stepId || undefined });
-  state.pendingStep = stepId; state.traceOpen = true; state.traceStep = stepId || null;
+  // No explicit step (the plain Trace button, "T", or a link with no
+  // ?evidence=) still lands on a synchronized panel instead of four empty
+  // "Select a step." placeholders — the first step in the trace, same as the
+  // step a shared ?evidence=<id> link would land on.
+  const f = state.forensic;
+  const target = stepId || (f && f.steps && f.steps.length ? f.steps[0].step_id : null);
+  state.pendingStep = target; state.traceOpen = true; state.traceStep = target;
+  traceActiveTab = null;
   renderTrace();
   const d = $("#trace-drawer"); d.classList.add("open"); d.setAttribute("aria-hidden", "false");
   syncUrl();
@@ -21,7 +33,7 @@ function renderTrace() {
   // still surface inline wherever they actually limit a panel (see the
   // per-panel "evidence <state>" note in selectStep, and the not-reviewable
   // notice on Overview).
-  const capsWrap = el("details", "caps-disclosure");
+  const capsWrap = el("details", "caps-disclosure disclosure");
   const anyLimited = Object.values(f.capability_badge || {}).some(info => info.state !== "complete");
   capsWrap.append(el("summary", null, "Capture capabilities"
     + (anyLimited ? " (some limited)" : "")));
@@ -50,24 +62,63 @@ function renderTrace() {
     row.addEventListener("click", () => selectStep(s.step_id)); fs.append(row);
   }
   grid.append(fs);
+  // One inspector: a tab strip (Agent messages / Tool I/O / Environment /
+  // Artifacts / Verifier) over a single visible pane, instead of laying all
+  // five out as small 2x2(+1) boxes most of which say nothing about the
+  // selected step. Every .pane stays in the DOM exactly as before (data-panel,
+  // .lit tracking the step's own synchronized panel, the same selectStep()
+  // logic) — .pane-active is a second, purely visual class that the tab
+  // strip controls, defaulting to whichever pane is .lit.
+  const inspector = el("div", "trace-inspector");
+  const tabs = el("div", "trace-tabs"); tabs.setAttribute("role", "tablist");
+  const allTabs = PANELS.concat([["verifier", "Verifier"]]);
+  for (const [key, label] of allTabs) {
+    const av = key === "verifier" ? null : panelCapabilityState(f, key);
+    const btn = el("button", "trace-tab"); btn.type = "button"; btn.dataset.panel = key;
+    btn.setAttribute("role", "tab");
+    btn.append(document.createTextNode(label));
+    if (av) btn.append(el("span", "dot " + av));
+    if (av === "unavailable") {
+      btn.disabled = true;
+      btn.title = label + " — unavailable for this run's capture.";
+    }
+    btn.addEventListener("click", () => { traceActiveTab = key; syncPaneVisibility(); });
+    tabs.append(btn);
+  }
+  inspector.append(tabs);
   const panels = el("div", "panels");
   for (const [key, label] of PANELS) { const p = el("div", "pane"); p.dataset.panel = key;
     const ph = el("div", "ph"); ph.append(el("span", null, label)); const av = panelCapabilityState(f, key); if (av) ph.append(el("span", "dot " + av)); p.append(ph);
-    p.append(el("div", "pb", (() => { const d = el("div", "dim", "Select a step."); return d; })())); panels.append(p); }
+    const pb = el("div", "pb"); pb.append(el("div", "dim", "Select a step.")); p.append(pb); panels.append(p); }
   const vp = el("div", "pane wide"); vp.dataset.panel = "verifier";
   vp.append((() => { const h = el("div", "ph"); h.append(el("span", null, "Verifier")); return h; })());
   const vb = el("div", "pb"); const vt = el("table"); vt.append(rowEls("tr", ["Check", "Status", "Name"], "th"));
   for (const c of f.verifier || []) { const tr = el("tr"); tr.append(td(c.check_id, "mono")); tr.append(tdBadge(c.status)); tr.append(td(c.name)); vt.append(tr); }
-  vb.append(vt); vp.append(vb); panels.append(vp); grid.append(panels);
+  vb.append(vt); vp.append(vb); panels.append(vp);
+  inspector.append(panels);
+  grid.append(inspector);
   body.append(grid);
   if (state.pendingStep) { const t = state.pendingStep; state.pendingStep = null; selectStep(t);
     const row = body.querySelector('.step[data-step-id="' + t + '"]'); if (row) row.scrollIntoView({ block: "center" }); }
+  else syncPaneVisibility();
 }
 function panelCapabilityState(f, key) { const map = { agent_message: "messages", tool_io: "tool_calls", environment: "process_state", artifact: "filesystem" };
   const cap = map[key]; const info = cap && f.capability_badge ? f.capability_badge[cap] : null; return info ? info.state : null; }
+// The tab strip's own visual layer over the pane the step selection already
+// computed: whichever pane is .lit, unless a reader clicked a different tab
+// (traceActiveTab) to look at a panel type the step itself didn't light up.
+function syncPaneVisibility() {
+  const lit = document.querySelector("#trace-body .panels .pane.lit");
+  const activeKey = traceActiveTab || (lit && lit.dataset.panel) || "agent_message";
+  for (const p of document.querySelectorAll("#trace-body .panels .pane"))
+    p.classList.toggle("pane-active", p.dataset.panel === activeKey);
+  for (const t of document.querySelectorAll("#trace-body .trace-tab"))
+    t.classList.toggle("active", t.dataset.panel === activeKey);
+}
 function selectStep(stepId) {
   const f = state.forensic; const step = f.steps.find(s => s.step_id === stepId); if (!step) return;
   state.traceStep = stepId; syncUrl();
+  traceActiveTab = null;  // a new step goes back to following its own synchronized panel
   for (const n of document.querySelectorAll("#trace-body .step")) n.classList.toggle("active", n.dataset.stepId === stepId);
   for (const p of document.querySelectorAll("#trace-body .panels .pane")) {
     if (p.dataset.panel === "verifier") continue;
@@ -90,6 +141,7 @@ function selectStep(stepId) {
       if (paired) pb.append(paired);
     } else { pb.classList.remove("mono"); }
   }
+  syncPaneVisibility();
 }
 function renderPanelContent(step) { return renderStepContent(step); }
 

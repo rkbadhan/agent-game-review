@@ -3,30 +3,60 @@
 // --- help + keyboard ---------------------------------------------------------
 // T1 primary navigation: Runs · Patterns · Compare versions.
 $("#runs-button").addEventListener("click", goToRuns);
-$("#help-button").addEventListener("click", () => openModal("#help-modal"));
+// One help dialog, two tabs (Shortcuts / Glossary) — #help-button/"?" opens
+// on Shortcuts, #glossary-button/"G" opens on Glossary; each switches the
+// tab even if the dialog is already open on the other one.
+function openHelp(tab) {
+  const shortcuts = tab !== "glossary";
+  $("#help-tab-shortcuts").classList.toggle("active", shortcuts);
+  $("#help-tab-glossary").classList.toggle("active", !shortcuts);
+  $("#help-tab-shortcuts").setAttribute("aria-selected", shortcuts ? "true" : "false");
+  $("#help-tab-glossary").setAttribute("aria-selected", shortcuts ? "false" : "true");
+  $("#help-panel-shortcuts").hidden = !shortcuts;
+  $("#help-panel-glossary").hidden = shortcuts;
+  if (!shortcuts) buildGlossary();
+  openModal("#help-modal");
+}
+$("#help-tab-shortcuts").addEventListener("click", () => openHelp("shortcuts"));
+$("#help-tab-glossary").addEventListener("click", () => openHelp("glossary"));
+$("#help-button").addEventListener("click", () => openHelp("shortcuts"));
 $("#versions-button").addEventListener("click", () => { state.view = "versions"; render(); });
 $("#fleet-button").addEventListener("click", () => { state.view = "fleet"; render(); });
 // §4.19 glossary + first-session guidance. The terminology overlay no longer
 // blocks first use (T1) — it's reachable on demand from Help instead.
-$("#glossary-button").addEventListener("click", openGlossary);
+$("#glossary-button").addEventListener("click", () => openHelp("glossary"));
 $("#open-intro").addEventListener("click", () => { closeModals(); openModal("#intro-modal"); });
-$("#intro-glossary").addEventListener("click", () => { dismissIntro(); openGlossary(); });
+$("#intro-glossary").addEventListener("click", () => { dismissIntro(); openHelp("glossary"); });
 $("#intro-dismiss").addEventListener("click", dismissIntro);
-$("#queue-toggle").addEventListener("click", () => $("#queue").classList.toggle("open"));
-// Narrow-screen overflow menu: each item forwards to its real appbar button so
-// there is a single set of handlers. Selecting one closes the menu.
-document.querySelectorAll("#appbar-menu [data-proxy]").forEach(item => {
-  item.addEventListener("click", () => {
-    const target = $("#" + item.dataset.proxy);
-    if (target) target.click();
-    $("#appbar-menu").removeAttribute("open");
+// The sidebar (brand, primary nav, and — while investigating a
+// run — the run queue) is a persistent column on desktop and an off-canvas
+// drawer on mobile, opened by the topbar's #queue-toggle and closed by its
+// own ×, an outside click on the shade, Escape, or choosing a destination.
+function openSidebarDrawer() { $("#sidebar").classList.add("open"); $("#sidebar-shade").classList.add("show"); }
+function closeSidebarDrawer() { $("#sidebar").classList.remove("open"); $("#sidebar-shade").classList.remove("show"); }
+$("#queue-toggle").addEventListener("click", openSidebarDrawer);
+$("#sidebar-close").addEventListener("click", closeSidebarDrawer);
+$("#sidebar-shade").addEventListener("click", closeSidebarDrawer);
+for (const id of ["#runs-button", "#fleet-button", "#versions-button", "#glossary-button", "#help-button"])
+  $(id).addEventListener("click", closeSidebarDrawer);
+// Desktop-only collapse to a ~56px icon rail — remembered per browser like
+// the panel widths, and never left in a state that could strand a reader if
+// localStorage throws (a private window, blocked storage, …).
+(function initSidebarCollapse() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem("agr-sidebar-collapsed") === "1"; } catch (e) {}
+  const apply = () => {
+    $("#sidebar").classList.toggle("collapsed", collapsed);
+    $("#workspace").classList.toggle("sidebar-collapsed", collapsed);
+    $("#sidebar-collapse").setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  };
+  apply();
+  $("#sidebar-collapse").addEventListener("click", () => {
+    collapsed = !collapsed;
+    apply();
+    try { localStorage.setItem("agr-sidebar-collapsed", collapsed ? "1" : "0"); } catch (e) {}
   });
-});
-// Dismiss the overflow menu on an outside click, like a normal popover.
-document.addEventListener("click", e => {
-  const menu = $("#appbar-menu");
-  if (menu && menu.open && !e.target.closest("#appbar-menu")) menu.removeAttribute("open");
-});
+})();
 // The run view-bar's popovers (More analysis, Compare) are mutually exclusive
 // and dismiss on an outside click — native <details> do neither, so two could
 // sit open and overlap. This runs before the summary's default toggle, so the
@@ -66,7 +96,7 @@ document.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   const onMoments = state.view === "review" && state.chapter === "moments";
   if (e.key === "Escape") {
-    closeTrace(); closeModals(); state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open");
+    closeTrace(); closeModals(); closeSidebarDrawer(); state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open");
     if (state.view === "compare" || state.view === "sibling") { state.view = "review"; render(); }
     // U1: leaving a global workspace (Patterns / Compare versions) returns to
     // the run being investigated when one is loaded, else to the Runs
@@ -77,7 +107,7 @@ document.addEventListener("keydown", e => {
   }
   else if (k === "v") { state.view = state.view === "versions" ? (state.runId ? "review" : "runs") : "versions"; render(); }
   else if (k === "f") { state.view = state.view === "fleet" ? (state.runId ? "review" : "runs") : "fleet"; render(); }
-  else if (k === "g") openGlossary();
+  else if (k === "g") openHelp("glossary");
   else if (!state.review) return;
   else if (e.key === "[") moveChapter(-1);
   else if (e.key === "]") moveChapter(1);
@@ -98,5 +128,5 @@ document.addEventListener("keydown", e => {
   else if (k === "d") { if (!state.loading) toggleDisposition(); }
   else if (k === "n") gotoNextUnhandled();
   else if (k === "t") openTrace(null);
-  else if (e.key === "?") openModal("#help-modal");
+  else if (e.key === "?") openHelp("shortcuts");
 });

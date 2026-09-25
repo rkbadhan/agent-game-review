@@ -1,0 +1,11 @@
+{
+ "run_id": "harbor__terminal-bench/prove-plus-comm__prove-plus-c",
+ "task_id": "terminal-bench/prove-plus-comm",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:44:15Z",
+ "source_hash": "sha256:a30d77a74dd5e4b640625518b21e1417f07e2a2817e26f17e8fcfcb979338244",
+ "moment_count": 0,
+ "selected_count": 0,
+ "moments": []
+}

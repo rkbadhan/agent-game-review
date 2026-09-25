@@ -9,7 +9,7 @@ import os
 import tempfile
 
 from agr import read
-from agr.model_packet import build_packet, resolve_expansion
+from agr.model_packet import _BUDGET_RESERVE_CHARS, build_packet, resolve_expansion
 from agr.model_reviewer import ScriptedReviewer
 from agr.pipeline import analyze
 from agr.reviewer import ReviewerContext
@@ -75,7 +75,7 @@ def test_packet_budget_is_measured_and_reported(fixtures_dir):
     packet, red_map = build_packet(ctx, budget_chars=60_000)
     assert red_map["packet_size_chars"] == len(json.dumps(packet))
     assert red_map["budget_chars"] == 60_000
-    assert red_map["effective_budget_chars"] == 60_000 - 8_000
+    assert red_map["effective_budget_chars"] == 60_000 - _BUDGET_RESERVE_CHARS
     assert red_map["budget_met"] is True
 
     # An oversized budget forces the digest down to scaled excerpts, with the

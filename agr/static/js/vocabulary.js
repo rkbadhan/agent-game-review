@@ -7,6 +7,16 @@ const LABELS = {
     model_enriched: ["AI-enriched review", "Deterministic baseline supplemented by model-assisted interpretation and validated moment selection"],
     not_reviewable: ["Not reviewable", "Captured evidence is insufficient for a trustworthy review"],
   },
+  // GR-1: the served review ends in exactly one of these states. The first two
+  // are successful outcomes; the rest are never displayed as abstention.
+  review_status: {
+    moments_found: ["Moments found", "Completed review with one or more validated moments"],
+    no_decisive_moment: ["No decisive moment established", "The review completed and reached that conclusion; it is not padded with weaker moments"],
+    all_proposals_rejected: ["All proposals rejected", "The review completed but every proposal failed evidence validation; none are shown"],
+    not_configured: ["Not configured", "No model reviewer is set up; the deterministic baseline is shown"],
+    review_failed: ["Review failed", "A provider, SDK or parsing error stopped the model review; the deterministic baseline is shown"],
+    incomplete: ["Incomplete", "Processing stopped early (budget, timeout or missing evidence chunks)"],
+  },
   attribution: {
     direct: ["Direct result", "The action directly produced the captured state consumed by the verifier"],
     dependency_linked: ["Linked to outcome", "On the validated evidence path to the outcome; replay has not established causality"],
@@ -75,7 +85,6 @@ function buildGlossary() {
     sec.append(dl); host.append(sec);
   }
 }
-function openGlossary() { buildGlossary(); openModal("#glossary-modal"); }
 
 // --- §4.19 orientation overlay ------------------------------------------------
 // A short overlay explaining review mode, evidence grade, attribution, and the

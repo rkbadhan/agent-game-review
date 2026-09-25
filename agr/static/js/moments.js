@@ -22,14 +22,22 @@ function renderMomentCard(rv, f, moment) {
   const phase = (rv.phases.find(p => p.phase_id === moment.phase_id) || {}).label;
   top.append(el("span", "moment-pos", "Moment " + (state.momentIdx + 1) + " of " + currentMoments().length + (phase ? " · " + phase : "")));
   const nav = el("div", "moment-nav");
-  const prev = el("button", "nav-arrow", "←"); prev.setAttribute("aria-label", "Previous key moment"); prev.addEventListener("click", () => moveMoment(-1));
-  const next = el("button", "nav-arrow", "→"); next.setAttribute("aria-label", "Next key moment"); next.addEventListener("click", () => moveMoment(1));
+  const prev = el("button", "nav-arrow"); prev.append(icon("arrow-left")); prev.setAttribute("aria-label", "Previous key moment"); prev.addEventListener("click", () => moveMoment(-1));
+  const next = el("button", "nav-arrow"); next.append(icon("arrow-right")); next.setAttribute("aria-label", "Next key moment"); next.addEventListener("click", () => moveMoment(1));
   nav.append(prev, next); top.append(nav);
   card.append(top);
 
   const summary = el("div", "moment-summary");
   const heading = el("div", "moment-heading");
-  heading.append(el("h2", null, moment.summary));
+  // R3: the generated "Grounded in quoted run evidence (evt_…)" boilerplate
+  // reads as a headline-sized list of event ids — display-only, lead with the
+  // run's verdict sentence instead; the anchors row below already links the
+  // same evidence ids, so nothing else needs to change here.
+  // R3 (coordinator review 2, item 2): the moment card's own headline, not
+  // the run's overall verdict — see chapters.js's momentHeadline() comment.
+  const boilerIds = groundedBoilerplateIds(moment.summary);
+  const headingText = boilerIds ? momentHeadline(moment, rv) : moment.summary;
+  heading.append(el("h2", null, headingText));
   heading.append(el("span", "moment-anchor", moment._stepIdx != null ? "trace step " + (moment._stepIdx + 1) : (moment.anchor_event_ids || [])[0] || ""));
   summary.append(heading);
   summary.append(el("p", "moment-observed", observedBehaviourSummary(moment, f)));
@@ -41,6 +49,51 @@ function renderMomentCard(rv, f, moment) {
     const r = el("p", "moment-recovery " + rec.cls);
     r.append(el("strong", null, "Recovery: "), document.createTextNode(rec.text));
     summary.append(r);
+  }
+  // GR-3: the idea category and the basis behind the moment's label. The
+  // category is derived by the system from the moment's tags (never named by
+  // the model), and `basis` says whether the support is a mechanical fact or a
+  // model interpretation — so a label never reads as more certain than it is.
+  // A moment can cover more than one category (e.g. a recovery that also
+  // contains a bad query). EVERY category renders with its own basis, so what
+  // the card shows matches what the coverage count reports — a secondary
+  // category is never counted but left invisible.
+  const catDetails = (moment.category_details || []).length
+    ? moment.category_details
+    : (moment.category_label ? [{ label: moment.category_label, basis: moment.basis }] : []);
+  if (catDetails.length || moment.label) {
+    const row = el("div", "moment-category");
+    row.append(el("span", "moment-anchors-label", catDetails.length ? "Category" : "Label"));
+    if (catDetails.length) {
+      for (const c of catDetails) {
+        const chip = el("span", "moment-category-chip");
+        chip.append(el("span", "moment-category-name", c.label));
+        if (c.basis) chip.append(el("span", "moment-category-basis", c.basis + " basis"));
+        row.append(chip);
+      }
+      if (moment.label) row.append(el("span", "moment-category-label", moment.label));
+    } else {
+      // A neutral, mechanically supported label with NO category (e.g. the
+      // submission detector's "Requirement unresolved at submission"): it must
+      // still carry its own basis, so the basis is never dropped just because
+      // there is no category chip to hang it on.
+      const chip = el("span", "moment-category-chip");
+      chip.append(el("span", "moment-category-label", moment.label));
+      if (moment.basis) chip.append(el("span", "moment-category-basis", moment.basis + " basis"));
+      row.append(chip);
+    }
+    summary.append(row);
+  }
+  // GR-3: a failing tool call is linked to this run's argument-shape statistics
+  // deterministically — showing a real count, never a model-stated one.
+  const shape = moment.argument_shape_link;
+  if (shape) {
+    const row = el("div", "moment-shape");
+    row.append(el("span", "moment-anchors-label", "Query shape"));
+    const share = Math.round((shape.share || 0) * 100);
+    row.append(el("span", null, shape.tool + " · shape " + (shape.shape_index + 1) +
+      " · " + shape.count + " of " + shape.total_failing_calls + " failing calls (" + share + "%)"));
+    summary.append(row);
   }
   const anchors = (moment.anchor_event_ids || []).filter(Boolean);
   if (anchors.length) {
@@ -61,7 +114,7 @@ function renderMomentCard(rv, f, moment) {
   }
   card.append(summary);
 
-  const detail = el("details", "moment-detail");
+  const detail = el("details", "moment-detail disclosure");
   if (state.expandedMoments.has(moment.moment_id)) detail.open = true;
   detail.append(el("summary", null, "Full breakdown"));
   detail.addEventListener("toggle", () => {
@@ -106,18 +159,20 @@ function renderMomentCard(rv, f, moment) {
     } else {
       body.append(mcBlock("Likely impact", "interpretation", "Not generated for this moment.", "absent"));
     }
-    if (moment.better_action) {
-      const tested = moment.attribution_ceiling === "counterfactually_supported";
-      body.append(mcBlock("Better action", tested ? "replay-tested" : "hypothesis · not replay-tested", moment.better_action, "hypo"));
-    } else {
-      body.append(mcBlock("Better action", "hypothesis", "Not generated for this moment.", "absent"));
-    }
   } else {
     // T2: a deterministic card has no AI interpretation at all — one combined
     // absent block, not two repeated "Not generated" blocks for Likely impact
     // and Better action separately.
     body.append(mcBlock("AI interpretation", "interpretation",
       "Not generated — this is a deterministic review.", "absent"));
+  }
+  // GR-2: alternatives are rendered independently of model enrichment — the
+  // store-backed observed/validated kinds can attach to a deterministic moment,
+  // and their absence must not hide them behind enrichment_source (PR #91
+  // review). An enriched moment always gets the block (legacy better_action
+  // fallback / explicit "none"); a deterministic one only when it has any.
+  if ((moment.alternatives || []).length || moment.enrichment_source) {
+    body.append(alternativesBlock(moment));
   }
   detail.append(body);
   card.append(detail);
@@ -126,7 +181,7 @@ function renderMomentCard(rv, f, moment) {
   // that recommends it, so a reader finds it where the finding is instead of a
   // separate tab. Collapsed by default — most moments have none.
   if (moment === lessonMoment()) {
-    const det = el("details", "moment-lesson");
+    const det = el("details", "moment-lesson disclosure");
     if (state.expandedLessons.has(moment.moment_id)) det.open = true;
     det.addEventListener("toggle", () => {
       if (det.open) state.expandedLessons.add(moment.moment_id);
@@ -143,6 +198,77 @@ function renderMomentCard(rv, f, moment) {
   card.append(renderMomentActions(moment));
   return card;
 }
+// GR-2: the three kinds of grounded alternative, kept apart and each shown
+// under its ACTUAL status. A suggestion carries its information cutoff (the
+// decision it replaces and the information available before it); an observed
+// alternative names how the passing sibling differs; a validated one shows the
+// linked experiment's benefit, outcome checks and comparison limits. A
+// "Validated by …" label is only ever rendered from a validated status the
+// backend set — never inferred here.
+function alternativesBlock(moment) {
+  const alts = moment.alternatives || [];
+  if (!alts.length) {
+    if (!moment.better_action) {
+      return mcBlock("Alternatives", "none", "None generated for this moment.", "absent");
+    }
+    const tested = moment.attribution_ceiling === "counterfactually_supported";
+    return mcBlock("Better action", tested ? "replay-tested" : "hypothesis · not replay-tested",
+      moment.better_action, "hypo");
+  }
+  const wrap = el("div", "mc-alternatives");
+  wrap.append(el("div", "mc-alt-heading", "Alternatives"));
+  for (const a of alts) {
+    const cls = a.kind === "suggested" ? "hypo" : a.kind === "observed" ? "action" : "consequence";
+    const block = el("div", "mc-block mc-alt " + cls);
+    const label = el("div", "mc-label");
+    label.append(document.createTextNode(a.label || a.kind));
+    label.append(el("span", null, alternativeSub(a)));
+    block.append(label);
+    // One body cell: mc-block is a 2-column grid, so every line of an
+    // alternative belongs in column 2, not as a new grid row.
+    const altBody = el("div", "mc-alt-body");
+    altBody.append(el("p", "mc-text", a.proposal || ""));
+    if (a.kind === "suggested") {
+      const infoIds = (a.information_available || []).map(i => i.event_id).filter(Boolean);
+      const rdc = a.replaces_decision || {};
+      altBody.append(el("p", "mc-alt-cutoff",
+        "Replaces " + (rdc.event_id || "?")
+        + (rdc.description ? " (" + rdc.description + ")" : "")
+        + " · information available before it: " + (infoIds.length ? infoIds.join(", ") : "none recorded")));
+    }
+    if (a.kind === "observed" && a.sibling_diff) {
+      altBody.append(el("p", "mc-alt-diff", "Differs from this run — " + diffText(a.sibling_diff)));
+    }
+    if (a.kind === "validated" && a.validation) {
+      const v = a.validation, parts = [];
+      if (v.stated_benefit) parts.push("Benefit: " + v.stated_benefit);
+      if ((v.outcome_checks || []).length) parts.push("Outcome checks: " + v.outcome_checks.join("; "));
+      if ((v.comparison_limits || []).length) parts.push("Comparison limits: " + v.comparison_limits.join("; "));
+      if (parts.length) altBody.append(el("p", "mc-alt-validation", parts.join(" · ")));
+    }
+    for (const lim of (a.limits || [])) altBody.append(el("p", "mc-alt-limit", "Limit: " + lim));
+    block.append(altBody);
+    wrap.append(block);
+  }
+  return wrap;
+}
+
+function alternativeSub(a) {
+  if (a.kind === "suggested") return "proposal · " + (a.source || "model");
+  if (a.kind === "observed") return "example · " + (a.source || "comparable passing run");
+  const status = (a.validation || {}).status || "proposed";
+  return status.replace(/_/g, " ");
+}
+
+function diffText(diff) {
+  return Object.keys(diff).map(k => {
+    const d = diff[k] || {};
+    const fv = d.failed_run == null ? "unset" : d.failed_run;
+    const pv = d.passing_run == null ? "unset" : d.passing_run;
+    return k + ": " + fv + " → " + pv;
+  }).join(", ");
+}
+
 function mcBlock(label, sub, text, kind) {
   const b = el("div", "mc-block" + (kind ? " " + kind : ""));
   const l = el("div", "mc-label"); l.append(document.createTextNode(label)); l.append(el("span", null, sub)); b.append(l);
@@ -155,9 +281,9 @@ function mcBlock(label, sub, text, kind) {
 // failure_diagnostic selected.
 function rawFailureTextDetail(f) {
   const wrap = el("div", "moment-raw-failure");
-  const raw = el("details");
+  const raw = el("details", "disclosure-inline");
   raw.append(el("summary", null, "Raw failure text"));
-  raw.append(el("pre", "moment-raw-failure-text", f.raw_failure_text
+  raw.append(el("pre", "moment-raw-failure-text disclosure-inline-text", f.raw_failure_text
     + (f.raw_failure_text_truncated ? "\n…[truncated]" : "")));
   wrap.append(raw);
   return wrap;
@@ -341,17 +467,23 @@ function renderMomentActions(moment) {
   // every action that writes until the in-flight load settles; "View
   // evidence" is pure navigation over already-displayed data, so it stays
   // available.
+  // P0-5: read-only demo mode hides write controls outright rather than
+  // showing a button that would just come back with a 403 — the server
+  // enforces the actual restriction independently (agr/api.py).
   const mkWrite = (label, cls, fn, title, sc) => {
+    if (state.readOnly) return null;
     const loadingTitle = "Loading the selected run — try again once it finishes.";
     const b = mk(label, cls, fn, state.loading ? loadingTitle : title, sc);
     if (state.loading) b.disabled = true;
     return b;
   };
   wrap.append(mk(evidenceActionLabel(moment), "primary", () => focusEvidence(), "Focus the evidence for this moment’s claims.", "E"));
-  wrap.append(mkWrite("Agree", "", b => submitFeedback(moment, { kind: "agree" }, b, "Agreement recorded — attribution unchanged"), "Records positive feedback; does not raise attribution."));
-  wrap.append(mkWrite("Not decisive", "", b => submitFeedback(moment, { kind: "not_decisive" }, b, "Marked not decisive"), "Preserves the generated record; adds a human annotation."));
-  wrap.append(mkWrite("Flag task/verifier", "", b => submitFeedback(moment, { kind: "flag_task_verifier" }, b, "Task/verifier concern flagged"), "Marks a possible task or verifier problem."));
-  wrap.append(mkWrite("Correct label", "subtle", () => openCorrect(moment), "Quick relabel to a controlled taxonomy value."));
+  for (const b of [
+    mkWrite("Agree", "", b => submitFeedback(moment, { kind: "agree" }, b, "Agreement recorded — attribution unchanged"), "Records positive feedback; does not raise attribution."),
+    mkWrite("Not decisive", "", b => submitFeedback(moment, { kind: "not_decisive" }, b, "Marked not decisive"), "Preserves the generated record; adds a human annotation."),
+    mkWrite("Flag task/verifier", "", b => submitFeedback(moment, { kind: "flag_task_verifier" }, b, "Task/verifier concern flagged"), "Marks a possible task or verifier problem."),
+    mkWrite("Correct label", "subtle", () => openCorrect(moment), "Quick relabel to a controlled taxonomy value."),
+  ]) { if (b) wrap.append(b); }
   return wrap;
 }
 async function submitFeedback(moment, fields, btn, okMsg) {

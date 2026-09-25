@@ -18,7 +18,7 @@ function renderFleetSurface(main) {
   head.append(el("span", "eyebrow", "Patterns · tool failures and recovery episodes across every run"));
   nav.append(head);
   const util = el("div", "review-util");
-  const back = el("button", "seg", state.runId ? "‹ Back to review" : "‹ Back to runs");
+  const back = el("button", "seg"); back.append(icon("chevron-left"), document.createTextNode(state.runId ? " Back to review" : " Back to runs"));
   back.addEventListener("click", () => { state.view = state.runId ? "review" : "runs"; render(); });
   util.append(back);
   nav.append(util);
@@ -124,7 +124,7 @@ function renderFleetUsageSummaryCard(summary) {
   const cov = coverageQualification(summary);
   const covLine = el("div", "coverage-line " + cov.cls);
   covLine.append(el("span", null, cov.text + " "));
-  const d = el("details", "coverage-detail");
+  const d = el("details", "coverage-detail disclosure-inline");
   d.append(el("summary", null, "How this is counted"));
   d.append(el("p", "subline", summary.usage_note));
   covLine.append(d);
@@ -423,24 +423,30 @@ function renderFleetExecutionQuality(matrix) {
     "Per-dimension incidence by outcome. A dimension is scored only on the runs "
     + "that carried the telemetry it needs; Coverage tells you how many that was "
     + "and names what the rest were missing. Expand a row to see the runs behind it."));
+  const byOutcome = matrix.by_outcome || {};
+  const dimKeys = ["context_bloat", "latency", "redundant_work"];
+  // Collapsed by default once at least half the matrix's dimensions have
+  // nothing measurable (0 eligible runs on every outcome) — a table that is
+  // mostly "not evaluated" cells leads the page with dead rows otherwise (P1).
+  const unevaluatedDims = dimKeys.filter(k => eqCoverage(byOutcome, k).eligible === 0).length;
+  const mostlyUnevaluated = unevaluatedDims * 2 >= dimKeys.length;
   const t = el("table", "vs-table eq-table");
   t.append(rowEls("tr", ["", "Dimension", "Coverage", "PASS", "FAIL",
                           "UNDETERMINED", "UNVERIFIED"], "th"));
   const labels = {
     context_bloat: "Context bloat", latency: "Slow generation", redundant_work: "Redundant work",
   };
-  const byOutcome = matrix.by_outcome || {};
   for (const [key, label] of Object.entries(labels)) {
     const detail = el("details", "eq-detail");
     const tr = el("tr", "eq-row");
     const detailRow = el("tr", "eq-detail-row");
     const toggleCell = el("td", "eq-toggle");
-    const toggleBtn = el("button", "eq-toggle-btn", "▸");
+    const toggleBtn = el("button", "eq-toggle-btn"); toggleBtn.append(icon("chevron-right"));
     toggleBtn.setAttribute("aria-label", "Show the runs behind " + label);
     toggleBtn.setAttribute("aria-expanded", "false");
     toggleBtn.addEventListener("click", () => { detail.open = !detail.open; });
     detail.addEventListener("toggle", () => {
-      toggleBtn.textContent = detail.open ? "▾" : "▸";
+      toggleBtn.classList.toggle("open", detail.open);
       toggleBtn.setAttribute("aria-expanded", detail.open ? "true" : "false");
       detailRow.classList.toggle("open", detail.open);
     });
@@ -467,7 +473,16 @@ function renderFleetExecutionQuality(matrix) {
     detailRow.append(detailCell);
     t.append(detailRow);
   }
-  card.append(t); return card;
+  if (mostlyUnevaluated) {
+    const wrap = el("details", "eq-table-disclosure disclosure");
+    wrap.append(el("summary", null,
+      unevaluatedDims + " of " + dimKeys.length + " dimensions not evaluated — show the table"));
+    wrap.append(t);
+    card.append(wrap);
+  } else {
+    card.append(t);
+  }
+  return card;
 }
 
 function renderFleetGroupByCard(fl) {
@@ -497,11 +512,17 @@ function renderFleetGroupByCard(fl) {
   return card;
 }
 
+// Reading order: stat strip (orientation before any table) -> pattern
+// taxonomy (the Group by control and the table it drives) -> execution
+// quality last (collapsed by default when it's mostly "not evaluated" — see
+// renderFleetExecutionQuality). Fetches stay in their original order (group
+// membership is what a reader is here for, so it starts as soon as
+// possible); only the final DOM order — where each finished card gets
+// appended — changed.
 async function renderFleet(main) {
   const fl = state.fleet;
   const wrap = el("div", "section");
   main.append(wrap);
-  wrap.append(renderFleetGroupByCard(fl));
 
   // Guarded the same way loadFleetArgumentShapes() guards its own fetch: two
   // renderFleet() calls overlapping in time (e.g. this await still pending
@@ -514,11 +535,19 @@ async function renderFleet(main) {
     catch (e) { fl.executionQuality = null; }
     finally { fl.executionQualityPending = false; }
   }
-  if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
 
-  if (fl.pending) { wrap.append(el("div", "subline", "Loading fleet episodes…")); return; }
-  if (fl.error) { wrap.append(el("div", "empty", "Failed: " + fl.error)); return; }
+  if (fl.pending) {
+    wrap.append(renderFleetGroupByCard(fl));
+    wrap.append(el("div", "subline", "Loading fleet episodes…"));
+    return;
+  }
+  if (fl.error) {
+    wrap.append(renderFleetGroupByCard(fl));
+    wrap.append(el("div", "empty", "Failed: " + fl.error));
+    return;
+  }
   if (!fl.episodes) {
+    wrap.append(renderFleetGroupByCard(fl));
     wrap.append(el("div", "subline", "Loading fleet episodes…"));
     await loadFleetEpisodes();
     // U3: re-render from the top instead of continuing to build into `wrap`.
@@ -533,9 +562,11 @@ async function renderFleet(main) {
     return;
   }
   if (!fl.episodes.length) {
-    wrap.append(el("div", "empty",
+    wrap.append(renderFleetGroupByCard(fl));
+    wrap.append(emptyState("layers",
       "No recovery episodes in this store yet — a run needs at least one qualifying "
       + "tool failure for Patterns to have anything to group."));
+    if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
     return;
   }
   if (!fl.usageSummary && !fl.usageSummaryPending) {
@@ -544,9 +575,12 @@ async function renderFleet(main) {
     catch (e) { fl.usageSummary = null; }
     finally { fl.usageSummaryPending = false; }
   }
-  if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
   if (!fl.argumentShapes && !fl.argumentShapesPending) await loadFleetArgumentShapes();
+
+  if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
+  wrap.append(renderFleetGroupByCard(fl));
   wrap.append(renderFleetTable(fl));
+  if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
 }
 
 // Item 5/6: a pattern's title is derived from its diagnostic error text
@@ -653,7 +687,7 @@ function renderFleetTable(fl) {
 
     const detailRow = el("tr", "fleet-detail-row");
     const toggleCell = el("td", "fleet-toggle");
-    const toggleBtn = el("button", "fleet-toggle-btn", "▸");
+    const toggleBtn = el("button", "fleet-toggle-btn"); toggleBtn.append(icon("chevron-right"));
     toggleBtn.setAttribute("aria-label", "Show details for this pattern");
     toggleBtn.setAttribute("aria-expanded", "false");
     toggleBtn.addEventListener("click", () => { detail.open = !detail.open; });
@@ -662,7 +696,7 @@ function renderFleetTable(fl) {
     // so a closed pattern's detail row fully collapses instead of leaving a
     // thin empty divider between every compact row.
     detail.addEventListener("toggle", () => {
-      toggleBtn.textContent = detail.open ? "▾" : "▸";
+      toggleBtn.classList.toggle("open", detail.open);
       toggleBtn.setAttribute("aria-expanded", detail.open ? "true" : "false");
       detailRow.classList.toggle("open", detail.open);
     });
@@ -854,9 +888,9 @@ function representativeEpisodesBlock(g) {
     // fallback ones, since a confident signature can still benefit from the
     // surrounding context.
     if (a.raw_failure_text) {
-      const raw = el("details", "fleet-example-raw");
+      const raw = el("details", "fleet-example-raw disclosure-inline");
       raw.append(el("summary", null, "Raw failure text"));
-      raw.append(el("pre", "fleet-example-raw-text", a.raw_failure_text
+      raw.append(el("pre", "fleet-example-raw-text disclosure-inline-text", a.raw_failure_text
         + (a.raw_failure_text_truncated ? "\n…[truncated]" : "")));
       list.append(raw);
     }
@@ -908,6 +942,20 @@ function resolutionBreakdownCell(g) {
     ["plausible", g.plausible_count, g.plausible_share],
     ["unrecovered", g.unrecovered_count, g.unrecovered_share],
   ];
+  // A small stacked bar reads the recovery split at a glance across many
+  // rows — purely visual (aria-hidden), the text parts below it are
+  // unchanged and remain what a screen reader or a test reads.
+  const bar = el("div", "vs-resolution-bar");
+  bar.setAttribute("aria-hidden", "true");
+  let anySegment = false;
+  for (const [label, , share] of parts) {
+    if (!share) continue;
+    anySegment = true;
+    const seg = el("span", "vs-resolution-seg " + label);
+    seg.style.width = Math.max(0, Math.min(100, share * 100)) + "%";
+    bar.append(seg);
+  }
+  if (anySegment) cell.append(bar);
   for (const [label, count, share] of parts) {
     if (!count) continue;
     const detail = count + " of " + g.count + " episode(s) " + label + ".";

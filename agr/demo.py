@@ -25,6 +25,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
+import tempfile
 from typing import Iterable, Optional
 
 
@@ -110,16 +112,19 @@ def load_fixture(fixtures_dir: str, name: str) -> dict:
 
 
 def _auto_confirm(doc: dict) -> None:
-    """Inject a ``contract_confirmation`` record so the demo run is never
-    watermarked. Uses ``_now()`` for the timestamp and ``"demo-user"`` as the
-    confirmer identity — neither is a real audit trail; the demo is for visual
-    review of the product surface, not for provenance."""
-    import time as _time
+    """Inject a DEMO confirmation so the synthetic run is not watermarked.
+
+    ``demo_override`` selects the ``demo_confirmed`` contract status, so the run
+    is never reported as human-confirmed; ``confirmed_by`` names the demo, not a
+    person. The synthetic slice is fabricated data (``source_type=synthetic_demo``)
+    for visual review of the product surface, not provenance.
+    """
     task = doc.setdefault("task", {})
     task["contract_confirmation"] = {
-        "confirmed_by": "demo-user",
-        "confirmed_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "confirmed_by": "demo",
+        "confirmed_at": _now_iso(),
         "confirm_all": True,
+        "demo_override": True,
     }
 
 
@@ -204,3 +209,294 @@ def build_demo_store(store: Store, fixtures_dir: str) -> dict:
     return {"baseline": {"sweep_id": BASELINE["sweep_id"]},
             "candidate": {"sweep_id": CANDIDATE["sweep_id"]},
             "axis": "evaluation_harness"}
+
+
+# --- GR-4: pre-computed model reviews over real published runs ---------------
+#
+# The real demo dataset lives beside the synthetic fixtures: ``runs/`` holds the
+# real trajectory source documents, ``reviews/`` the pre-computed model reviews
+# (moments + reviewer model + date). ``agr demo`` installs those reviews into a
+# freshly-built store, so the demo shows real model reviews with NO provider
+# credential and no model call. ``agr bake-reviews`` regenerates the dataset from
+# a working store after a maintainer runs the reviewer over the corpus.
+_REAL_PKG = "real_demo"
+_DEFAULT_REVIEW_MODEL = "accounts/fireworks/models/kimi-k3"
+
+
+def find_real_demo_dir(custom: Optional[str] = None) -> Optional[str]:
+    """Resolve the directory holding ``runs/`` and ``reviews/`` for the real demo.
+
+    Preference: explicit ``custom`` path, then package data, then the source tree.
+    Returns ``None`` when no real dataset is present (caller falls back to the
+    synthetic demo).
+    """
+    if custom and os.path.isdir(custom):
+        return custom
+    try:
+        ref = _resources.files(_PACKAGE).joinpath(_FIXTURES_PKG, _REAL_PKG)
+        if ref.is_dir():
+            return str(ref)
+    except (Exception, OSError):
+        pass
+    candidate = os.path.join(os.path.dirname(__file__), _FIXTURES_PKG, _REAL_PKG)
+    return candidate if os.path.isdir(candidate) else None
+
+
+def _safe_name(run_id: str) -> str:
+    """A filesystem-safe stem for a logical run id (``/`` is not legal on Windows)."""
+    return run_id.replace("/", "__").replace("\\", "__")
+
+
+def _iso_mtime(path: str) -> str:
+    """UTC timestamp of a file's last write, or now when it is missing."""
+    import time as _time
+    try:
+        ts = os.path.getmtime(path)
+    except OSError:
+        ts = _time.time()
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(ts))
+
+
+def _read_review_meta(store: Store, run_id: str, capture_id: str) -> dict:
+    return (store.read_derived(run_id, capture_id, "review_meta.json")
+            if store.has_derived(run_id, capture_id, "review_meta.json") else {})
+
+
+def _now_iso() -> str:
+    import time as _time
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+
+
+def _ingest_with_confirmed_contract(doc: dict, store: Store):
+    """Ingest a REAL source UNCHANGED, then clear the watermark via a derived record.
+
+    The source of record is never edited: injecting a confirmation into it (the
+    previous behavior) changed its hash and capture identity and presented a
+    confirmation that never happened on the run. Instead the confirmation is
+    written as its own derived record (the same path ``agr confirm`` uses) and the
+    run is re-analyzed so the served contract is confirmed. The real source hash
+    and capture id are preserved, which is what lets a baked review be verified
+    against its exact source.
+    """
+    analysis = analyze(doc, store)
+    run_id = analysis.run_source.run_id
+    capture_id = analysis.run_source.source_capture_id
+    if not store.has_derived(run_id, capture_id, "contract_confirmation.json"):
+        store.write_derived(run_id, capture_id, "contract_confirmation.json", {
+            "confirm_all": True, "confirmed_by": "demo",
+            "confirmed_at": _now_iso(), "demo_override": True})
+    return analyze(doc, store)
+
+
+def _load_json_dir(directory: str) -> list[dict]:
+    out = []
+    for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
+        if name.endswith(".json"):
+            with open(os.path.join(directory, name), encoding="utf-8") as fh:
+                out.append(json.load(fh))
+    return out
+
+
+def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
+                          include_comparison: bool = True) -> dict:
+    """GR-4: build the demo from real runs + their pre-computed model reviews.
+
+    Ingests each committed real trajectory, installs the corresponding baked
+    model-review snapshot into the run's latest capture (re-keyed to that capture
+    so the slot is self-consistent), records the reviewer model and date in
+    ``review_meta.json``, and — unless disabled — adds the synthetic comparison
+    slice so the Compare surface still has matched data. No model is called.
+    """
+    from . import read
+
+    real_dir = real_dir or find_real_demo_dir()
+    if real_dir is None:
+        raise FileNotFoundError("no real demo dataset found (expected runs/ and reviews/)")
+    runs_dir = os.path.join(real_dir, "runs")
+    reviews_dir = os.path.join(real_dir, "reviews")
+
+    store_runs: dict[str, str] = {}
+    for doc in _load_json_dir(runs_dir):
+        analysis = _ingest_with_confirmed_contract(doc, store)
+        store_runs[analysis.run_source.run_id] = analysis.run_source.source_capture_id
+
+    # Clear every model slot this dataset owns before installing, so a review
+    # that is no longer in the dataset (or is rejected below) cannot remain
+    # served from a previous build of a reused store. The deterministic baseline
+    # is left untouched.
+    for run_id, capture_id in store_runs.items():
+        for key in store.list_reviews(run_id, capture_id):
+            if key.startswith("model:"):
+                store.delete_review(run_id, capture_id, key)
+        if store.has_derived(run_id, capture_id, "review_meta.json"):
+            store.write_derived(run_id, capture_id, "review_meta.json", {})
+
+    installed: list[str] = []
+    stale: list[str] = []
+    for review in _load_json_dir(reviews_dir):
+        run_id = review.get("run_id")
+        capture_id = store_runs.get(run_id)
+        key = review.get("reviewer_key")
+        if capture_id is None or not key:
+            continue  # a review whose run is not in this dataset is skipped, not guessed
+        # A baked review is installed, not re-validated, so it is only trustworthy
+        # against the EXACT source it was computed from. BOTH hashes must be
+        # present and equal: the source hash covers the whole trajectory text
+        # (not just event positions), so an unverifiable or changed run is
+        # rejected rather than served with stale quotes and validated facts.
+        source = store.read_derived(run_id, capture_id, "run_source.json") \
+            if store.has_derived(run_id, capture_id, "run_source.json") else {}
+        baked_hash = review.get("source_hash")
+        source_hash = source.get("source_hash")
+        if not baked_hash or not source_hash or baked_hash != source_hash:
+            stale.append(run_id)
+            continue
+        moments = review.get("moments") or []
+        for moment in moments:
+            moment["run_id"] = run_id
+            moment["source_capture_id"] = capture_id
+        store.write_review(run_id, capture_id, key, moments)
+        meta = _read_review_meta(store, run_id, capture_id)
+        meta[key] = {"model": review.get("model"), "reviewed_at": review.get("reviewed_at"),
+                     "origin": "precomputed"}
+        store.write_derived(run_id, capture_id, "review_meta.json", meta)
+        installed.append(run_id)
+
+    if include_comparison:
+        fixtures_dir = find_fixtures_dir()
+        if fixtures_dir:
+            build_demo_store(store, fixtures_dir)
+
+    return {"landing_run": _choose_landing_run(store, installed),
+            "real_runs": len(store_runs), "model_reviews": len(installed),
+            "stale_reviews": len(stale),
+            "axis": "evaluation_harness"}
+
+
+def _choose_landing_run(store: Store, run_ids: Iterable[str]) -> Optional[str]:
+    """The run ``agr demo`` opens on: a real FAILED run whose model review found
+    moments, then any other non-passing run with moments, then any reviewed run.
+
+    Deterministic (sorted) so the demo lands on the same run every build.
+    """
+    from . import read
+
+    ranked: list[tuple[int, str]] = []
+    reviewed = sorted(set(run_ids))
+    for run_id in reviewed:
+        try:
+            review = read.get_review(store, run_id)
+        except Exception:  # noqa: BLE001 — a run that cannot be read is not a landing candidate
+            continue
+        if not review.get("moments"):
+            continue
+        status = (review.get("outcome") or {}).get("status")
+        ranked.append((0 if status == "FAILED" else 1, run_id))
+    if ranked:
+        ranked.sort()
+        return ranked[0][1]
+    return reviewed[0] if reviewed else None
+
+
+def _healthy_model_key(store: Store, run_id: str, capture_id: str,
+                       model: str) -> Optional[str]:
+    """The model-review key to bake, only when its LATEST attempt succeeded.
+
+    A failed or incomplete retry deliberately leaves the reviewer's older slot on
+    disk (so a stale snapshot is never served as the retry's result). Baking must
+    not resurrect that older slot: when the store records attempts/errors, the
+    chosen reviewer must have a latest ``ok`` attempt and no active error.
+    """
+    key = next((k for k in store.list_reviews(run_id, capture_id)
+                if k.startswith("model:") and model in k), None)
+    if key is None:
+        return None
+    if store.has_derived(run_id, capture_id, "review_errors.json"):
+        errors = store.read_derived(run_id, capture_id, "review_errors.json") or []
+        if any(e.get("reviewer_key") == key for e in errors if isinstance(e, dict)):
+            return None
+    if store.has_derived(run_id, capture_id, "review_attempts.json"):
+        attempts = store.read_derived(run_id, capture_id, "review_attempts.json") or []
+        latest = next((a for a in reversed(attempts)
+                       if isinstance(a, dict) and a.get("reviewer_key") == key), None)
+        if latest is None or latest.get("outcome") != "ok":
+            return None
+    return key
+
+
+def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> dict:
+    """Export real runs + their pre-computed model reviews into a demo dataset.
+
+    A maintainer runs the model reviewer over the corpus
+    (``agr review --all --provider … --model …``), then runs
+    ``agr --store <store> bake-reviews --out <dir>`` to write
+    ``out_dir/runs/*.atif.json`` (the source of record) and
+    ``out_dir/reviews/*.json`` (moments + reviewer model + date). Committing the
+    result lets ``agr demo`` reproduce the reviews with no provider credential.
+
+    The export is written to a staging directory and swapped in only on success,
+    so a re-bake can never leave runs or reviews from a previous corpus behind.
+    """
+    from . import read
+
+    model = model or _DEFAULT_REVIEW_MODEL
+    parent = os.path.dirname(os.path.abspath(out_dir)) or "."
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".bake-reviews-", dir=parent)
+    written = 0
+    try:
+        runs_dir = os.path.join(staging, "runs")
+        reviews_dir = os.path.join(staging, "reviews")
+        os.makedirs(runs_dir, exist_ok=True)
+        os.makedirs(reviews_dir, exist_ok=True)
+        for row in read.list_runs(store):
+            run_id, capture_id = row["run_id"], row["capture_id"]
+            key = _healthy_model_key(store, run_id, capture_id, model)
+            if key is None:
+                continue
+            moments = store.read_review_slot(run_id, capture_id, key)
+            reviewer_model = key.split("model:", 1)[1] if key.startswith("model:") else key
+            stem = _safe_name(run_id)
+            with open(os.path.join(runs_dir, stem + ".atif.json"), "w", encoding="utf-8") as fh:
+                json.dump(store.read_source(run_id, capture_id), fh, indent=1)
+            source = store.read_derived(run_id, capture_id, "run_source.json") \
+                if store.has_derived(run_id, capture_id, "run_source.json") else {}
+            review = {
+                "run_id": run_id,
+                "task_id": source.get("task_id"),
+                "reviewer_key": key,
+                "model": reviewer_model,
+                "reviewed_at": _iso_mtime(store.review_slot_path(run_id, capture_id, key)),
+                "source_hash": source.get("source_hash"),
+                "moment_count": len(moments),
+                "selected_count": sum(1 for m in moments if m.get("selected")),
+                "moments": moments,
+            }
+            with open(os.path.join(reviews_dir, stem + ".json"), "w", encoding="utf-8") as fh:
+                json.dump(review, fh, indent=1)
+            written += 1
+        if written == 0:
+            # Nothing eligible: keep the existing dataset intact rather than
+            # replacing it with an empty one. The CLI reports failure.
+            shutil.rmtree(staging, ignore_errors=True)
+            return {"runs": 0, "out_dir": out_dir, "model": model}
+        # Replace only once the export is ready, and keep the old dataset until
+        # the swap succeeds: vacate it to a sibling backup, move staging in, and
+        # restore the backup if the move fails.
+        backup = staging + ".old"
+        moved_existing = False
+        if os.path.exists(out_dir):
+            os.replace(out_dir, backup)
+            moved_existing = True
+        try:
+            os.replace(staging, out_dir)
+        except Exception:
+            if moved_existing and os.path.exists(backup):
+                os.replace(backup, out_dir)
+            raise
+        if moved_existing:
+            shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return {"runs": written, "out_dir": out_dir, "model": model}

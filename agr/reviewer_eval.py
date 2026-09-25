@@ -417,9 +417,12 @@ def predicted_from_store(store, run_id: str) -> list[PredictedMoment]:
 def evaluate_store(store, gold_set: GoldSet, k: int = 3, threshold: float = 0.0) -> SetEval:
     """Score the deterministic baseline over every gold run present in the store.
 
-    A run whose served review is in a FAILED state (AGR-06 enrichment error) is
-    scored as an explicit abstention — in the denominator, zero credit — never
-    silently skipped and never conflated with a clean result (AGR-07).
+    A run whose served review is in a FAILED state (AGR-06 enrichment error), or
+    that GR-1 records as incomplete/all-proposals-rejected, is scored as an
+    explicit abstention — in the denominator, zero credit — never silently
+    skipped and never conflated with a clean result (AGR-07). A successful
+    review that abstained (no_decisive_moment) is the only abstention that
+    earns calibration credit.
     """
     from .read import RunNotFound
     from . import read
@@ -427,8 +430,13 @@ def evaluate_store(store, gold_set: GoldSet, k: int = 3, threshold: float = 0.0)
     for traj in gold_set.trajectories:
         try:
             view = read.get_review(store, traj.run_id)
-            if view.get("review_status") == "failed":
-                predictions[traj.run_id] = None  # abstention: incomplete review
+            # GR-1: only moments_found and no_decisive_moment are successful
+            # reviews. A failed, early-stopped or all-rejected review is an
+            # explicit abstention (zero calibration credit). A not_configured
+            # deterministic baseline is still a real prediction and stays scored.
+            if view.get("review_status") in ("review_failed", "incomplete",
+                                             "all_proposals_rejected"):
+                predictions[traj.run_id] = None  # abstention: unsuccessful review
                 continue
             predictions[traj.run_id] = predicted_from_store(store, traj.run_id)
         except RunNotFound:

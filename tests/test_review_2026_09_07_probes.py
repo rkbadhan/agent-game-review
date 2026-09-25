@@ -152,7 +152,7 @@ def test_default_serves_the_baseline_not_a_stale_errored_model_slot(tmp_path):
     # The served snapshot content IS the deterministic baseline: no model
     # enrichment on any served card.
     assert all(not m.get("enrichment_source") for m in view["moments"])
-    assert view["review_status"] == "failed"
+    assert view["review_status"] == "review_failed"
     assert [e["reviewer_key"] for e in view["review_errors"]] == ["model:a"]
 
 
@@ -178,7 +178,7 @@ def test_requested_healthy_reviewer_is_not_contaminated_by_another_models_error(
     view = read.get_review(store, "chess_best_move__seed42", reviewer_key="model:b")
     assert view["served_reviewer_key"] == "model:b"
     assert view["requested_reviewer_key"] == "model:b"
-    assert view["review_status"] == "ok"
+    assert view["review_status"] == "moments_found"
     assert view["review_errors"] == []
     # A's active error is preserved as A's status — visible, not contaminating.
     assert [e["reviewer_key"] for e in view["other_reviewer_errors"]] == ["model:a"]
@@ -202,7 +202,7 @@ def test_default_prefers_a_healthy_model_slot_over_the_baseline(tmp_path):
 
     view = read.get_review(store, "chess_best_move__seed42")
     assert view["served_reviewer_key"] == "model:b"
-    assert view["review_status"] == "ok"
+    assert view["review_status"] == "moments_found"
     assert view["review_errors"] == []
     assert [e["reviewer_key"] for e in view["other_reviewer_errors"]] == ["model:a"]
 

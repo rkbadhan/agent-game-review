@@ -28,8 +28,11 @@ function factSpanTerms(facts) {
 function renderEvidencePanel() {
   const host = $("#evidence-body"); host.textContent = "";
   const onMoments = state.view === "review" && state.chapter === "moments";
-  if (!onMoments || !currentMoment()) {
-    host.append(el("div", "panel-dim", onMoments ? "No moment selected." : "Evidence follows the Key-moments chapter’s selected moment."));
+  const hasContent = onMoments && !!currentMoment();
+  syncEvidenceCollapse(hasContent);
+  if (!hasContent) {
+    host.append(emptyState("circle",
+      onMoments ? "Select a moment to see its evidence." : "Evidence follows the Key-moments chapter’s selected moment."));
     return;
   }
   const rv = state.review, f = state.forensic, moment = currentMoment();
@@ -143,7 +146,7 @@ function stepContentHasTerm(step, term) {
 // panel — a collapsed strip of the steps immediately around the focused one,
 // each a jump to make it the new focus.
 function renderNeighbors(f, idx) {
-  const wrap = el("details", "evidence-neighbors");
+  const wrap = el("details", "evidence-neighbors disclosure");
   wrap.append(el("summary", null, "Show neighbouring events"));
   const list = el("div", "evidence-neighbor-list");
   const steps = f.steps || [];
@@ -206,7 +209,7 @@ function renderChecksGroup(rv, f, moment) {
 // stated once here instead of repeated above every excerpt.
 function renderProvenanceGroup(rv, f, moment) {
   const cap = rv.capture || {};
-  const wrap = el("details", "evidence-provenance");
+  const wrap = el("details", "evidence-provenance disclosure");
   wrap.append(el("summary", null, "Where this came from"));
   const body = el("div", "provenance-body");
   body.append(kvLine("Capture", (cap.capture_id || "?") + " · rev " + (cap.capture_revision ?? "?")));
@@ -238,5 +241,25 @@ function focusEvidence() {
   panel.scrollTo({ top: 0, behavior: "smooth" });
   toast("Evidence aligned to the selected moment");
 }
-$("#evidence-tab").addEventListener("click", () => $("#evidence-panel").classList.toggle("open"));
+// Evidence panel / R6: collapses to a ~40px rail (`.evidence-panel.collapsed`
+// + `#workspace.evidence-collapsed`, which narrows the grid track — see
+// app.css) whenever the current chapter/selection has nothing to show, and
+// auto-expands the moment it does. A reader's own click on the tab overrides
+// that auto rule until the content-state itself changes again (a different
+// chapter, a different moment picked), at which point the auto rule resumes.
+let _evidenceHasContent = null, _evidenceOverride = null;
+function syncEvidenceCollapse(hasContent) {
+  if (hasContent !== _evidenceHasContent) { _evidenceHasContent = hasContent; _evidenceOverride = null; }
+  const open = _evidenceOverride != null ? _evidenceOverride : hasContent;
+  $("#evidence-panel").classList.toggle("collapsed", !open);
+  $("#workspace").classList.toggle("evidence-collapsed", !open);
+}
+$("#evidence-tab").addEventListener("click", () => {
+  // Below 1180px the tab drives the overlay's .open class instead (see the
+  // max-width:1180px rules in app.css) — the desktop rail collapse does not
+  // apply there.
+  if (window.innerWidth <= 1180) { $("#evidence-panel").classList.toggle("open"); return; }
+  _evidenceOverride = $("#evidence-panel").classList.contains("collapsed");
+  syncEvidenceCollapse(_evidenceHasContent);
+});
 

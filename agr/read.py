@@ -29,7 +29,7 @@ import weakref
 from datetime import datetime
 from typing import Any, Optional
 
-from . import lessons, version, workflow
+from . import lessons, taxonomy, version, workflow
 from .execution_quality import (
     execution_quality_record,
     generation_token_counts,
@@ -207,6 +207,12 @@ def _review_moment_view(m: dict) -> dict:
         "micro_abilities": m.get("micro_abilities", []),
         "root_cause_candidates": m.get("root_cause_candidates", []),
         "better_action": m.get("better_action"),
+        # GR-2: the three kinds of grounded alternative, each shown under its own
+        # status. Persisted as an ``Alternative`` record; pass through as dicts.
+        "alternatives": [
+            a.to_dict() if hasattr(a, "to_dict") else a
+            for a in (m.get("alternatives") or [])
+        ],
         "instructional_value": m.get("instructional_value"),
         # Whether this accepted finding supports an Eval Lesson (§4.11). Carried
         # to the browser so the Eval Lesson chapter can offer to create one; the
@@ -268,6 +274,82 @@ def _moments(events: list[dict], detector_results: list[dict]) -> list[dict]:
     return moments
 
 
+def _recovery_strategy_changed(moment: dict) -> bool:
+    """Whether a recovery moment's episode changed strategy — read from the
+    state_transition fact the detector emitted (never inferred from prose)."""
+    for f in moment.get("facts") or []:
+        if f.get("type") == "state_transition" and f.get("strategy_changed"):
+            return True
+    return False
+
+
+def _apply_moment_enrichment(moments: list[dict], derived_events: list) -> None:
+    """GR-3: derive each moment's idea category, mechanical label and basis.
+
+    A detector that emits a vocabulary tag (recovery, submission) gives the
+    moment a MECHANICAL label — its support is the detector's own structured
+    classification, not model prose — so a deterministic-only review still shows
+    the supported-recovery label the idea asks for. The category is a pure
+    function of the moment's tags (model tags ∪ detector tags); the model never
+    names a category. The argument-shape link is deterministic too: it is
+    attached only when the moment anchors a genuinely failing tool call.
+    """
+    from .argument_shapes import argument_shape_link_for_event
+
+    for m in moments:
+        detector = m.get("detector")
+        det_tags = list(taxonomy.DETECTOR_BEHAVIOUR_TAGS.get(detector, ()))
+        if detector == "successful_recovery_via_strategy_change" and \
+                _recovery_strategy_changed(m):
+            det_tags.append("effective_replan")
+        if det_tags:
+            m["detector_tags"] = det_tags
+            if not m.get("behaviour_tags"):
+                m["behaviour_tags"] = list(det_tags)
+        # The basis is per CATEGORY, not per moment: a model tag for one category
+        # must never inherit the mechanical basis the detector gives another. When
+        # a moment carries both, the displayed category is the mechanically
+        # supported one (its deterministic label is the headline) and every other
+        # category stays visible with its OWN basis in ``category_bases``.
+        model_tags = list(m.get("behaviour_tags") or [])
+        mechanical_cats = {c: "mechanical" for c in taxonomy.category_for_tags(det_tags)}
+        model_cats = {c: "model" for c in taxonomy.category_for_tags(model_tags)}
+        category_bases = {**model_cats, **mechanical_cats}  # mechanical wins a tie
+        categories = sorted(category_bases)
+        m["category_bases"] = category_bases
+        m["categories"] = categories
+        displayed = (sorted(mechanical_cats) or categories or [None])[0]
+        m["category"] = displayed
+        m["category_label"] = (
+            taxonomy.IDEA_CATEGORIES[displayed]["label"] if displayed else None
+        )
+        m["basis"] = category_bases.get(displayed)
+        # EVERY category the moment covers is exposed with its own label and
+        # basis, so the card shows exactly what the coverage count reports — a
+        # secondary category is never counted but left invisible.
+        m["category_details"] = [
+            {"category_id": cid, "label": taxonomy.IDEA_CATEGORIES[cid]["label"],
+             "basis": category_bases[cid]}
+            for cid in categories
+        ]
+        if detector == "successful_recovery_via_strategy_change":
+            m["label"] = "Supported recovery"
+        elif detector in taxonomy.DETECTOR_NEUTRAL_LABELS:
+            # The detector observed something real but does not establish a tag's
+            # meaning — a neutral label, never a victory claim.
+            m["label"] = taxonomy.DETECTOR_NEUTRAL_LABELS[detector]
+        if m["basis"] is None and (det_tags or m.get("label")):
+            m["basis"] = "mechanical"
+        if not m.get("argument_shape_link"):
+            link = None
+            for eid in m.get("anchor_event_ids") or []:
+                link = argument_shape_link_for_event(derived_events, eid)
+                if link:
+                    break
+            if link:
+                m["argument_shape_link"] = link
+
+
 def _run_moments(store: Store, run_id: str, capture_id: str,
                  events: list[dict], detector_results: list[dict],
                  reviewer_key: Optional[str] = None) -> tuple[list[dict], Optional[list[dict]], Optional[str]]:
@@ -290,6 +372,9 @@ def _run_moments(store: Store, run_id: str, capture_id: str,
         if review_moments is not None
         else _moments(events, detector_results)
     )
+    if moments and events:
+        from .schema import DerivedEvent
+        _apply_moment_enrichment(moments, [DerivedEvent(**e) for e in events])
     return moments, review_moments, served_key
 
 
@@ -304,26 +389,44 @@ def _active_error_keys(store: Store, run_id: str, capture_id: str) -> set[str]:
     return {e.get("reviewer_key") for e in errors if isinstance(e, dict)}
 
 
+def _incomplete_reviewer_keys(store: Store, run_id: str, capture_id: str) -> set[str]:
+    """Reviewer keys whose LATEST attempt stopped early (GR-1 'incomplete').
+
+    An incomplete attempt writes no new snapshot, so the reviewer's older
+    successful slot is stale for it: the default must not serve those cards
+    while the status says the deterministic baseline is shown. A later success
+    becomes the latest attempt and clears this naturally.
+    """
+    latest: dict[str, str] = {}
+    for a in _read(store, run_id, capture_id, "review_attempts.json", []):
+        key = a.get("reviewer_key")
+        if key:
+            latest[key] = a.get("outcome")
+    return {k for k, outcome in latest.items() if outcome == "incomplete"}
+
+
 def _default_reviewer_key(store: Store, run_id: str, capture_id: str) -> str:
     """The most-enriched HEALTHY review: model if present, else deterministic.
 
     Review 2026-09-07 (R4): a reviewer slot whose review FAILED is never
     servable as the default while a healthy alternative exists — its snapshot
     is stale (or absent) while the UI wording says the deterministic baseline
-    is shown. Serving order: a healthy model slot, then the deterministic
-    baseline, and only an errored model slot when no baseline was ever
-    written (an errored slot beats nothing at all).
+    is shown. GR-1 extends the same rule to a reviewer whose latest attempt was
+    ``incomplete``: it too serves no fresh snapshot. Serving order: a healthy
+    model slot, then the deterministic baseline, and only a stale model slot
+    when no baseline was ever written (a stale slot beats nothing at all).
     """
-    errored = _active_error_keys(store, run_id, capture_id)
+    stale = _active_error_keys(store, run_id, capture_id) | \
+        _incomplete_reviewer_keys(store, run_id, capture_id)
     keys = store.list_reviews(run_id, capture_id)
     for k in keys:
-        if k != "deterministic" and k not in errored:
+        if k != "deterministic" and k not in stale:
             return k
     if "deterministic" in keys:
         return "deterministic"
     for k in keys:
         if k != "deterministic":
-            return k  # explicit fallback: an errored slot beats nothing at all
+            return k  # explicit fallback: a stale slot beats nothing at all
     return "deterministic"
 
 
@@ -989,30 +1092,162 @@ def get_audit(store: Store, run_id: str, capture_id: Optional[str] = None,
     return findings
 
 
-def _review_status(review_moments: Optional[list[dict]], errors: list) -> str:
-    """The served review's state, kept explicit (AGR-06).
+# GR-1: a completed review ends in exactly one of these states. The first two
+# are successful outcomes; the others are explicit non-abstentions — a failed or
+# unconfigured reviewer is never rendered as "no decisive moment".
+REVIEW_STATUSES = (
+    "moments_found",           # completed review, one or more validated moments
+    "no_decisive_moment",      # completed review that reached that conclusion
+    "all_proposals_rejected",  # completed review whose proposals all failed validation
+    "not_configured",          # no model reviewer set up; deterministic baseline only
+    "review_failed",           # provider, SDK, or parsing error
+    "incomplete",              # processing stopped early (budget, timeout, missing chunks)
+)
+SUCCESSFUL_REVIEW_STATUSES = frozenset({"moments_found", "no_decisive_moment"})
+
+
+def _review_status(review_moments: Optional[list[dict]], errors: list,
+                   served_key: Optional[str] = None,
+                   telemetry: Optional[dict] = None) -> str:
+    """The served review's state, kept explicit (AGR-06, GR-1).
 
     ``errors`` is the ACTIVE error list for the reviewer whose snapshot is
     served (F1 follow-up) — historical attempts live in review_attempts.json
-    and never flip a successful retry back to failed.
+    and never flip a successful retry back to failed. ``served_key`` names the
+    reviewer whose snapshot is served: anything other than ``"deterministic"``
+    (or a legacy envelope carrying model enrichment) means a model review ran,
+    which is what separates "no decisive moment" from "not configured".
 
-    ``failed``       — an active model enrichment error for the served
-                       reviewer; the deterministic baseline is served and the
-                       failure is named.
-    ``empty``        — a VALID review that returned no moments.
-    ``no_selection`` — moments exist but none passed the gates.
-    ``ok``           — at least one selected card.
-    ``deterministic``— only the deterministic baseline exists (normal state).
+    ``incomplete`` wins over the other states: processing stopped early
+    (budget, timeout, missing chunks), so no completed conclusion exists.
     """
+    telemetry = telemetry or {}
+    t_key = telemetry.get("reviewer_key")
+    # The marker belongs to the attempt that produced it: it counts for the
+    # served slot, or when a model attempt stopped early and the deterministic
+    # baseline is what is left to serve.
+    if telemetry.get("incomplete") and (
+            t_key == served_key
+            or (served_key in (None, "deterministic")
+                and t_key not in (None, "deterministic"))):
+        return "incomplete"
     if errors:
-        return "failed"
-    if review_moments is None:
-        return "deterministic"
+        return "review_failed"
+    model_served = (served_key not in (None, "deterministic")) or any(
+        m.get("enrichment_source") for m in (review_moments or []))
+    if not model_served:
+        return "not_configured"
+    if review_moments and any(m.get("selected") for m in review_moments):
+        return "moments_found"
     if not review_moments:
-        return "empty"
-    if not any(m.get("selected") for m in review_moments):
-        return "no_selection"
-    return "ok"
+        return "no_decisive_moment"
+    return "all_proposals_rejected"
+
+
+def _review_counts(review_moments: Optional[list[dict]], telemetry: Optional[dict],
+                   served_key: Optional[str]) -> dict:
+    """GR-1 counts shown beside a status — proposals, selections, rejections.
+
+    The served reviewer's own attempt telemetry is used when it matches the
+    slot; otherwise the counts come from the served moments alone. The rejection
+    count is what "all proposals rejected" displays.
+    """
+    moments = review_moments or []
+    counts = {
+        "proposed": len(moments),
+        "selected": sum(1 for m in moments if m.get("selected")),
+    }
+    telemetry = telemetry or {}
+    if telemetry.get("reviewer_key") == served_key:
+        if telemetry.get("proposed") is not None:
+            counts["proposed"] = telemetry["proposed"]
+        if telemetry.get("selected") is not None:
+            counts["selected"] = telemetry["selected"]
+        # GR-2: how many grounded alternatives were proposed, attached, and
+        # dropped (by reason) — the same measured-accounting the moments get.
+        alt = telemetry.get("alternatives") or {}
+        if alt:
+            counts["alternatives"] = {
+                "proposed": alt.get("proposed", 0),
+                "attached": alt.get("attached", 0),
+                "dropped": dict(alt.get("dropped") or {}),
+            }
+        rejections = telemetry.get("rejections") or {}
+        if rejections:
+            counts["rejections"] = dict(rejections)
+            counts["rejected"] = sum(rejections.values())
+            return counts
+    counts["rejected"] = max(0, counts["proposed"] - counts["selected"])
+    return counts
+
+
+def _attach_store_alternatives(store: Store, run_id: str, moments: list[dict]) -> dict:
+    """Attach the store-backed OBSERVED and VALIDATED alternatives at read time (GR-2).
+
+    Both are sourced from other records — a passing sibling run and a linked
+    experiment — that can be ingested or changed *after* the review was computed.
+    Deriving them here, from the whole store, means a newly found sibling or a
+    recorded experiment outcome is reflected without reanalysis (PR #91 review),
+    and a deterministic moment can carry them too. A suggested alternative stays
+    with the persisted model review — that one is model output, not store state.
+
+    Returns drop counts (an alternative matching no moment is counted, never
+    invented onto one). Lazy imports avoid the ``read`` ↔ ``divergence`` cycle.
+    """
+    from . import divergence, lessons
+    from .schema import alternative_label
+
+    capture_id = _latest(store, run_id)
+    events = _read(store, run_id, capture_id, "events.json", [])
+    seq_of = {e.get("event_id"): e.get("sequence") for e in events}
+    drops: dict[str, int] = {}
+
+    def _attach(raw: dict, kind: str) -> None:
+        mid, eid = raw.get("moment_id"), raw.get("event_id")
+        target = None
+        if mid:
+            target = next((m for m in moments if m.get("moment_id") == mid), None)
+        if target is None and eid:
+            target = next(
+                (m for m in moments if eid in (m.get("anchor_event_ids") or [])), None)
+        if target is None and eid and seq_of.get(eid) is not None:
+            # No moment anchors the divergence event itself: attach to the
+            # nearest moment by timeline position. A failed run often has its
+            # only moment *after* the divergence (e.g. the submission that
+            # omitted the work), and that moment is exactly where the observed
+            # alternative reads as context — so search both directions, never
+            # dropping the alternative merely because the moment follows.
+            seq = seq_of[eid]
+            positioned = [m for m in moments if m.get("sequence") is not None]
+            if positioned:
+                target = min(positioned, key=lambda m: abs(m["sequence"] - seq))
+        if target is None:
+            key = f"{kind}_no_matching_moment"
+            drops[key] = drops.get(key, 0) + 1
+            return
+        target.setdefault("alternatives", []).append({
+            "kind": kind,
+            "label": alternative_label(kind, raw.get("validation")),
+            "proposal": raw.get("proposal") or "",
+            "source": raw.get("source") or kind,
+            "attribution_ceiling": raw.get("attribution_ceiling") or target.get("attribution_ceiling"),
+            "limits": list(raw.get("limits") or []),
+            "replaces_decision": None,
+            "information_available": [],
+            "assumptions": [],
+            "sibling_diff": raw.get("sibling_diff"),
+            "validation": raw.get("validation"),
+            "rejected": False,
+            "rejection_reason": None,
+        })
+
+    observed = divergence.observed_alternative(store, run_id)
+    if observed:
+        _attach(observed, "observed")
+    validated = lessons.validated_alternative(store, run_id)
+    if validated:
+        _attach(validated, "validated")
+    return drops
 
 
 def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) -> dict:
@@ -1068,11 +1303,49 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
     # it. The store keeps the generated moment untouched.
     feedback = workflow.read_feedback(store, run_id)
     _apply_corrections(moments, feedback)
+    # GR-2: the store-backed alternatives (a passing sibling, a linked experiment)
+    # are attached here, so they reflect the current store without reanalysis.
+    alternative_drops = _attach_store_alternatives(store, run_id, moments)
     opportunities = _read(store, run_id, capture_id, "opportunities.json", [])
     signature = _read(store, run_id, capture_id, "signature.json", [])
     capabilities = _read(store, run_id, capture_id, "capabilities.json", {}).get("capabilities", {})
     source = store.read_source(run_id, capture_id)
+    # GR-1: the served review ends in exactly one status; the counts beside it
+    # (proposals / selections / rejections) are what "all proposals rejected"
+    # displays. Both are computed once against the same served reviewer key.
+    review_telemetry = _read(store, run_id, capture_id, "review_telemetry.json", {})
+    review_status = _review_status(review_moments, review_errors, chosen_key, review_telemetry)
+    review_counts = _review_counts(review_moments, review_telemetry, chosen_key)
+    # Fold the read-time alternative drops into the counts, and report the total
+    # attached on the served moments (suggested + observed + validated).
+    attached = sum(len(m.get("alternatives") or []) for m in moments)
+    if alternative_drops or attached:
+        alt_counts = review_counts.setdefault(
+            "alternatives", {"proposed": 0, "attached": 0, "dropped": {}})
+        alt_counts["attached"] = attached
+        for reason, n in alternative_drops.items():
+            alt_counts["dropped"][reason] = alt_counts["dropped"].get(reason, 0) + n
+    # GR-3: which of the idea's four categories the SERVED moments actually
+    # covered, and how many moments each. Reported from what was found — an
+    # uncovered category is simply absent, never padded.
+    category_counts: dict[str, int] = {}
+    for m in moments:
+        for category_id in m.get("categories") or []:
+            category_counts[category_id] = category_counts.get(category_id, 0) + 1
+    review_counts["categories"] = {
+        "covered": sorted(category_counts),
+        "counts": category_counts,
+    }
+    # GR-4: the reviewer model and date behind the SERVED snapshot, when a demo
+    # baked a pre-computed review. Read straight from the record — the read layer
+    # invents nothing, and a live review has no meta (its provenance is the
+    # reviewer_key + telemetry).
+    review_meta = _read(store, run_id, capture_id, "review_meta.json", {})
+    served_meta = review_meta.get(chosen_key) or {}
     return {
+        "review_meta": review_meta,
+        "review_model": served_meta.get("model"),
+        "reviewed_at": served_meta.get("reviewed_at"),
         "read_model_version": version.READ_MODEL_VERSION,
         "run": _read(store, run_id, capture_id, "run_source.json", {}),
         "capture": {
@@ -1098,6 +1371,11 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "final_state": _final_state(events, source, capabilities),
         "watermark": _watermark(contract),
         "contract": contract,
+        # GR-4: a demo clears the watermark under ``demo_confirmed`` — a distinct
+        # status that must never read as a human confirmation. Stated explicitly
+        # so the report and the UI can label the override.
+        "contract_status": contract.get("status"),
+        "contract_demo_override": contract.get("status") == "demo_confirmed",
         "contract_observations": _read(store, run_id, capture_id, "contract_observations.json", []),
         "checks": _read(store, run_id, capture_id, "checks.json", []),
         "phases": _read(store, run_id, capture_id, "phases.json", []),
@@ -1120,8 +1398,13 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "review_errors": review_errors,
         "other_reviewer_errors": other_reviewer_errors,
         "review_attempts": _read(store, run_id, capture_id, "review_attempts.json", []),
-        "review_telemetry": _read(store, run_id, capture_id, "review_telemetry.json", {}),
-        "review_status": _review_status(review_moments, review_errors),
+        "review_telemetry": review_telemetry,
+        "review_status": review_status,
+        # GR-1: only moments_found and no_decisive_moment are successful
+        # outcomes; the rest are explicit non-abstentions (a failed or
+        # unconfigured reviewer is never rendered as "no decisive moment").
+        "review_status_success": review_status in SUCCESSFUL_REVIEW_STATUSES,
+        "review_counts": review_counts,
         "moments": moments,
         "review_moments": review_moments if review_moments is not None else [],
         "evidence_slices": _read(store, run_id, capture_id, "evidence_slices.json", []),

@@ -135,3 +135,62 @@ def test_cli_argument_shapes_subcommand(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Edit" in out
     assert "file_path:str" in out
+
+
+# --- GR-3: run-scoped shapes and per-event link ------------------------------
+
+from agr.schema import DerivedEvent  # noqa: E402
+
+
+def _run_events(store):
+    from agr import read
+    r = read.list_runs(store)[0]
+    raw = store.read_derived(r["run_id"], r["capture_id"], "events.json") or []
+    return [DerivedEvent(**e) for e in raw]
+
+
+def test_argument_shapes_for_events_is_the_same_rule_as_the_store_wide_view(tmp_path):
+    a = _edit_failure_session(tmp_path, "a.jsonl", "sess-a", "/app/x.py")
+    b = _bash_failure_session(tmp_path, "b.jsonl", "sess-b")
+    store = _store_with(tmp_path, [a, b])
+    events = _run_events(store)  # the first run only
+    run_groups = argument_shapes.argument_shapes_for_events(events)
+    store_groups = argument_shapes.argument_shapes(store)
+    assert run_groups  # this run has one failing call
+    for g in run_groups:
+        assert g.total_failing_calls == 1  # one failure in this run
+        matching = next(sg for sg in store_groups if sg.key == g.key)
+        assert matching.total_failing_calls >= g.total_failing_calls
+
+
+def test_argument_shape_link_identifies_the_failing_call_shape(tmp_path):
+    a = _edit_failure_session(tmp_path, "a.jsonl", "sess-a", "/app/secret_path.py")
+    store = _store_with(tmp_path, [a])
+    events = _run_events(store)
+    call = next(e for e in events if e.event_type == "tool_call")
+    link = argument_shapes.argument_shape_link_for_event(events, call.event_id)
+    assert link is not None
+    assert link["tool"] == "Edit"
+    assert link["shape_index"] == 0
+    assert link["count"] == 1 and link["total_failing_calls"] == 1
+    assert {k for k, _t in link["shape_keys"]} == {"file_path", "old_string", "new_string"}
+    # A structure-only link: no retained value leaks into it.
+    assert "/app/secret_path.py" not in json.dumps(link)
+    assert "foo" not in json.dumps(link) and "bar" not in json.dumps(link)
+
+
+def test_argument_shape_link_is_resolvable_from_either_side_of_the_pair(tmp_path):
+    a = _edit_failure_session(tmp_path, "a.jsonl", "sess-a", "/app/x.py")
+    store = _store_with(tmp_path, [a])
+    events = _run_events(store)
+    result = next(e for e in events if e.event_type == "tool_result")
+    assert argument_shapes.argument_shape_link_for_event(events, result.event_id) is not None
+
+
+def test_argument_shape_link_is_none_for_a_non_failing_event(tmp_path):
+    a = _edit_failure_session(tmp_path, "a.jsonl", "sess-a", "/app/x.py")
+    store = _store_with(tmp_path, [a])
+    events = _run_events(store)
+    user = next(e for e in events if e.event_type != "tool_call" and e.event_type != "tool_result")
+    assert argument_shapes.argument_shape_link_for_event(events, user.event_id) is None
+    assert argument_shapes.argument_shape_link_for_event(events, "evt_missing") is None

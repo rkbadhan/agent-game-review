@@ -74,7 +74,7 @@ TAXONOMY_VERSION = "0.1"
 # The read layer (§4.5 forensic view, Milestone 1 evidence browser) is a
 # projection over persisted records — it derives nothing new, but it is
 # versioned so a UI can pin the shape of the views it consumes.
-READ_MODEL_VERSION = "read-model-0.3"
+READ_MODEL_VERSION = "read-model-0.4"
 
 # The reviewer gold set (§15.1) and the evaluation harness (§15.3). The spec
 # sequences both ahead of the model reviewer (M4, principle #11); versioning
@@ -113,7 +113,7 @@ REVIEWER_VERSION = "reviewer-det-0.3"
 # attribution language capped (Stage H), and its cards selected (Stage I). The
 # version stamps model-enriched review moments so a verdict is auditable against
 # the prompt/schema that produced it.
-MODEL_REVIEWER_VERSION = "reviewer-model-0.2"
+MODEL_REVIEWER_VERSION = "reviewer-model-0.3"
 
 # Redaction and untrusted-content isolation applied before any model-facing text
 # (spec §7.4, §16.1). The redaction map records what was removed and why, stamped

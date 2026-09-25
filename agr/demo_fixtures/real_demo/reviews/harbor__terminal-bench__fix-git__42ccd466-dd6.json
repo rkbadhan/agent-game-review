@@ -1,0 +1,79 @@
+{
+ "run_id": "harbor__terminal-bench/fix-git__42ccd466-dd6",
+ "task_id": "terminal-bench/fix-git",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:44:12Z",
+ "source_hash": "sha256:26b04f76a4ef5ba4a0a6a3a7c58fd4e13899ca8e65454f82c93491e25a681a67",
+ "moment_count": 1,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_cand_repeated_action_no_new_info_evt_055",
+   "run_id": "harbor__terminal-bench/fix-git__42ccd466-dd6",
+   "source_capture_id": "capture_26b04f76a4ef",
+   "candidate_id": "cand_repeated_action_no_new_info_evt_055",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_051",
+    "evt_055"
+   ],
+   "affected_checks": [],
+   "affected_contract_items": [],
+   "validated_facts": [
+    {
+     "type": "repetition",
+     "signature": [
+      "mark_task_complete",
+      "{}"
+     ],
+     "events": [
+      "evt_051",
+      "evt_055"
+     ],
+     "validation": "passed",
+     "recomputed": [
+      [
+       "mark_task_complete",
+       "{}"
+      ],
+      [
+       "mark_task_complete",
+       "{}"
+      ]
+     ]
+    }
+   ],
+   "attribution_ceiling": "dependency_linked",
+   "rendered_statement": "The same action was repeated with no new information in between (evt_051, evt_055).",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 51,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "redundant terminal completion call",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "After the first mark_task_complete call, read its tool result and only retry if it explicitly reported failure; otherwise proceed directly to final submission without repeating the call.",
+   "instructional_value": "Shows that terminal/completion actions should be treated as one-shot: repeating a no-argument completion call with no new information is a detectable anti-pattern even when the task ultimately succeeds, and verifying the first call's result prevents it.",
+   "eval_lesson_recommended": false,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

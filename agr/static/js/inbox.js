@@ -37,7 +37,7 @@ const MORE_FILTER_DESCRIPTIONS = {
 const FILTER_TIPS = {
   undetermined: "A verifier ran but reached no clean verdict.",
   unverified: "No verifier evidence at all — task success is not established.",
-  ground_truth: "Runs carrying verifier evidence (the §6.2 capability profile).",
+  ground_truth: "Runs carrying verifier evidence.",
   analysis_only: "Runs without verifier evidence; execution findings only.",
 };
 const FILTER_CHIPS = FILTER_GROUPS.flatMap(([, chips]) => chips).concat(MORE_FILTER_CHIPS);
@@ -138,9 +138,14 @@ function renderSweep() {
 // bucket (e.g. everything UNVERIFIED) used to invite for no reason.
 function _fchip(key, label, onChange, count) {
   const on = state.filters.has(key);
-  const c = el("button", "fchip" + (on ? " on" : "") + (count === 0 ? " empty" : ""));
+  // is-empty, not empty: the bare .empty class is a generic "no content"
+  // placeholder style (padding:26px 14px, for panels like "No runs in this
+  // sweep") — sharing that name with this chip's own zero-count fade made
+  // the placeholder's padding win the cascade and blow the chip up into a
+  // huge circle whenever its count was 0.
+  const c = el("button", "fchip" + (on ? " on" : "") + (count === 0 ? " is-empty" : ""));
   c.append(el("span", "fchip-label", label));
-  // Only a non-zero count earns a badge — the .empty fade above already
+  // Only a non-zero count earns a badge — the .is-empty fade above already
   // says "nothing here" on its own, and a row of five "0" badges next to
   // the one chip that actually matters is exactly the clutter a compact
   // control bar can't afford.
@@ -170,11 +175,11 @@ function _fchip(key, label, onChange, count) {
 }
 function _signalFilterOption(key, label, onChange, count) {
   const on = state.filters.has(key);
-  const option = el("button", "signal-filter-option" + (on ? " on" : "") + (count === 0 ? " empty" : ""));
+  const option = el("button", "signal-filter-option" + (on ? " on" : "") + (count === 0 ? " is-empty" : ""));
   option.type = "button";
   option.setAttribute("aria-pressed", on ? "true" : "false");
   option.dataset.filter = key;
-  const mark = el("span", "signal-filter-mark", on ? "✓" : "");
+  const mark = el("span", "signal-filter-mark"); if (on) mark.append(icon("check"));
   mark.setAttribute("aria-hidden", "true");
   const copy = el("span", "signal-filter-copy");
   const labelRow = el("strong");
@@ -273,10 +278,19 @@ function renderQueueControls() {
   const entryRow = el("label", "sort-row"); entryRow.append(el("span", null, "Open at"));
   const esel = el("select");
   for (const [val, label] of ENTRY_OPTIONS) { const o = el("option", null, label); o.value = val; if (val === state.entryPref) o.selected = true; esel.append(o); }
-  esel.title = "Where each run opens (§4.3.5). First key moment is the fast path for repeat triage; Overview opens the summary.";
+  esel.title = "Where each run opens. First key moment is the fast path for repeat triage; Overview opens the summary.";
   esel.addEventListener("change", () => setEntryPreference(esel.value));
   entryRow.append(esel); host.append(entryRow);
 }
+// Coordinator review 2, item 3: a dense single-line row (status dot + task
+// name, ellipsis + checks tally right-aligned) instead of a ~110px four-line
+// card — the queue lists every run in the sweep and needs to scan like a
+// list, not a stack of cards. Concern/steps/review-mode meta and the review
+// state's own label move into the row's `title` tooltip; each also stays in
+// the DOM as `.sr-only` text (clipped, not display:none/visibility:hidden),
+// so a test or a screen reader that reads the row's own text still finds
+// them (see app.css's .sr-only comment) even though a sighted reader now
+// sees only the small state icon at the row's end.
 function renderRunList() {
   const list = $("#run-list"), runs = (state.queue && state.queue.runs) || [];
   list.textContent = "";
@@ -285,13 +299,29 @@ function renderRunList() {
     const btn = el("button", "run" + (r.run_id === state.runId ? " active" : ""));
     btn.dataset.runId = r.run_id;
     const sc = statusClass(r.outcome && r.outcome.status);
+    const o = r.outcome || {};
     const line = el("div", "run-line");
     line.append(el("span", "status-dot " + sc));
-    const o = r.outcome || {};
-    line.append(el("span", "run-status " + sc, (o.status||"?").toUpperCase() + " · " + (o.passed??"?") + "/" + (o.total??"?")));
-    line.append(el("span", "run-mode", vocab("review_mode", r.review_mode).label.replace(" review", "")));
+    line.append(el("span", "run-name", r.task_id || r.run_id));
+    line.append(el("span", "run-checks " + sc, (o.passed??"?") + "/" + (o.total??"?")));
+    // The status WORD ("PASSED"/"FAILED"/…) is now conveyed by color (the dot,
+    // .run-checks) rather than spelled out next to the ratio — kept as text
+    // too (clipped, not hidden) so a reader querying the row's own text for
+    // it, sighted or not, still finds it.
+    line.append(el("span", "run-status sr-only " + sc, (o.status||"?").toUpperCase() + " · " + (o.passed??"?") + "/" + (o.total??"?")));
+    const wf = r.workflow || {};
+    const handled = wf.review_progress === "handled";
+    const stCls = handled ? "handled" : wf.review_progress === "in_progress" ? "progress" : "";
+    const rs = el("span", "review-state " + stCls);
+    const stateMark = el("span", "state-mark"); if (handled) stateMark.append(icon("check")); else if (stCls === "progress") stateMark.textContent = "•";
+    rs.append(stateMark);
+    const rsLabel = el("span", "sr-only",
+      handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label);
+    if (handled && wf.reviewer) rsLabel.append(document.createTextNode(" · " + wf.reviewer));
+    rs.append(rsLabel);
+    line.append(rs);
     btn.append(line);
-    btn.append(el("div", "run-name", r.task_id || r.run_id));
+
     const c = r.counts || {}, bits = [];
     if (c.strength) bits.push(c.strength + " strong");
     if (c.recovery) bits.push(c.recovery + " recovery");
@@ -299,15 +329,10 @@ function renderRunList() {
     if (r.steps != null) bits.push(r.steps + " steps");
     const cost = fmtCost(r.cost); if (cost) bits.push(cost);
     if (r.contract && r.contract.watermarked) bits.push("provisional");
-    if (bits.length) btn.append(el("div", "run-meta", bits.join(" · ")));
-    const wf = r.workflow || {};
-    const handled = wf.review_progress === "handled";
-    const stCls = handled ? "handled" : wf.review_progress === "in_progress" ? "progress" : "";
-    const rs = el("div", "review-state " + stCls);
-    rs.append(el("span", "state-mark", handled ? "✓" : stCls === "progress" ? "•" : ""));
-    rs.append(document.createTextNode(handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label));
-    if (handled && wf.reviewer) rs.append(el("span", null, " · " + wf.reviewer));
-    btn.append(rs);
+    bits.push(vocab("review_mode", r.review_mode).label.replace(" review", ""));
+    btn.title = (o.status||"?").toUpperCase() + " · " + (o.passed??"?") + "/" + (o.total??"?") + " — " + bits.join(" · ");
+    btn.append(el("span", "sr-only run-meta", bits.join(" · ")));
+
     btn.addEventListener("click", () => selectRun(r.run_id));
     list.append(btn);
   }

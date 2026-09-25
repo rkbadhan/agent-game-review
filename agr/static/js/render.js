@@ -12,6 +12,29 @@
 // switches into the investigation shell below.
 function isWorkspaceView(view) { return view === "runs" || view === "fleet" || view === "versions"; }
 
+// The top bar's run stepper (‹ 5/27 ›) — empty when there is
+// no active queue position (no run loaded, or a run opened outside any
+// queue, e.g. a direct link).
+function renderTopbarStepper() {
+  const host = $("#topbar-stepper"); host.textContent = "";
+  const pos = queuePosition();
+  if (!pos) return;
+  const ids = state.queue.run_ids;
+  const stepper = el("span", "run-stepper");
+  const prev = el("button", "step-arrow"); prev.append(icon("chevron-left"));
+  prev.title = "Previous run in this queue";
+  if (pos.index > 1) prev.addEventListener("click", () => selectRun(ids[pos.index - 2]));
+  else prev.disabled = true;
+  const next = el("button", "step-arrow"); next.append(icon("chevron-right"));
+  next.title = "Next run in this queue";
+  if (pos.index < pos.total) next.addEventListener("click", () => selectRun(ids[pos.index]));
+  else next.disabled = true;
+  const label = el("span", "step-label");
+  label.append(el("span", "step-label-word", "Run "), document.createTextNode(pos.index + " of " + pos.total));
+  stepper.append(prev, label, next);
+  host.append(stepper);
+}
+
 function render() {
   const main = $("#main"); main.textContent = "";
   // A review view with no SELECTED run (e.g. a stray fallback) has nothing to
@@ -30,6 +53,12 @@ function render() {
   const workspace = isWorkspaceView(state.view);
   document.body.classList.toggle("workspace-mode", workspace);
   main.classList.toggle("wide", workspace);
+  // N1: the app bar's primary nav (Runs / Patterns / Compare versions) marks
+  // which workspace is current — reviewing a specific run leaves all three
+  // unmarked, since none of them is "current" while investigating a run.
+  $("#runs-button").classList.toggle("current", state.view === "runs");
+  $("#fleet-button").classList.toggle("current", state.view === "fleet");
+  $("#versions-button").classList.toggle("current", state.view === "versions");
   // The investigation sidebar's filter chips/run list live outside #main (so
   // they survive #main being wiped below) and are otherwise refreshed lazily
   // by loadInbox() — reconciling them here on every render, regardless of how
@@ -41,6 +70,7 @@ function render() {
     $("#queue-controls").textContent = ""; $("#run-list").textContent = "";
     $("#crumb-task").textContent = state.view === "runs" ? "Runs"
       : state.view === "fleet" ? "Patterns" : "Compare versions";
+    $("#topbar-stepper").textContent = "";
   }
   else { renderQueueControls(); renderRunList(); }
   // The runs table, version comparison, and fleet view are surfaces, not run
@@ -56,44 +86,38 @@ function render() {
   const rv = state.review, run = rv.run || {};
   $("#crumb-task").textContent = run.task_id || state.runId;
 
-  // header — the §4.2 shared run-review shell. The eyebrow carries sweep identity
-  // and queue position when entered from a sweep; the subtitle carries model +
-  // harness versions, step count, duration, and cost; then the outcome pill. The
-  // review-mode / workflow / capture-completeness strip renders directly beneath.
+  // header — the §4.2 shared run-review shell, compacted to three lines
+  // (target: ≤140px tall at 1440px, ≤220px at 390px): a title line
+  // (task name + inline outcome badge), one meta line (model · harness ·
+  // steps · a short id with a copy icon — the full id lives in its tooltip,
+  // never wrapped mono across several lines), then the plain-language
+  // verdict. The review-mode / workflow / capture-completeness strip
+  // (.shell-meta) renders directly beneath as the header's controls row.
+  // The run stepper lives in the top bar (breadcrumb left, stepper right),
+  // not inline here — queue position doubles as a stepper either way: walk
+  // the sweep run-by-run without going back to the queue list. (Bottom bar's
+  // "Next unhandled" skips handled runs; this steps every run in order.)
+  renderTopbarStepper();
   const header = el("div", "run-header");
   const left = el("div");
-  const eyebrow = el("p", "eyebrow");
-  eyebrow.append(document.createTextNode("Task review"));
-  const sweepLabel = shellSweepLabel(run);
-  if (sweepLabel) eyebrow.append(el("span", "eyebrow-sep", "·"), document.createTextNode(sweepLabel));
-  // Queue position doubles as a stepper: walk the sweep run-by-run from the
-  // header without going back to the queue list. (Bottom bar's "Next unhandled"
-  // skips handled runs; this steps every run in order.)
-  const pos = queuePosition();
-  if (pos) {
-    const ids = state.queue.run_ids;
-    eyebrow.append(el("span", "eyebrow-sep", "·"));
-    const stepper = el("span", "run-stepper");
-    const prev = el("button", "step-arrow", "‹");
-    prev.title = "Previous run in this queue";
-    if (pos.index > 1) prev.addEventListener("click", () => selectRun(ids[pos.index - 2]));
-    else prev.disabled = true;
-    const next = el("button", "step-arrow", "›");
-    next.title = "Next run in this queue";
-    if (pos.index < pos.total) next.addEventListener("click", () => selectRun(ids[pos.index]));
-    else next.disabled = true;
-    stepper.append(prev, el("span", "step-label", "Run " + pos.index + " of " + pos.total), next);
-    eyebrow.append(stepper);
-  }
-  left.append(eyebrow);
-  left.append(el("h1", null, run.task_id || state.runId));
+  const titleRow = el("div", "run-title-row");
+  titleRow.append(el("h1", null, run.task_id || state.runId));
+  const o = rv.outcome || {}, sc = statusClass(o.status);
+  const hs = el("span", "header-status " + sc);
+  hs.append(el("span", "status-dot " + sc), el("span", null, (o.status||"?") + " · " + (o.passed??"?") + "/" + (o.total??"?") + " checks"));
+  titleRow.append(hs);
+  left.append(titleRow);
   const steps = (state.forensic && state.forensic.steps) ? state.forensic.steps.length : null;
   const subBits = [run.model, run.harness_version ? "harness " + run.harness_version : null,
     steps != null ? steps + " steps" : null, fmtDuration(durationOf(run)),
     fmtCost(costOf(run))].filter(Boolean).join(" · ");
   const sub = el("div", "run-subtitle");
   if (subBits) sub.append(document.createTextNode(subBits + " · "));
-  sub.append(el("span", "mono", state.runId));
+  const shortId = shortRunId(state.runId, 10) || state.runId;
+  const idSpan = el("span", "mono run-id-short", shortId);
+  idSpan.title = state.runId;
+  sub.append(idSpan);
+  sub.append(copyButton(state.runId, "Copy full run id"));
   left.append(sub);
   // Persistent one-line verdict (plain language) directly under the title, so
   // the run's result reads in one glance from any chapter — not only Overview.
@@ -105,14 +129,10 @@ function render() {
     left.append(v);
   }
   header.append(left);
-  const o = rv.outcome || {}, sc = statusClass(o.status);
-  const hs = el("div", "header-status " + sc);
-  hs.append(el("span", "status-dot " + sc), el("span", null, (o.status||"?") + " · " + (o.passed??"?") + "/" + (o.total??"?") + " checks"));
-  header.append(hs);
   main.append(header);
   main.append(renderShellMeta(rv));
 
-  if (rv.watermark) main.append(el("div", "watermark", "⚠ " + rv.watermark));
+  if (rv.watermark) { const w = el("div", "watermark callout callout-warn"); w.append(icon("alert-triangle", "watermark-icon"), document.createTextNode(" " + rv.watermark)); main.append(w); }
   // Not-reviewable routing (§4.15): the capture is too incomplete for a
   // trustworthy review, so name the missing evidence up front rather than
   // presenting empty chapters as if a review had run.
@@ -135,8 +155,12 @@ function render() {
     else if (m.corrected) cls += " corrected";
     else if (state.viewed.has(id)) cls += " done";
     const b = el("button", cls);
-    const mark = !m.available ? "–" : m.corrected ? "~" : (state.viewed.has(id) && !current ? "✓" : "•");
-    b.append(el("span", "ochip-mark", mark), el("span", "ochip-label", label));
+    const markSpan = el("span", "ochip-mark");
+    if (!m.available) markSpan.textContent = "–";
+    else if (m.corrected) markSpan.textContent = "~";
+    else if (state.viewed.has(id) && !current) markSpan.append(icon("check"));
+    else markSpan.textContent = "•";
+    b.append(markSpan, el("span", "ochip-label", label));
     b.title = m.available ? label : label + " · Not available — " + m.reason;
     b.setAttribute("aria-current", current ? "step" : "false");
     b.addEventListener("click", () => setChapter(id));
@@ -154,7 +178,8 @@ function render() {
   // RIGHT zone: other views & tools, all together.
   const util = el("div", "review-util");
   // Trace opens the full-trace drawer rather than swapping the main stage.
-  const traceChip = el("button", "seg trace-chip", "↗ Trace");
+  const traceChip = el("button", "seg trace-chip");
+  traceChip.append(icon("external-link"), document.createTextNode(" Trace"));
   traceChip.title = "Open the full trace (T)";
   traceChip.addEventListener("click", () => openTrace(null));
   util.append(traceChip);
@@ -163,51 +188,56 @@ function render() {
   srcBtn.title = "The immutable source events behind this review";
   srcBtn.addEventListener("click", () => { state.view = "source"; render(); });
   util.append(srcBtn);
-  // "More analysis": Opportunities and the Task Ability Signature, kept off the
-  // primary tabs but reachable here.
-  const more = el("details", "more-analysis");
-  if (state.view === "review" && (state.chapter === "opportunities" || state.chapter === "signature")) more.open = true;
-  more.append(el("summary", null, "More analysis"));
-  const moreList = el("div", "more-analysis-list");
-  for (const [id, label] of MORE_ANALYSIS_CHAPTERS)
-    moreList.append(ochip(id, label, meta[id], state.view === "review" && state.chapter === id));
-  more.append(moreList);
-  util.append(more);
-  // Compare (§4.16 / item 21): one control gathers every way to put this run
-  // beside another — a passing sibling, another reviewer's take, or another
-  // version — instead of three differently-named entry points in three places.
+  // "More analysis" (Opportunities / Ability signature) and "Compare" (against
+  // a passing sibling, another reviewer, or another version) used to be two
+  // separate dropdown triggers here — at 390px both text buttons together
+  // wrapped onto their own line, and a reader had to know which of two
+  // similar-looking buttons held which item. One "⋯" menu now gathers both
+  // groups; every item below keeps its own class and click handler, just
+  // under one trigger and one list. The trigger is marked active while one of
+  // its destinations is showing; the list itself stays closed so it never
+  // covers the page it just opened.
   const avail = rv.available_reviews || [];
-  const cmpMenu = el("details", "more-analysis compare-menu");
-  const cmpSummary = el("summary", (state.view === "sibling" || state.view === "compare") ? "active" : null, "Compare");
-  cmpSummary.title = "Put this run beside another — a passing run, a reviewer, or a version";
-  cmpMenu.append(cmpSummary);
-  const cmpList = el("div", "more-analysis-list");
+  const toolsActive = (state.view === "review" && (state.chapter === "opportunities" || state.chapter === "signature"))
+    || state.view === "sibling" || state.view === "compare";
+  const tools = el("details", "more-analysis tools-menu");
+  const toolsSummary = el("summary", toolsActive ? "active" : null);
+  toolsSummary.append(icon("more-horizontal"), el("span", "sr-only", "More analysis and compare"));
+  toolsSummary.title = "More analysis & compare — Opportunities, Ability signature, and putting this run beside another";
+  toolsSummary.setAttribute("aria-label", "More analysis and compare");
+  tools.append(toolsSummary);
+  const toolsList = el("div", "more-analysis-list");
+  toolsList.append(el("div", "more-analysis-section-label", "More analysis"));
+  for (const [id, label] of MORE_ANALYSIS_CHAPTERS)
+    toolsList.append(ochip(id, label, meta[id], state.view === "review" && state.chapter === id));
+  toolsList.append(el("div", "more-analysis-divider"));
+  toolsList.append(el("div", "more-analysis-section-label", "Compare"));
   // 1. Against a passing sibling — only meaningful for a FAILED run; a passed
   //    run gets a disabled row with an honest reason.
   const sib = el("button", "compare-item" + (state.view === "sibling" ? " current" : ""), "Against a passing run");
   if ((o.status || "").toUpperCase() === "FAILED") {
-    sib.title = "Align this run against a passing sibling on the same task (§item 21)";
+    sib.title = "Align this run against a passing sibling on the same task";
     sib.addEventListener("click", () => { state.view = "sibling"; render(); });
   } else {
     sib.disabled = true;
     sib.title = "Needs a FAILED run to align against a passing one.";
   }
-  cmpList.append(sib);
+  toolsList.append(sib);
   // 2. Between two reviewers of this run — only when more than one review exists.
   if (avail.length >= 2) {
     const rev = el("button", "compare-item" + (state.view === "compare" ? " current" : ""), "Between reviewers");
-    rev.title = "Side-by-side comparison of two reviews of this run (§4.16) (C)";
+    rev.title = "Side-by-side comparison of two reviews of this run (C)";
     rev.addEventListener("click", () => { state.view = "compare"; render(); });
-    cmpList.append(rev);
+    toolsList.append(rev);
   }
-  // 3. Across versions — a matched task slice; a surface of its own, also on the
-  //    app bar, gathered here so "compare" is one idea in one place.
+  // 3. Across versions — a matched task slice; a surface of its own, also in
+  //    the sidebar nav, gathered here so "compare" is one idea in one place.
   const ver = el("button", "compare-item", "Across versions →");
   ver.title = "Compare configurations on a matched task slice (V)";
   ver.addEventListener("click", () => { state.view = "versions"; render(); });
-  cmpList.append(ver);
-  cmpMenu.append(cmpList);
-  util.append(cmpMenu);
+  toolsList.append(ver);
+  tools.append(toolsList);
+  util.append(tools);
   nav.append(util);
   main.append(nav);
 
@@ -237,7 +267,42 @@ function renderShellMeta(rv) {
   const mv = vocab("review_mode", mode);
   const modeCls = mode === "not_reviewable" ? "warn" : mode === "model_enriched" ? "enriched" : "det";
   const modeChip = el("span", "shell-chip mode-" + modeCls, mv.label);
-  modeChip.title = mv.tip; wrap.append(modeChip);
+  modeChip.title = mv.tip;
+  // GR-1: the review's single status, stated up front. Only moments_found and
+  // no_decisive_moment are successful outcomes; the rest are explicit, and a
+  // failed/unconfigured reviewer is never shown as "no decisive moment".
+  // A successful status (e.g. "Moments found" alongside "AI-enriched
+  // review") is redundant with the mode chip it always accompanies, so it
+  // folds into that chip's tooltip instead of its own pill; a genuine
+  // warning (a failed/unconfigured reviewer) still gets its own visible chip
+  // — that is signal, not redundancy.
+  wrap.append(modeChip);
+  if (rv.review_status) {
+    const sv = vocab("review_status", rv.review_status);
+    if (rv.review_status_success) {
+      modeChip.title = mv.tip + " · " + sv.label + (sv.tip ? ": " + sv.tip : "");
+    } else {
+      const statusChip = el("span", "shell-chip warn", sv.label);
+      statusChip.title = sv.tip;
+      wrap.append(statusChip);
+    }
+  }
+  // GR-4: a pre-computed demo review names its reviewer model and date, so a
+  // reader sees the provenance of an offline review (and it is not mistaken for
+  // a live model call, which the demo never makes).
+  if (rv.review_model) {
+    const when = rv.reviewed_at ? " · " + rv.reviewed_at.slice(0, 10) : "";
+    const provenance = el("span", "shell-chip mode-det", "AI " + rv.review_model + when);
+    provenance.title = "Reviewer model and date of this pre-computed review";
+    wrap.append(provenance);
+  }
+  // GR-4: a demo contract clears the watermark under a demo-specific status, so
+  // it must never read as a human confirmation. Say so explicitly.
+  if (rv.contract_demo_override) {
+    const chip = el("span", "shell-chip warn", "Demo override — contract not human-confirmed");
+    chip.title = "This demo cleared the contract watermark without a human confirmation";
+    wrap.append(chip);
+  }
   // AGR-07 UX: reviewer flip — when more than one reviewer has scored this
   // capture, the reader can switch snapshots inline instead of re-running CLI
   // commands. The active reviewer's key is marked in the tab set.
@@ -246,10 +311,16 @@ function renderShellMeta(rv) {
     const flip = el("span", "shell-chip reviewer-flip");
     const active = rv.reviewer_key;
     for (const key of avail) {
+      // M2: a full model id ("accounts/fireworks/models/kimi-k3")
+      // wraps a segmented tab onto two lines on a narrow screen — the last
+      // path segment is enough to tell reviewers apart; the full id is
+      // still one hover (or the header's provenance chip) away.
+      const fullModel = key.startsWith("model:") ? key.slice(6) : null;
       const label = key === "deterministic" ? "Deterministic"
-        : key.startsWith("model:") ? "AI · " + key.slice(6) : key;
+        : fullModel ? "AI · " + shortModelName(fullModel) : key;
       const tab = el("button", "seg flip-tab" + (key === active ? " active" : ""), label);
-      tab.title = "Serve this reviewer's snapshot of the run";
+      tab.title = fullModel ? "Serve this reviewer's snapshot of the run (" + fullModel + ")"
+        : "Serve this reviewer's snapshot of the run";
       tab.addEventListener("click", async () => {
         if (key === state.reviewerKey || (key === active && state.reviewerKey == null)) return;
         state.reviewerKey = key === "deterministic" && avail.includes(active) ? key : (key === active ? null : key);
@@ -279,9 +350,16 @@ function renderShellMeta(rv) {
     // reviews side by side lives in the unified "Compare" control by the tabs.
     wrap.append(flip);
   } else {
-    // Honest affordance: the AI review has not been run — name the command.
-    const hint = el("span", "shell-chip ai-hint", "AI review: not run");
-    hint.title = "Run the model reviewer from the CLI:\n  agr --store <store> review \"" + (rv.reviewer_key ? state.runId : state.runId)
+    // GR-1: no model snapshot is served. "No model review" is the clear,
+    // first-class label when nothing is configured; a failed or early-stopped
+    // attempt is named by the limits panel and the status chip above, and the
+    // CLI hint still says how to retry. Either way the deterministic review
+    // shows — an absence of a model call is never presented as abstention.
+    const none = rv.review_status === "not_configured";
+    const hint = el("span", "shell-chip ai-hint", none ? "No model review" : "AI review: not served");
+    hint.title = (none ? "No model reviewer has scored this run."
+      : "The model review is not being served — see the review limits.")
+      + "\nRun the model reviewer from the CLI:\n  agr --store <store> review \"" + state.runId
       + "\" --provider anthropic\n(or --provider openai). It spends tokens; every fact it asserts is still recomputed.";
     wrap.append(hint);
   }
@@ -306,7 +384,7 @@ function renderShellMeta(rv) {
 // The §4.15 not-reviewable notice: the review mode plus exactly which capture
 // capabilities were missing, so the reason is legible rather than a blank stage.
 function renderNotReviewable(rv) {
-  const card = el("div", "notice not-reviewable");
+  const card = el("div", "notice not-reviewable callout callout-warn");
   card.append(el("p", "eyebrow", "Not reviewable"));
   card.append(el("p", "notice-lede",
     "The captured evidence is insufficient for a trustworthy review. Outcome and the raw "

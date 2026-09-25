@@ -1,0 +1,79 @@
+{
+ "run_id": "harbor__terminal-bench/polyglot-c-py__f03be3af-66c",
+ "task_id": "terminal-bench/polyglot-c-py",
+ "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
+ "model": "accounts/fireworks/models/kimi-k3",
+ "reviewed_at": "2026-08-24T16:42:34Z",
+ "source_hash": "sha256:cc6cef2fa030f0d6deb335e58e8cb1658501a1eddacf6f15bcc6ff5b9bfebc3c",
+ "moment_count": 1,
+ "selected_count": 1,
+ "moments": [
+  {
+   "moment_id": "mom_cand_repeated_action_no_new_info_evt_018",
+   "run_id": "harbor__terminal-bench/polyglot-c-py__f03be3af-66c",
+   "source_capture_id": "capture_cc6cef2fa030",
+   "candidate_id": "cand_repeated_action_no_new_info_evt_018",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "negative",
+   "anchor_event_ids": [
+    "evt_014",
+    "evt_018"
+   ],
+   "affected_checks": [],
+   "affected_contract_items": [],
+   "validated_facts": [
+    {
+     "type": "repetition",
+     "signature": [
+      "mark_task_complete",
+      "{}"
+     ],
+     "events": [
+      "evt_014",
+      "evt_018"
+     ],
+     "validation": "passed",
+     "recomputed": [
+      [
+       "mark_task_complete",
+       "{}"
+      ],
+      [
+       "mark_task_complete",
+       "{}"
+      ]
+     ]
+    }
+   ],
+   "attribution_ceiling": "dependency_linked",
+   "rendered_statement": "The same action was repeated with no new information in between (evt_014, evt_018).",
+   "gate_results": {
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "contract_link": "present",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided"
+   },
+   "sequence": 14,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "repeated_no_op_action",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "After the first mark_task_complete call, record that completion was signalled and proceed to final submission instead of re-invoking the same no-argument tool.",
+   "instructional_value": "Teaches the agent to treat idempotent completion signals as one-shot actions and to verify prior tool effects before repeating them, reducing wasted steps.",
+   "eval_lesson_recommended": false,
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.1"
+  }
+ ]
+}

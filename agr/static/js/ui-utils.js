@@ -1,14 +1,61 @@
 "use strict";
 
+// --- icons ---------------------------------------------------------------
+// One inline SVG sprite (agr/static/icons.svg, Lucide icons) referenced by
+// <use>, so every icon in the app shares one set of strokes instead of
+// inconsistent Unicode glyphs. `cls` is appended to the default "icon" class.
+function icon(name, cls) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon" + (cls ? " " + cls : ""));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "/static/icons.svg#" + name);
+  svg.append(use);
+  return svg;
+}
+
 // --- theme -------------------------------------------------------------------
-$("#theme-toggle").addEventListener("click", () => {
+// The toggle icon always shows what clicking it would switch TO (sun in dark
+// mode, moon in light mode) — matching common practice for a theme switch.
+function effectiveThemeIsDark() {
   const cur = document.documentElement.getAttribute("data-theme");
-  const dark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const next = dark ? "light" : "dark";
+  return cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function syncThemeIcon() {
+  const btn = $("#theme-toggle");
+  const use = btn.querySelector("use");
+  use.setAttribute("href", "/static/icons.svg#" + (effectiveThemeIsDark() ? "sun" : "moon"));
+}
+$("#theme-toggle").addEventListener("click", () => {
+  const next = effectiveThemeIsDark() ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", next);
   // Remember the choice so it survives a reload (applied early in index.html).
   try { localStorage.setItem("agr-theme", next); } catch (e) {}
+  syncThemeIcon();
 });
+syncThemeIcon();
+if (window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (!document.documentElement.getAttribute("data-theme")) syncThemeIcon();
+  });
+}
+
+// --- generated-boilerplate headline detection (display only) -----------------
+// R3: a moment's `summary` is sometimes the generated fallback template for an
+// `event_support` fact (agr/reviewer.py's render(): "Grounded in quoted run
+// evidence (evt_149, evt_151), a likely explanation for the outcome." — or
+// ", and is linked to the failed outcome." at the dependency_linked ceiling)
+// rather than a stated claim, so it reads as a list of event ids blown up to
+// headline size. Detected here only to swap the DISPLAYED headline for the
+// run's plain-language verdict sentence, with the event ids shown separately,
+// small and mono — the stored review is never touched.
+const GROUNDED_BOILERPLATE_RE =
+  /^Grounded in quoted run evidence \(([^)]*)\)(?:, a likely explanation for the outcome|, and is linked to the failed outcome)\.$/;
+function groundedBoilerplateIds(text) {
+  const m = GROUNDED_BOILERPLATE_RE.exec((text || "").trim());
+  return m ? m[1].split(",").map(s => s.trim()).filter(Boolean) : null;
+}
 
 // --- outcome narrative ---------------------------------------------------
 // F3: the ONE place that turns the backend's reconciled outcome (rv.outcome,
@@ -28,9 +75,12 @@ function outcomeNarrative(rv) {
   if (rv.review_mode === "not_reviewable")
     return { tone: "warn", headline: "Not reviewable —",
       detail: "the captured evidence is insufficient for a trustworthy review." };
+  // GR-1: verifier results are optional. A run without them keeps overall task
+  // success UNVERIFIED — stated in those words — while its supported execution
+  // findings still appear (the moment cards are not gated on the verifier).
   if (o.status === "UNVERIFIED" || !checks.length)
-    return { tone: "warn", headline: "Unverified —",
-      detail: "no verifier checks were recorded, so nothing here should be read as a pass." };
+    return { tone: "warn", headline: "Task success unverified —",
+      detail: "no verifier evidence was captured, so nothing here should be read as a pass; supported execution findings still appear below." };
   if (o.status === "FAILED") {
     const failed = o.failed_checks || [];
     return { tone: "fail", headline: "Failed —",
@@ -67,6 +117,18 @@ function outcomeNarrative(rv) {
     detail: "the run's outcome could not be established as a clean pass." };
 }
 
+// --- empty states --------------------------------------------------------
+// Icon + one line + (optionally) one action, instead of a bare paragraph or
+// a large inert card — used by the evidence panel, the Runs table, and
+// Patterns' "no episodes yet" state.
+function emptyState(iconName, text, actionEl) {
+  const wrap = el("div", "empty-state");
+  wrap.append(icon(iconName, "empty-state-icon"));
+  wrap.append(el("p", null, text));
+  if (actionEl) wrap.append(actionEl);
+  return wrap;
+}
+
 // --- toast -------------------------------------------------------------------
 let toastTimer = null;
 function toast(msg) { const n = $("#toast"); n.textContent = msg; n.classList.add("show");
@@ -97,13 +159,19 @@ function shortRunId(runId, n) {
 // value (never the shortened display text) so a reader can paste the exact
 // run id elsewhere.
 function copyButton(text, title) {
-  const b = el("button", "copy-btn", "⧉");
+  const b = el("button", "copy-btn"); b.append(icon("copy"));
   b.type = "button";
   const label = title || "Copy " + text;
   b.title = label; b.setAttribute("aria-label", label);
   b.addEventListener("click", async (e) => {
     e.stopPropagation();
-    try { await navigator.clipboard.writeText(text); flash(b, "✓"); }
+    try {
+      await navigator.clipboard.writeText(text);
+      // Swap the icon rather than reusing the text-based flash() helper,
+      // which would clobber this button's SVG child with a text node.
+      b.textContent = ""; b.append(icon("check")); b.classList.add("flashed");
+      setTimeout(() => { b.textContent = ""; b.append(icon("copy")); b.classList.remove("flashed"); }, 1500);
+    }
     catch (err) { toast("Could not copy — clipboard unavailable"); }
   });
   return b;
@@ -153,3 +221,8 @@ function fmtCompact(n) {
   const v = (abs / _COMPACT_SCALES[i][0]).toFixed(1).replace(/\.0$/, "");
   return sign + v + _COMPACT_SCALES[i][1];
 }
+// A model id's last path segment ("accounts/fireworks/models/kimi-k3" ->
+// "kimi-k3") — short enough for a segmented tab or a narrow chip without
+// wrapping; the full id stays reachable via title/tooltip wherever this is
+// used, never silently dropped.
+function shortModelName(m) { if (!m) return m; const parts = String(m).split("/"); return parts[parts.length - 1] || m; }

@@ -81,8 +81,12 @@ CONTRACT_SOURCE_TYPES = {
 }
 
 # Contract lifecycle (spec §6.4). Reviews built on ``draft`` or ``provisional``
-# contracts are watermarked; only ``human_confirmed`` clears the watermark.
-CONTRACT_STATUSES = {"draft", "provisional", "human_confirmed", "superseded"}
+# contracts are watermarked; a human confirmation clears the watermark. The
+# demo store clears it too, but under ``demo_confirmed`` — an explicit status
+# that is NOT ``human_confirmed`` and says so, so a demo never claims a human
+# reviewed the contract.
+CONTRACT_STATUSES = {"draft", "provisional", "human_confirmed", "demo_confirmed",
+                     "superseded"}
 WATERMARKED_STATUSES = {"draft", "provisional"}
 
 # Per-item human decision. Items start ``unconfirmed`` and require an explicit
@@ -538,6 +542,104 @@ class Candidate:
         return asdict(self)
 
 
+# --- Grounded alternatives (GR-2) --------------------------------------------
+
+# The three kinds of alternative a review keeps apart. A better move is a
+# PROPOSAL; a passing sibling is an EXAMPLE. They are never merged, and each is
+# shown under its actual status.
+ALTERNATIVE_KINDS = ("suggested", "observed", "validated")
+
+# Validation-status tokens for an alternative. ``validated_by_replay`` requires
+# replay evidence this package does not produce (post-MVP); the reachable path
+# is ``validated_by_comparable_experiment``. ``proposed`` / ``failed`` /
+# ``inconclusive`` stay visible with that status — never silently upgraded.
+ALTERNATIVE_VALIDATION_STATUSES = (
+    "proposed",
+    "validated_by_replay",
+    "validated_by_comparable_experiment",
+    "failed",
+    "inconclusive",
+)
+
+# Fixed display labels — one place, so the three kinds can never drift.
+ALTERNATIVE_LABELS = {
+    "suggested": "Suggested alternative",
+    "observed": "Alternative observed in a comparable passing run",
+    "validated_by_replay": "Validated by replay",
+    "validated_by_comparable_experiment": "Validated by comparable experiment",
+}
+
+
+def alternative_label(kind: str, validation: Optional[dict] = None) -> str:
+    """The fixed display label for an alternative, or its *actual* status.
+
+    Only a linked experiment that met the validation rule may ever carry a
+    "Validated by …" label; a proposed/failed/inconclusive alternative is shown
+    with that status instead, so a reader is never told more than was run.
+    """
+    if kind == "validated":
+        status = (validation or {}).get("status")
+        if status == "validated_by_replay":
+            return ALTERNATIVE_LABELS["validated_by_replay"]
+        if status == "validated_by_comparable_experiment":
+            return ALTERNATIVE_LABELS["validated_by_comparable_experiment"]
+        if status == "failed":
+            return "Alternative — linked experiment failed"
+        if status == "inconclusive":
+            return "Alternative — linked experiment inconclusive"
+        return "Alternative — experiment proposed, not yet run"
+    return ALTERNATIVE_LABELS.get(kind, kind)
+
+
+@dataclass
+class Alternative:
+    """One grounded alternative attached to a reviewed moment (GR-2).
+
+    A better move is a *proposal*; a passing sibling is an *example*. ``kind``
+    keeps the three sources apart (``suggested`` from the model, ``observed``
+    from a comparable passing run, ``validated`` from a linked experiment) and
+    ``label`` is always derived from the actual supporting artifact — never from
+    what would be most persuasive.
+
+    The *information cutoff* (``replaces_decision`` + ``information_available`` +
+    ``assumptions``) exists only for a suggestion: it names the decision the
+    suggestion replaces and the information available immediately before it, so
+    later evidence can explain the consequence but cannot justify what the agent
+    should already have known. ``assumptions`` are structured facts recomputed
+    against the same input; one that does not recompute drops the suggestion.
+
+    ``sibling_diff`` (observed only) records how the passing run differs — model,
+    temperature, agent config. ``validation`` (validated only) carries the linked
+    experiment's stated benefit, outcome checks and comparison limits; an
+    alternative is validated only when all three are present and the experiment
+    itself passed.
+
+    ``rejected`` is a mechanical-check outcome: a rejected alternative is never
+    shown, and its ``rejection_reason`` feeds the per-run drop count.
+    """
+
+    kind: str
+    label: str
+    proposal: str
+    source: str
+    attribution_ceiling: str = "hypothesized"
+    limits: list[str] = field(default_factory=list)
+    # information cutoff (suggested only; None/empty otherwise)
+    replaces_decision: Optional[dict] = None
+    information_available: list[dict] = field(default_factory=list)
+    assumptions: list[dict] = field(default_factory=list)
+    # observed only
+    sibling_diff: Optional[dict] = None
+    # validated only
+    validation: Optional[dict] = None
+    # dropped before display; never shown when True
+    rejected: bool = False
+    rejection_reason: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 @dataclass
 class ReviewMoment:
     """A reviewed, validated, attribution-gated moment (spec §8.8–§8.10).
@@ -590,6 +692,9 @@ class ReviewMoment:
     micro_abilities: list[str] = field(default_factory=list)
     root_cause_candidates: list[dict] = field(default_factory=list)
     better_action: Optional[str] = None
+    # GR-2: grounded alternatives in the three kinds, each shown under its own
+    # status. Empty on a deterministic-only review.
+    alternatives: list[Alternative] = field(default_factory=list)
     instructional_value: Optional[str] = None
     eval_lesson_recommended: bool = False
     enrichment_source: Optional[str] = None  # e.g. "model:claude-opus-4-8"; None = deterministic

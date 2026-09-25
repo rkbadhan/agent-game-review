@@ -85,7 +85,7 @@ async function selectRun(runId, restore) {
   renderRunList();
   render();
   if (restore && (restore.trace || restore.evidence)) openTrace(restore.evidence || null);
-  if (window.innerWidth <= 820) $("#queue").classList.remove("open");
+  if (window.innerWidth <= 820) closeSidebarDrawer();
   $("#main").scrollTo({ top: 0, behavior: "smooth" });
 }
 // Apply the §4.3.5 entry preference (or a shared link's explicit chapter). Sets

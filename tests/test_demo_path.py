@@ -87,16 +87,19 @@ class TestDemoStoreBuilt:
         assert any("__c_v4" in rid for rid in run_ids)                     # unmatched candidate
         assert any("clean_pass__b" in rid for rid in run_ids)              # baseline extra
 
-    def test_every_contract_is_human_confirmed(self, tmp_path):
-        """The demo auto-confirms every contract — no watermarks."""
+    def test_every_contract_is_marked_demo_confirmed(self, tmp_path):
+        """The demo clears every watermark under its OWN status — never as a human
+        confirmation (PR #93 review: a demo must not claim a human confirmed it)."""
         store = _demo_store(tmp_path)
         for run_dir in os.listdir(os.path.join(store.root, "runs")):
             capture_id = store.latest_capture_id(run_dir)
             assert capture_id is not None, f"no capture for {run_dir}"
             contract = store.read_derived(run_dir, capture_id, "contract.json")
-            assert contract["status"] == "human_confirmed", (
-                f"{run_dir} contract is {contract['status']}, not confirmed"
-            )
+            assert contract["status"] == "demo_confirmed", (
+                f"{run_dir} contract is {contract['status']}, not demo_confirmed")
+            # No item claims a human decision either (PR #93 review).
+            assert all(i.get("human_status") != "confirmed" for i in contract["items"]), (
+                f"{run_dir} claims a human item decision on a demo contract")
 
     def test_sweep_ids_are_correct(self, tmp_path):
         store = _demo_store(tmp_path)
@@ -190,8 +193,10 @@ class TestDemoAPI:
         assert body["outcome"]["passed"] == 5
         assert body["outcome"]["total"] == 6
         # Contract must be confirmed — no watermark in the demo
-        assert body["contract"]["status"] == "human_confirmed"
-        assert body["contract"]["confirmed_by"] == "demo-user"
+        assert body["contract"]["status"] == "demo_confirmed"
+        assert body["contract"]["confirmed_by"] == "demo"
+        # The report represents the override explicitly.
+        assert body["contract_demo_override"] is True
 
     def test_review_for_candidate_run_is_improved(self, tmp_path):
         client = _client(tmp_path)

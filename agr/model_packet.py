@@ -20,6 +20,7 @@ import json
 
 from . import version
 from ._util import evidence_projection, structured_input
+from .argument_shapes import argument_shapes_for_events
 from .redaction import redact, redact_all, redact_value
 from .reviewer import ReviewerContext, _linked_slices, attribution_ceiling_for
 
@@ -42,7 +43,12 @@ _EXCERPT_CHARS = 220  # per-event excerpt budget when the packet is over budget
 _MIN_EXCERPT_CHARS = 80  # excerpt floor when enforcing the packet budget
 # Room reserved from the packet budget for the system prompt and one bounded
 # expansion round — the raw-trace measurement alone is not the whole request.
-_BUDGET_RESERVE_CHARS = 8_000
+# GR-1: the system prompt now carries per-tag guidance and the chunked-evidence
+# guidance; GR-2 adds the grounded-alternatives / information-cutoff block; GR-3
+# adds the category-coverage block. This must cover the prompt's real size plus
+# slack; a guard test fails if the prompt outgrows it
+# (see tests/test_model_reviewer.py::test_packet_reserve_covers_system_prompt).
+_BUDGET_RESERVE_CHARS = 16_000
 # AGR-06: traces that fit the reviewer's budget are sent WITHOUT unnecessary
 # truncation — the digest carries full event text first and drops to excerpts
 # only when the serialized packet would exceed the character budget
@@ -52,6 +58,73 @@ _PACKET_BUDGET_CHARS = 60_000
 # Event types that represent agent work when computing budget allocation.
 _WORK_TYPES = {"tool_call", "tool_result", "model_output", "plan_declared",
                "error_observed", "retry", "strategy_change"}
+
+
+# GR-1: bounds for the phase-chunk summarisation path (long traces only).
+_CHUNK_BUDGET_CHARS = 12_000       # bounded content sent per summarisation call
+_CHUNK_SUMMARY_MAX_CHARS = 1_200   # a summary is a navigation aid, not a transcript
+_CHUNK_EVENT_EXCERPT_CHARS = 800   # per-event excerpt inside a chunk
+
+
+def build_phase_chunks(ctx: ReviewerContext,
+                       chunk_chars: int = _CHUNK_BUDGET_CHARS) -> list[dict]:
+    """GR-1: split a long trace into ordered, content-bearing phase chunks.
+
+    Every event appears with its excerpt in exactly one chunk: a phase larger
+    than the chunk budget becomes several chunks (``phase:<id>#<n>``), so no
+    part of a long phase is summarised from ids alone. The number of chunks is
+    bounded at call time by the review's own time/cost budget — never by a
+    silent merge that would drop a portion of the phase.
+    """
+    order: list[str] = []
+    by_phase: dict[str, list] = {}
+    for e in ctx.events:
+        pid = getattr(e, "phase_id", None) or "unphased"
+        if pid not in by_phase:
+            by_phase[pid] = []
+            order.append(pid)
+        by_phase[pid].append(e)
+    chunks: list[dict] = []
+    for pid in order:
+        parts: list[list[dict]] = []
+        entries: list[dict] = []
+        used = 0
+        for e in by_phase[pid]:
+            entry = {"event_id": e.event_id, "event_type": e.event_type,
+                     "content": e.text()[:_CHUNK_EVENT_EXCERPT_CHARS]}
+            if entries and used + len(entry["content"]) > chunk_chars:
+                parts.append(entries)
+                entries, used = [], 0
+            entries.append(entry)
+            used += len(entry["content"]) + 60
+        if entries:
+            parts.append(entries)
+        for i, part in enumerate(parts, 1):
+            chunks.append({
+                "chunk_id": f"phase:{pid}#{i}" if len(parts) > 1 else f"phase:{pid}",
+                "phase_id": None if pid == "unphased" else pid,
+                "event_ids": [en["event_id"] for en in part],
+                "events": part,
+            })
+    return chunks
+
+
+def build_chunk_context(ctx: ReviewerContext) -> dict:
+    """The non-chunk context a GR-1 phase-summarisation call needs.
+
+    Deliberately excludes the timeline: a chunk summary is written from its own
+    chunk, and the final reviewer re-grounds every claim in original events.
+    """
+    return {
+        "task_instruction": ctx.task_instruction,
+        "required_artifacts": list(ctx.declared_artifacts or []),
+        "atomic_checks": [
+            {"check_id": c.check_id, "name": c.name, "status": c.status,
+             "effective_status": c.effective_status}
+            for c in ctx.checks
+        ],
+        "run_shape": _run_shape(ctx.events),
+    }
 
 
 def _run_shape(events: list) -> dict:
@@ -144,12 +217,19 @@ def _timeline_digest(events: list, redacted: dict, excerpt_chars: int = _EXCERPT
     return out
 
 
-def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS) -> tuple[dict, dict]:
+def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
+                 chunk_summaries: Optional[list[dict]] = None) -> tuple[dict, dict]:
     """Assemble the reviewer's typed input packet and its redaction map.
 
     Returns ``(packet, redaction_map)``. The packet is JSON-serialisable and
     contains no raw-trace dump — only the contract, atomic checks, deterministic
     candidates, and a compact, redacted evidence packet per candidate.
+
+    ``chunk_summaries`` (GR-1) switches to the chunked mode for long traces: the
+    packet carries per-phase navigation summaries plus the complete event-id
+    index instead of a timeline digest. The summaries are never evidence — the
+    original text stays retrievable by id through the expansion round, and only
+    validated facts over original events can be published.
     """
     events_by_id = {e.event_id: e for e in ctx.events}
 
@@ -287,6 +367,13 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
         "task_instruction": redacted.get("task::instruction"),
         "task_contract": contract,
         "atomic_checks": atomic_checks,
+        # GR-3: the run's OWN failing-call argument-shape distribution — key SETS
+        # and value TYPES only, never retained values. Lets the reviewer judge a
+        # poor/invalid query against how calls of that tool actually failed on
+        # this run (a judge may use later results), instead of guessing. Bounded
+        # to the largest groups; the read layer links a moment to these stats
+        # deterministically, so the model cannot invent a statistic.
+        "argument_shapes": [g.to_dict() for g in argument_shapes_for_events(ctx.events)[:10]],
         # F1 follow-up (diagnostic delivery): the verifier's own post-run log
         # output — the assertion diagnostics behind the per-check rows. Every
         # entry is explicitly post-run; ids in this namespace (log::N) are also
@@ -304,15 +391,29 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
         "deterministic_candidates": candidates,
         "run_shape": _run_shape(ctx.events),
         "phase_summaries": _phase_summaries(ctx.events),
-        # AGR-06: full event text first — excerpts only when the trace does not
-        # fit the reviewer's input budget.
-        "timeline_digest": _timeline_digest(ctx.events, redacted,
-                                            excerpt_chars=excerpt_chars),
         "supported_fact_types": [
             "requirement_status", "absence", "repetition", "state_transition",
             "event_support", "termination",
         ],
     }
+    if chunk_summaries is not None:
+        # GR-1: the chunked path carries navigation summaries with the COMPLETE
+        # event-id index — and no timeline digest. A claim cannot be quoted out
+        # of a summary: only original events validate, and any event can still
+        # be retrieved in full through the expansion round.
+        packet["evidence_mode"] = "chunked"
+        packet["phase_chunks"] = [
+            {"chunk_id": s["chunk_id"], "phase_id": s.get("phase_id"),
+             "event_ids": list(s["event_ids"]), "summary": s["summary"]}
+            for s in chunk_summaries
+        ]
+        packet["timeline_digest"] = []
+    else:
+        packet["evidence_mode"] = "full"
+        # AGR-06: full event text first — excerpts only when the trace does not
+        # fit the reviewer's input budget.
+        packet["timeline_digest"] = _timeline_digest(ctx.events, redacted,
+                                                     excerpt_chars=excerpt_chars)
     # AGR-06 final safety pass: schema-aware traversal redacts EVERY remaining
     # string in the packet — check names/values, structured facts, anything a
     # future edit adds — so no trace-derived token can reach the model unredacted.
@@ -346,6 +447,11 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS)
     red_map["budget_chars"] = budget_chars
     red_map["effective_budget_chars"] = effective_budget
     red_map["budget_met"] = packet_size <= effective_budget
+    # GR-1: the caller uses these to decide whether a long trace needs the
+    # per-phase summarisation path (chunked) or can be sent whole.
+    red_map["trace_chars"] = trace_chars
+    red_map["evidence_mode"] = packet.get("evidence_mode", "full")
+    red_map["chunked"] = chunk_summaries is not None or trace_chars > effective_budget
     if not red_map["budget_met"]:
         # Explicit over-budget result: the enforced ceiling could not be met
         # even at the excerpt floor with an empty digest. Recorded for the

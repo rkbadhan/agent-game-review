@@ -73,6 +73,7 @@ async function boot() {
   // up correctly seeded from the destination boot actually resolved to.
   state.__booting = true;
   try {
+    try { state.readOnly = !!(await api("/healthz")).read_only; } catch (e) { /* default false */ }
     await loadInbox();
     // T1: first use opens straight into the review — no blocking terminology
     // modal. The same orientation content stays reachable on demand from Help
