@@ -1,0 +1,37 @@
+{
+  "is_correct": false,
+  "question": "How many even-numbered street addresses are in the client sheet?",
+  "question_ID": "00000000-0000-0000-0000-0000000000aa",
+  "level": "1",
+  "ground_truth": "4",
+  "history": [
+    {
+      "role": "assistant",
+      "name": "Spreadsheet_Expert",
+      "content": "You are given a task and a plan. Load the sheet and count the clients whose street address is even-numbered."
+    },
+    {
+      "role": "assistant",
+      "name": "Spreadsheet_Expert",
+      "content": "Running the extraction now."
+    },
+    {
+      "role": "user",
+      "name": "Computer_terminal",
+      "content": "exitcode: 0 (execution succeeded)\nCode output: 4"
+    },
+    {
+      "role": "user",
+      "name": "Verification_Expert",
+      "content": "The count of 4 looks correct against the sheet."
+    },
+    {
+      "role": "assistant",
+      "name": "Spreadsheet_Expert",
+      "content": "TERMINATE"
+    }
+  ],
+  "mistake_agent": "Spreadsheet_Expert",
+  "mistake_step": "1",
+  "mistake_reason": "The extraction counted odd-numbered addresses as well as even ones, so the total is wrong."
+}

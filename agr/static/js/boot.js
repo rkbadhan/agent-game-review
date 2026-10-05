@@ -9,7 +9,21 @@
 // `popstate` listener below and the pushState/replaceState choice in
 // state.js's syncUrl().
 async function dispatchLocation(want, isBoot) {
+  const destinationProject = want.project || (isBoot ? state.projectId : "existing");
+  if (destinationProject !== state.projectId) {
+    if (state.workspace.unavailable && destinationProject === "existing") { /* keep legacy routes */ }
+    else await switchProject(destinationProject, false);
+  }
+  if (isEngineerView(want.view)) {
+    state.view = want.view;
+    if (want.importId) { state.workspace.job = await api(projectPath("/imports/" + encodeURIComponent(want.importId))); pollImport(); }
+    await loadEngineerData(); render(); return;
+  }
   // A shared "Runs" link opens the workspace with its search/filter/sort intact.
+  if (want.importId) {
+    state.workspace.job = await api(projectPath("/imports/" + encodeURIComponent(want.importId)));
+    state.importRunIds = new Set(state.workspace.job.results.filter(r => r.run_id).map(r => r.run_id));
+  } else state.importRunIds = null;
   if (want.view === "runs") {
     state.view = "runs";
     if (want.q != null) state.runsSearch = want.q;
@@ -54,6 +68,11 @@ async function dispatchLocation(want, isBoot) {
   // ever pushed) returns to the Runs workspace instead, since by then the
   // reader has already seen the queue and is navigating away from something.
   const first = isBoot && state.queue && state.queue.run_ids && state.queue.run_ids[0];
+  if (isBoot && !want.run && !want.view) {
+    if (!first && state.projectId === "existing" && !state.serverReadOnly) state.view = "welcome";
+    else state.view = "home";
+    await loadEngineerData(); render(); return;
+  }
   if (first) return selectRun(first);
   state.view = "runs"; render();
 }
@@ -73,7 +92,20 @@ async function boot() {
   // up correctly seeded from the destination boot actually resolved to.
   state.__booting = true;
   try {
-    try { state.readOnly = !!(await api("/healthz")).read_only; } catch (e) { /* default false */ }
+    try { state.serverReadOnly = !!(await api("/healthz")).read_only; } catch (e) { /* default false */ }
+    try { await initializeWorkspace(want); }
+    catch (e) {
+      // A broken workspace must not make legacy, existing-store links unusable.
+      // Authentication errors and other-project links cannot use this fallback.
+      if (e.status === 401 || e.status === 403 || (want.project && want.project !== "existing")) throw e;
+      state.workspace.unavailable = true;
+      state.projects = [{ id: "existing", name: "Existing runs", sample: state.serverReadOnly }];
+      state.projectId = null; state.readOnly = state.serverReadOnly;
+      if (want.project === "existing") delete want.project;
+      if (!want.run && !want.view) want.view = "runs";
+      syncProjectChrome();
+      toast("Workspace settings are unavailable. Existing runs can still be reviewed; repair workspace.json to restore project tools.");
+    }
     await loadInbox();
     // T1: first use opens straight into the review — no blocking terminology
     // modal. The same orientation content stays reachable on demand from Help

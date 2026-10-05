@@ -94,6 +94,13 @@ def _capability_profile(doc: dict, run_id: str, capture_id: str) -> CapabilityPr
 
 
 def ingest(doc: dict, store: Store, adapter_version: str | None = None) -> IngestResult:
+    """Register a capture and its immutable source as one locked operation."""
+    _validate(doc)
+    with store.index_lock(doc["run"]["logical_run_id"]):
+        return _ingest(doc, store, adapter_version)
+
+
+def _ingest(doc: dict, store: Store, adapter_version: str | None = None) -> IngestResult:
     """Ingest one ATIF document into the immutable store.
 
     Idempotent: re-ingesting the same source hash with the same adapter version

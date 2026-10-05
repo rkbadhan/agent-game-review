@@ -48,7 +48,7 @@ async function loadFleetEpisodes(opts) {
   try {
     const url = "/fleet/episodes?group_by=" + encodeURIComponent(groupBy)
       + "&limit=" + FLEET_PAGE_SIZE + "&offset=" + offset;
-    const r = await fetch(url, { headers: { accept: "application/json" } });
+    const r = await fetch(url, { headers: Object.assign({ accept: "application/json" }, projectHeaders(url)) });
     if (!r.ok) { const e = new Error(url + " -> " + r.status); e.status = r.status; throw e; }
     const page = await r.json();
     if (token !== fl.loadToken) return;  // superseded by a newer grouping change or page
@@ -71,9 +71,10 @@ async function loadFleetEpisodes(opts) {
 // against and shows the column as not applicable rather than a false zero.
 async function loadFleetArgumentShapes() {
   const fl = state.fleet;
+  const projectId = state.projectId;
   if (fl.argumentShapes || fl.argumentShapesPending) return;
   fl.argumentShapesPending = true;
-  try { fl.argumentShapes = await api("/fleet/argument-shapes"); }
+  try { const result = await api("/fleet/argument-shapes"); if (projectId === state.projectId) fl.argumentShapes = result; }
   catch (e) { fl.argumentShapes = []; }
   finally { fl.argumentShapesPending = false; }
 }

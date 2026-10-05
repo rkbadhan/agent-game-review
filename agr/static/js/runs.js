@@ -60,6 +60,11 @@ function renderRunsStatLine() {
 }
 
 function renderRunsSurface(main) {
+  if (state.importRunIds) {
+    const importNotice = el("div", "notice callout", "Showing this import batch ");
+    importNotice.append(workspaceButton("Show all project runs", () => { state.importRunIds = null; render(); }));
+    main.append(importNotice);
+  }
   // Coordinator review 2, item 7: one page title ("Runs"), with the stat
   // line ("27 runs · 27 unreviewed · …") as its subtitle right below —
   // "Sweep triage queue" read as a second, competing title sitting directly
@@ -167,7 +172,7 @@ function runsIdentityCell(r) {
 function renderRunsTable(host) {
   host.textContent = "";
   const all = (state.queue && state.queue.runs) || [];
-  const runs = all.filter(r => runsMatchesSearch(r, state.runsSearch));
+  const runs = all.filter(r => (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch));
   const card = el("div", "card card-pad runs-table-card");
   // Coordinator review 2, item 7: this used to always repeat "N runs ·
   // Sorted by …" — a duplicate of the page's own stat line above whenever

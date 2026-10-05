@@ -21,13 +21,22 @@
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-left"></use></svg>
       </button>
     </div>
+    <div class="project-controls">
+      <label for="project-switcher">Project</label>
+      <select id="project-switcher" aria-label="Switch project"></select>
+      <button class="button primary" id="add-runs-button">Add runs</button>
+    </div>
     <nav class="sidebar-nav">
+      <button class="sidebar-nav-item" id="home-button"><span class="sidebar-nav-label">Home</span></button>
       <button class="sidebar-nav-item" id="runs-button" title="Runs: the sweep triage queue">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#list-tree"></use></svg><span class="sidebar-nav-label">Runs</span></button>
       <button class="sidebar-nav-item" id="fleet-button" title="Patterns: tool failures and recovery episodes across every run (F)">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#layers"></use></svg><span class="sidebar-nav-label">Patterns</span></button>
       <button class="sidebar-nav-item" id="versions-button" title="Compare versions on a matched task slice (V)">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#git-compare"></use></svg><span class="sidebar-nav-label">Compare versions</span></button>
+      <button class="sidebar-nav-item" id="sources-button"><span class="sidebar-nav-label">Sources</span></button>
+      <button class="sidebar-nav-item" id="investigations-button"><span class="sidebar-nav-label">Investigations</span></button>
+      <button class="sidebar-nav-item" id="settings-button"><span class="sidebar-nav-label">Settings</span></button>
     </nav>
 
     <!-- The run queue only makes sense while investigating a run — a
@@ -52,7 +61,7 @@
       <button class="icon-button" id="glossary-button" aria-label="Glossary" title="Glossary of review terms (G)">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#book-open"></use></svg></button>
       <button class="icon-button" id="theme-toggle" aria-label="Toggle light/dark" title="Toggle theme"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#moon"></use></svg></button>
-      <div class="avatar" id="reviewer-avatar" title="Reviewer">RK</div>
+      <button class="avatar" id="reviewer-avatar" title="Local reviewer settings">LR</button>
     </div>
   </aside>
 
@@ -214,6 +223,7 @@
 <script src="/static/js/trace.js"></script>
 <script src="/static/js/correct.js"></script>
 <script src="/static/js/keyboard.js"></script>
+<script src="/static/js/workspace.js"></script>
 <script src="/static/js/boot.js"></script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import os
 import pytest
 
 from agr import read, workflow
+from agr.model_reviewer import ScriptedReviewer
 from agr.pipeline import analyze
 from agr.store import Store
 
@@ -711,6 +712,82 @@ def test_model_category_never_inherits_a_mechanical_basis(tmp_path):
     assert by_id["good_recovery_from_failed_plan"]["basis"] == "mechanical"
     assert by_id["bad_query_in_tool_call"]["basis"] == "model"
     assert by_id["bad_query_in_tool_call"]["label"] == "Bad query in a tool call"
+
+
+def _scripted_payload(det_moments, **overrides):
+    """Build a ScriptedReviewer payload that JUDGES each selected deterministic
+    moment by reusing its candidate id / anchors / facts, as the prompt asks."""
+    def grounded(m):
+        return [{k: v for k, v in f.items() if k not in ("validation", "recomputed")}
+                for f in m.get("validated_facts", [])]
+    out = []
+    for m in det_moments:
+        moment = {
+            "candidate_id": m["candidate_id"], "anchor_event_ids": m["anchor_event_ids"],
+            "kind": m["kind"], "polarity": m["polarity"],
+            "affected_checks": m["affected_checks"], "structured_facts": grounded(m),
+        }
+        moment.update(overrides)
+        out.append(moment)
+    return {"moments": out}
+
+
+def test_model_review_keeps_the_detectors_mechanical_category(tmp_path):
+    """PR #96: a model moment that judges the recovery candidate (same id, same
+    finding) must keep the detector's mechanical category — it must not vanish
+    the moment a model reviews the run."""
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    det = read.get_review(store, "solve_task__recovered")
+    selected = [m for m in det["review_moments"] if m.get("selected")]
+    analyze(_load("tool_failure_recovery.atif.json"), store,
+            reviewer=ScriptedReviewer(_scripted_payload(selected, behaviour_tags=["poor_query"]),
+                                      source="model:test"))
+    moment = read.get_review(store, "solve_task__recovered")["moments"][0]
+    assert moment["detector"] == "successful_recovery_via_strategy_change"
+    assert moment["category"] == "good_recovery_from_failed_plan"
+    assert moment["label"] == "Supported recovery"
+    assert moment["basis"] == "mechanical"
+    bases = {d["category_id"]: d["basis"] for d in moment["category_details"]}
+    assert bases == {"good_recovery_from_failed_plan": "mechanical",
+                     "bad_query_in_tool_call": "model"}
+
+
+def test_model_review_that_changes_the_finding_does_not_inherit_the_detector(tmp_path):
+    """PR #96 review: matching candidate_id alone is too loose. A model that
+    reuses the id but changes the finding must NOT get the detector's mechanical
+    category — that would give a changed finding mechanical credit."""
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    det = read.get_review(store, "solve_task__recovered")
+    selected = [m for m in det["review_moments"] if m.get("selected")]
+    analyze(_load("tool_failure_recovery.atif.json"), store,
+            reviewer=ScriptedReviewer(
+                _scripted_payload(selected, kind="behaviour", behaviour_tags=["poor_query"]),
+                source="model:test"))
+    moment = read.get_review(store, "solve_task__recovered")["moments"][0]
+    assert moment["detector"] == "model"
+    assert moment["category"] == "bad_query_in_tool_call"
+    assert moment.get("label") is None
+    assert all(d["basis"] == "model" for d in moment["category_details"])
+
+
+def test_model_review_that_moves_the_anchor_does_not_inherit_the_detector(tmp_path):
+    """PR #96 review, second pass: keeping the detector's facts but re-anchoring
+    the moment at another trace step must not inherit the mechanical label — it
+    would otherwise show *Supported recovery* at an unrelated step."""
+    store = _store_with(tmp_path, "tool_failure_recovery.atif.json")
+    det = read.get_review(store, "solve_task__recovered")
+    selected = [m for m in det["review_moments"] if m.get("selected")]
+    original = set(selected[0]["anchor_event_ids"])
+    steps = read.get_forensic(store, "solve_task__recovered")["steps"]
+    other = next(e for s in steps for e in s["event_ids"] if e not in original)
+    payload = _scripted_payload(selected)
+    payload["moments"][0]["anchor_event_ids"] = [other]
+    analyze(_load("tool_failure_recovery.atif.json"), store,
+            reviewer=ScriptedReviewer(payload, source="model:test"))
+    moment = read.get_review(store, "solve_task__recovered")["moments"][0]
+    assert moment["detector"] == "model"
+    assert moment.get("label") is None
+    assert "good_recovery_from_failed_plan" not in (moment.get("categories") or [])
 
 
 def test_review_counts_report_category_coverage_from_real_moments(tmp_path):

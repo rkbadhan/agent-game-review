@@ -852,6 +852,19 @@ def list_runs(store: Store) -> list[dict]:
     ``dict`` objects; nothing here mutates a row in place after building it,
     so sharing them across callers is safe.
     """
+    # HTTP routes may pass a request-scoped proxy; cache the concrete project
+    # store so one project's cached summaries cannot leak into another.
+    store = getattr(store, "_request_store", store)
+    from .capture_view import PinnedStore
+    if isinstance(store, PinnedStore):
+        # Reuse the project-wide latest summaries and replace just this run.
+        # Each HTTP snapshot wrapper is transient; caching it rescans the fleet.
+        summaries = list_runs(store.store)
+        pinned = _list_runs_uncached(store, run_ids=[store.run_id])
+        if pinned and not any(row["run_id"] == store.run_id for row in summaries):
+            # A CLI process can add this run inside the base cache's TTL.
+            return sorted(summaries + pinned, key=lambda row: row["run_id"])
+        return [pinned[0] if row["run_id"] == store.run_id and pinned else row for row in summaries]
     with _list_runs_cache_lock:
         now = time.monotonic()
         cached = _list_runs_cache.get(store)
@@ -872,7 +885,7 @@ def list_runs(store: Store) -> list[dict]:
         return list(summaries)
 
 
-def _list_runs_uncached(store: Store) -> list[dict]:
+def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
     root = _runs_root(store)
     if not os.path.isdir(root):
         return []
@@ -903,7 +916,7 @@ def _list_runs_uncached(store: Store) -> list[dict]:
                 dirnames[:] = []
         return sorted(found)
 
-    for run_id in _discover_run_ids():
+    for run_id in _discover_run_ids() if run_ids is None else run_ids:
         capture_id = store.latest_capture_id(run_id)
         if capture_id is None:
             continue

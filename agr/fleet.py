@@ -336,6 +336,7 @@ def _load_all_episodes(store: Store) -> list[dict]:
     (and across fleet_episodes/fleet_usage_summary) is safe — same convention
     as read.list_runs's own cache.
     """
+    store = getattr(store, "_request_store", store)
     with _episodes_cache_lock:
         now = time.monotonic()
         cached = _episodes_cache.get(store)
@@ -604,6 +605,7 @@ _execution_quality_cache_lock = threading.Lock()
 def _load_all_execution_quality(store: Store) -> list[tuple[str, Optional[str], str, dict]]:
     """Every run's ``(run_id, task_id, outcome_bucket, execution-quality
     record)``, cached the same way as :func:`_load_all_episodes`."""
+    store = getattr(store, "_request_store", store)
     with _execution_quality_cache_lock:
         now = time.monotonic()
         cached = _execution_quality_cache.get(store)

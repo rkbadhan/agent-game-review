@@ -87,7 +87,7 @@ def test_cmd_serve_read_only_flag_reaches_create_app(tmp_path, monkeypatch):
         def __init__(self, read_only):
             self.state = argparse.Namespace(agr_read_only=bool(read_only))
 
-    def fake_create_app(store, read_only=None):
+    def fake_create_app(store, read_only=None, **kwargs):
         captured["read_only"] = read_only
         return _FakeApp(read_only)
 
@@ -105,6 +105,24 @@ def test_cmd_serve_read_only_flag_reaches_create_app(tmp_path, monkeypatch):
     args = argparse.Namespace(store=str(tmp_path / "store"), host="127.0.0.1", port=8000, read_only=False)
     assert cli.cmd_serve(args) == 0
     assert captured["read_only"] is None
+
+
+def test_cmd_serve_remote_access_prints_protected_launch_link(tmp_path, monkeypatch, capsys):
+    import argparse
+    import uvicorn
+    from agr import cli
+    captured = {}
+    monkeypatch.setenv("AGR_SESSION_TOKEN", "test-launch-token")
+    def serve(app, host, port):
+        captured["app"] = app
+        with TestClient(app, base_url="https://review.example") as client:
+            assert client.get("/workspace").status_code == 401
+            assert client.get("/workspace", headers={"authorization": "Bearer test-launch-token"}).status_code == 200
+        app.state.workspace.executor.shutdown(wait=True)
+    monkeypatch.setattr(uvicorn, "run", serve)
+    args = argparse.Namespace(store=str(tmp_path / "store"), host="0.0.0.0", port=8000, read_only=False, allowed_host=["review.example"])
+    assert cli.cmd_serve(args) == 0
+    assert "http://review.example:8000/#agr-session=test-launch-token" in capsys.readouterr().out
 
 
 def test_index_serves_the_spa(tmp_path):

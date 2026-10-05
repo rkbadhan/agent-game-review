@@ -578,6 +578,64 @@ def observability_for(candidate: Candidate, ctx: ReviewerContext) -> str:
     return "supported"
 
 
+def _represents_detector_candidate(model_cand: Candidate, det_cand: Candidate) -> bool:
+    """Whether a model moment still represents the detector candidate it names.
+
+    Matching ``candidate_id`` alone is too loose (PR #96 review): the prompt
+    permits a model to *correct* a judged candidate, so it can keep the id while
+    changing the finding. The mechanical category/label is only safe to inherit
+    when the model kept the detector's own kind, polarity and anchors and
+    retained every structured fact that grounds the detector's tag — a changed
+    value drops the fact and a moved anchor is a different trace step, so the
+    mechanical claim is never granted to a finding the detector no longer
+    supports. Extra model facts (a superset) are allowed.
+    """
+    if model_cand.kind != det_cand.kind or model_cand.polarity != det_cand.polarity:
+        return False
+    # The detector's own anchors must be retained whatever else matches: a
+    # moment that keeps the facts but re-anchors them at another trace step is
+    # a different moment, and would show the mechanical label at the wrong step
+    # (PR #96 review, second pass).
+    anchors = set(det_cand.anchor_event_ids)
+    if anchors and not anchors <= set(model_cand.anchor_event_ids):
+        return False
+    if not det_cand.structured_facts:
+        # A detector with no structured facts (rare) is identified by its anchor
+        # only, never vacuously inherited on a shared id.
+        return bool(anchors)
+    # A detector fact is retained when a model fact carries the same values for
+    # every key the detector fact declares. Projecting onto the detector's own
+    # keys ignores validation annotations (``validation``/``recomputed``/
+    # ``status_basis`` …) and any keys the model added, but a changed value fails.
+    model_facts = list(model_cand.structured_facts)
+    return all(
+        any(all(mf.get(k) == v for k, v in df.items()) for mf in model_facts)
+        for df in det_cand.structured_facts
+    )
+
+
+def _effective_detector(cand: Candidate, ctx: ReviewerContext) -> str:
+    """The detector a moment is attributed to (GR-3).
+
+    A model reviewer that JUDGES an existing candidate echoes its
+    ``candidate_id`` (the prompt instructs it to), so that moment is the
+    detector's finding *enriched* — not a model discovery — and keeps the
+    deterministic detector's identity, but only while it still represents that
+    candidate (see :func:`_represents_detector_candidate`). Without this,
+    ``agr.read``'s category derivation sees detector ``"model"`` (which carries
+    no behaviour tags) and the mechanically supported category — e.g. a
+    recovery's *Good recovery from a failed plan* — silently disappears the
+    moment a model reviews the run. Genuinely novel model moments (``sem_1`` …)
+    and model moments that changed the finding stay ``"model"``.
+    """
+    if cand.detector != "model":
+        return cand.detector
+    for c in ctx.candidates:
+        if c.candidate_id == cand.candidate_id and _represents_detector_candidate(cand, c):
+            return c.detector
+    return cand.detector
+
+
 # Event types that can terminate a run (adapter 0.4 semantics).
 _TERMINAL_EVENT_TYPES = {
     "final_submission", "run_completed", "run_timed_out", "run_failed", "run_finished",
@@ -1151,6 +1209,31 @@ def _quote_authenticity(enr: Enrichment, ctx: ReviewerContext) -> str:
     return "authentic"
 
 
+def _explanation_texts(enr: Enrichment) -> list[str]:
+    """The free-form prose fields an explanation's support is judged over."""
+    return [enr.consequence or "", enr.instructional_value or ""] + [
+        str(rc.get("rationale") or "") for rc in enr.root_cause_candidates
+    ]
+
+
+def _prose_reference_validity(enr: Enrichment, ctx: ReviewerContext) -> str:
+    """Whether every identifier the explanation PROSE names actually exists.
+
+    Its own dimension (PR #97 review): :func:`_explanation_support` collapses
+    this and a failed quote into one ``dangling_references`` status, so a bad
+    quote was indistinguishable from a bad prose id and the integrity audit
+    counted a mismatched quote as an invalid prose reference too. ``resolved``
+    | ``dangling``.
+    """
+    check_ids = {c.check_id for c in ctx.checks}
+    event_ids = {e.event_id for e in ctx.events}
+    for text in _explanation_texts(enr):
+        for cid in _CHECK_ID_PATTERN.findall(text):
+            if cid.upper() not in check_ids and cid not in event_ids:
+                return "dangling"
+    return "resolved"
+
+
 def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
     """Semantic support status for model explanations (AGR-03; F1 follow-up).
 
@@ -1160,7 +1243,8 @@ def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
     explanation prose to evidence-linked):
 
     * *reference validity* — an identifier the prose names must exist, else
-      ``dangling_references``;
+      ``dangling_references`` (recorded separately as ``prose_references`` so
+      it is never confused with a failed quote — PR #97 review);
     * *quote authenticity* — reported separately (``quote_authenticity``):
       every quoted span must actually appear in the named event's recorded
       text; a failed quote is misrepresentation and fails the explanation;
@@ -1171,14 +1255,9 @@ def _explanation_support(enr: Enrichment, ctx: ReviewerContext) -> str:
       interpretation, however true an unrelated quoted span is. It stays
       visible, labelled as interpretation.
     """
-    texts = [enr.consequence or "", enr.instructional_value or ""]
-    texts += [str(rc.get("rationale") or "") for rc in enr.root_cause_candidates]
-    check_ids = {c.check_id for c in ctx.checks}
-    event_ids = {e.event_id for e in ctx.events}
-    for text in texts:
-        for cid in _CHECK_ID_PATTERN.findall(text):
-            if cid.upper() not in check_ids and cid not in event_ids:
-                return "dangling_references"
+    texts = _explanation_texts(enr)
+    if _prose_reference_validity(enr, ctx) == "dangling":
+        return "dangling_references"
     # Quote authenticity: every quoted span must actually appear in the
     # recorded event text, exactly like an event_support fact (empty quotes
     # and non-matching spans fail — never silently match).
@@ -1493,13 +1572,18 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             # never upgrades the accompanying prose to evidence-linked.
             gate_results["explanation_support"] = _explanation_support(enr, ctx)
             gate_results["quote_authenticity"] = _quote_authenticity(enr, ctx)
+            # PR #97 review: a distinct signal, so an integrity audit can tell an
+            # invalid identifier in prose from a quote that did not match.
+            gate_results["prose_references"] = _prose_reference_validity(enr, ctx)
             gate_results["explanation_attribution"] = _explanation_attribution(enr, ceiling)
         moment = ReviewMoment(
             moment_id=f"mom_{cand.candidate_id}",
             run_id=ctx.run_id,
             source_capture_id=ctx.source_capture_id,
             candidate_id=cand.candidate_id,
-            detector=cand.detector,
+            # GR-3: an enriched existing candidate keeps its deterministic
+            # detector so read.py can still derive its mechanical category/tag.
+            detector=_effective_detector(cand, ctx),
             kind=cand.kind,
             polarity=cand.polarity,
             anchor_event_ids=list(cand.anchor_event_ids),
