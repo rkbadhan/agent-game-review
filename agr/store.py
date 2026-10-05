@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+from .storage_io import atomic_json, file_lock, read_json
 import time
 from typing import Any, Optional
 from urllib.parse import quote, unquote
@@ -100,17 +101,17 @@ class Store:
 
     # --- index ---------------------------------------------------------------
 
+    def index_lock(self, run_id: str):
+        return file_lock(os.path.join(self._run_dir(run_id), ".index.lock"))
+
     def read_index(self, run_id: str) -> list[dict]:
         path = self._index_path(run_id)
         if not os.path.exists(path):
             return []
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+        return read_json(path)
 
     def _write_index(self, run_id: str, index: list[dict]) -> None:
-        os.makedirs(self._run_dir(run_id), exist_ok=True)
-        with open(self._index_path(run_id), "w", encoding="utf-8") as fh:
-            json.dump(index, fh, indent=2)
+        atomic_json(self._index_path(run_id), index)
 
     def find_capture(self, run_id: str, hash_str: str, adapter_version: str) -> Optional[dict]:
         for entry in self.read_index(run_id):
@@ -131,6 +132,10 @@ class Store:
         Returns the index entry (existing one if this exact hash+adapter was
         already ingested — idempotent per spec §7.3).
         """
+        with self.index_lock(run_id):
+            return self._register_capture(run_id, capture_id, hash_str, adapter_version, completeness)
+
+    def _register_capture(self, run_id, capture_id, hash_str, adapter_version, completeness):
         index = self.read_index(run_id)
         existing = self.find_capture(run_id, hash_str, adapter_version)
         if existing is not None:

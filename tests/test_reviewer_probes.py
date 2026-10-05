@@ -226,6 +226,24 @@ def test_explanation_quotes_earn_evidence_linked_only_when_they_match():
     assert reviewer._quote_authenticity(enr_quoted, ctx) == "authentic"
     assert reviewer._explanation_support(enr_bad, ctx) == "dangling_references"
     assert reviewer._quote_authenticity(enr_bad, ctx) == "dangling"
+    # PR #97 review: a failed quote is NOT a prose-reference failure. The
+    # distinct signal stays resolved when the prose ids are fine.
+    assert reviewer._prose_reference_validity(enr_bad, ctx) == "resolved"
+
+
+def test_prose_reference_validity_is_distinct_from_quote_authenticity():
+    """PR #97 review: an identifier that does not exist in the prose is its own
+    failure, recorded separately from a quote that did not match."""
+    enr = reviewer.Enrichment(
+        root_cause_candidates=[{"locus": "agent_decision",
+                                "rationale": "stopped at C99 before verifying"}],
+        source="model:test",
+    )
+    ctx = _ctx([_candidate("x")])  # no C99 check exists
+    assert reviewer._prose_reference_validity(enr, ctx) == "dangling"
+    assert reviewer._explanation_support(enr, ctx) == "dangling_references"
+    # No quotes at all, so this is unambiguously a prose failure.
+    assert reviewer._quote_authenticity(enr, ctx) == "none"
 
 
 def test_authentic_quote_of_something_else_never_upgrades_invented_prose():

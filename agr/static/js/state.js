@@ -26,7 +26,9 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
   // anchor whenever this id is not one of that moment's own anchors, so a
   // newly selected finding shows its own source without extra clicks.
   evidenceFocus: null,
-  sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "RK", dispOpen: false,
+  sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "Local reviewer", dispOpen: false,
+  projectId: null, projects: [], serverReadOnly: false, captureId: null, importRunIds: null,
+  workspace: { source: null, files: [], preview: null, job: null, busy: false, error: null, uploadProgress: null, selected: new Set(), connections: [], investigations: [], detail: null, token: 0 },
   // UX audit finding #2: bumped on every loadInbox() call, the same way F4's
   // state.loadToken guards a run selection — a filter/sort change (or the
   // initial boot load) starting a NEW /queue fetch while an earlier one is
@@ -92,9 +94,11 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
 //   committing must not push on top of that.
 let _lastMajorKey;
 function _majorDestinationKey() {
-  if (state.view === "versions") return "versions:" + (state.versions.savedId || "");
-  if (state.view === "fleet" || state.view === "runs") return state.view;
-  return state.runId ? "run:" + state.runId : "runs";
+  const prefix = (state.projectId || "existing") + ":";
+  if (typeof isEngineerView === "function" && isEngineerView(state.view)) return (state.projectId || "existing") + ":" + state.view + ":" + ((state.workspace.job || {}).id || "");
+  if (state.view === "versions") return prefix + "versions:" + (state.versions.savedId || "");
+  if (state.view === "fleet" || state.view === "runs") return prefix + state.view;
+  return prefix + (state.runId ? "run:" + state.runId : "runs");
 }
 function _commitUrl(query) {
   const url = query ? location.pathname + "?" + query : location.pathname;
@@ -105,8 +109,15 @@ function _commitUrl(query) {
 }
 function syncUrl() {
   const p = new URLSearchParams();
+  if (state.projectId && state.projectId !== "existing") p.set("project", state.projectId);
+  if (typeof isEngineerView === "function" && isEngineerView(state.view)) {
+    p.set("view", state.view);
+    if (state.view === "import" && state.workspace.job) p.set("import", state.workspace.job.id);
+    _commitUrl(p.toString()); return;
+  }
   if (state.view === "runs") {
     p.set("view", "runs");
+    if (state.importRunIds && state.workspace.job) p.set("import", state.workspace.job.id);
     if (state.runsSearch) p.set("q", state.runsSearch);
     for (const f of state.filters) p.append("filter", f);
     if (state.sort !== "triage") p.set("sort", state.sort);
@@ -130,6 +141,8 @@ function syncUrl() {
     return;
   }
   if (state.runId) p.set("run", state.runId);
+  if (state.importRunIds && state.workspace.job) p.set("import", state.workspace.job.id);
+  if (state.captureId) p.set("capture", state.captureId);
   if (state.view === "review") p.set("chapter", state.chapter);
   else p.set("view", state.view);
   if (state.view === "review" && state.chapter === "moments") {
@@ -146,6 +159,9 @@ function syncUrl() {
   }
   for (const f of state.filters) p.append("filter", f);
   if (state.sort !== "triage") p.set("sort", state.sort);
+  if (state.runId && state.review && !state.loading) {
+    try { localStorage.setItem("agr-last-" + (state.projectId || "existing"), p.toString()); } catch (_) {}
+  }
   _commitUrl(p.toString());
 }
 // The queue-view half of the URL is applied before the first fetch, so a shared
@@ -168,7 +184,7 @@ function readUrl() {
   if (p.get("axis")) v.axis = p.get("axis");
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
-  return { run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
+  return { project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
     left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

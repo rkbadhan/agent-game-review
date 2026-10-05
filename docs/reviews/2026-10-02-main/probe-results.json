@@ -1,0 +1,117 @@
+{
+  "redaction": {
+    "project_key": {
+      "direct_survives": true,
+      "provider_packet_survives": true
+    },
+    "router_key": {
+      "direct_survives": true,
+      "provider_packet_survives": true
+    },
+    "service_key": {
+      "direct_survives": true,
+      "provider_packet_survives": true
+    }
+  },
+  "audit_strata": {
+    "actual_outcomes": [
+      "FAILED",
+      "PASSED"
+    ],
+    "recorded_strata": {
+      "unverified:no_decisive_moment:no_moment:recovery": {
+        "population": 1,
+        "selected": 1
+      },
+      "unverified:no_decisive_moment:no_moment:no_recovery": {
+        "population": 1,
+        "selected": 1
+      }
+    },
+    "source_verifier_keys": [
+      [
+        "raw_output",
+        "checks"
+      ],
+      [
+        "raw_output",
+        "checks"
+      ]
+    ]
+  },
+  "workflow_race": {
+    "accepted_versions": [
+      1,
+      1
+    ],
+    "persisted_version": 1,
+    "persisted_revision_count": 1,
+    "persisted_note": "editor-B"
+  },
+  "benchmark_reused_store": {
+    "declared_reviewer": {
+      "kind": "deterministic"
+    },
+    "actually_served_key": "model:scripted",
+    "scored_status": "no_decisive_moment",
+    "explicit_deterministic_status": "not_configured",
+    "explicit_deterministic_moments": 0
+  },
+  "verification_keyword": {
+    "ability": "Verify before submission",
+    "observed_behaviour": "Verification action taken before submission",
+    "result": "Successful",
+    "interpretation": "Positive evidence",
+    "measured": true,
+    "evidence": [
+      "evt_007",
+      "evt_009"
+    ]
+  },
+  "signature_supersession": {
+    "checks": [
+      {
+        "id": "C-old",
+        "effective_status": null
+      },
+      {
+        "id": "C-new",
+        "effective_status": "passed"
+      }
+    ],
+    "signature_rows": [
+      {
+        "ability": "same test suite",
+        "observed_behaviour": "same test suite",
+        "result": "Failed",
+        "interpretation": "Negative evidence in this run",
+        "measured": true,
+        "evidence": [
+          "C-old",
+          "V-C-old"
+        ]
+      },
+      {
+        "ability": "same test suite",
+        "observed_behaviour": "same test suite",
+        "result": "Successful",
+        "interpretation": "Positive evidence",
+        "measured": true,
+        "evidence": [
+          "C-new",
+          "V-C-new"
+        ]
+      }
+    ]
+  },
+  "capture_lineage": {
+    "first_capture_id": "capture_b1eb5f9cacff",
+    "second_capture_id": "capture_b1eb5f9cacff",
+    "second_supersedes": "capture_b1eb5f9cacff",
+    "index_revisions": [
+      1,
+      2
+    ],
+    "first_capture_stored_adapter": "adapter-v2"
+  }
+}

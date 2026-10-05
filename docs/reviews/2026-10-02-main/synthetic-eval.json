@@ -1,0 +1,263 @@
+{
+  "fixtures": [
+    {
+      "path": "chess_best_move.atif.json",
+      "sha256": "1fc94dc5440ca11067830859f229738d15866f1902dfa66a4e1f88655cc76093"
+    },
+    {
+      "path": "clean_pass.atif.json",
+      "sha256": "a9f0224223120ed5eedfe9fbd5105585af9433a150524da980fc2a9f08078771"
+    },
+    {
+      "path": "contract_mismatch.atif.json",
+      "sha256": "aa4ab5beff1258bf23b9355879690c86aa9a1b6bb070441cea6bb7c6198160a3"
+    },
+    {
+      "path": "expected_probe_then_create.atif.json",
+      "sha256": "250ae8384b59abf99ab0f2246ee58512c59cac312651503d4334c9732141f821"
+    },
+    {
+      "path": "ignored_failure.atif.json",
+      "sha256": "feea2018d05031460eabb5a6467221b769fa4b51fa8a3677e80f670fa3fd1098"
+    },
+    {
+      "path": "probe_without_followup.atif.json",
+      "sha256": "95dcdcb3f04cd37a751a0c93745c1c0a5b0caf0e67cc6c6238fd99fb8b85f734"
+    },
+    {
+      "path": "stuck_retry.atif.json",
+      "sha256": "96e75f372dcf3e43034e801e787a0f8b876b22b61406ff931b7f385f7f373341"
+    },
+    {
+      "path": "tool_failure_recovery.atif.json",
+      "sha256": "6c780e116ad47c33677ab44dfc696012d45f2313bb51b6f85252a949e59617a6"
+    },
+    {
+      "path": "unclassified_tool_failure.atif.json",
+      "sha256": "2e1244ae0acd96b72f427ef9139898eebbf754ac0256779be6899fe4b7b2c078"
+    }
+  ],
+  "generated_utc": "2026-10-02T05:08:21Z",
+  "gold_set": {
+    "adjudication_status": {
+      "build_task__ignored_failure": "single_labelled",
+      "chess_best_move__seed42": "double_labelled",
+      "fetch_task__unchanged_retry": "single_labelled",
+      "greeting_file__clean_pass": "single_labelled",
+      "greeting_report__seed7": "single_labelled",
+      "solve_task__recovered": "single_labelled"
+    },
+    "files": [
+      {
+        "path": "build_task__ignored_failure.gold.json",
+        "sha256": "2773ed4f9d84e5813ac0c8f554144f4c10d1eba77fe34f39598069afccee8b36"
+      },
+      {
+        "path": "chess_best_move__seed42.gold.json",
+        "sha256": "3bf22cfad5881a85719f88e9b63dd86bd09a0c68dd3c64d3f55dbe5d8f64e8b4"
+      },
+      {
+        "path": "fetch_task__unchanged_retry.gold.json",
+        "sha256": "abc707fd1ee2e3ccbc9c93cee7d533e5dc00d70b5475ccc9bf6a7c8e7de10b98"
+      },
+      {
+        "path": "greeting_file__clean_pass.gold.json",
+        "sha256": "b3c76fc6e30c6820f309c07b0b10e5d3d29b7b18ffbd7a45bfd32b921965f934"
+      },
+      {
+        "path": "greeting_report__seed7.gold.json",
+        "sha256": "2384c8bcfeaef3bdfd89596b2dcf562b3ea76e2cfb1db09b4d99ebc4192b81e6"
+      },
+      {
+        "path": "solve_task__recovered.gold.json",
+        "sha256": "e0ca441b29d29e63cb5fd73d74deca211c580de6b818765a896fe9c34d39a56c"
+      }
+    ]
+  },
+  "invocation": {
+    "command": "agr eval",
+    "fixtures": "archive/synthetic/fixtures",
+    "gold_dir": "archive/synthetic/gold",
+    "k": 3,
+    "model": null,
+    "provider": "deterministic-only"
+  },
+  "manifest_version": 2,
+  "report": {
+    "runs": [
+      {
+        "abstained": false,
+        "affected_check_overlap_rate": 0.5,
+        "attribution_ceiling_respected_rate": 1.0,
+        "attribution_overclaim_rate": 0.0,
+        "evidence_span_precision": 1.0,
+        "evidence_span_recall": 0.4,
+        "matches": [
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_ignored_build_failure",
+            "mechanism_specificity": "check_agreement",
+            "prediction": "mom_cand_unresolved_requirement_at_submission_aggregate",
+            "status": "matched"
+          },
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_required_artifact_absent",
+            "mechanism_specificity": "anchor_only",
+            "prediction": "mom_cand_required_artifact_absent_app_bin",
+            "status": "matched"
+          }
+        ],
+        "missed_critical_rate": 0.0,
+        "no_moment_case": false,
+        "precision_at_3": 1.0,
+        "recall_at_3": 1.0,
+        "redundant_card_rate": 0.0,
+        "run_id": "build_task__ignored_failure"
+      },
+      {
+        "abstained": false,
+        "affected_check_overlap_rate": 1.0,
+        "attribution_ceiling_respected_rate": 1.0,
+        "attribution_overclaim_rate": 0.0,
+        "evidence_span_precision": 1.0,
+        "evidence_span_recall": 0.25,
+        "matches": [
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_incomplete_move_set",
+            "mechanism_specificity": "check_agreement",
+            "prediction": "mom_cand_unresolved_requirement_at_submission_aggregate",
+            "status": "matched"
+          }
+        ],
+        "missed_critical_rate": 0.0,
+        "no_moment_case": false,
+        "precision_at_3": 1.0,
+        "recall_at_3": 1.0,
+        "redundant_card_rate": 0.0,
+        "run_id": "chess_best_move__seed42"
+      },
+      {
+        "abstained": false,
+        "attribution_overclaim_rate": null,
+        "calibrated": true,
+        "evidence_span_precision": null,
+        "evidence_span_recall": null,
+        "matches": [],
+        "missed_critical_rate": null,
+        "n_fabricated": 0,
+        "no_moment_case": true,
+        "precision_at_3": null,
+        "recall_at_3": null,
+        "redundant_card_rate": null,
+        "run_id": "fetch_task__unchanged_retry"
+      },
+      {
+        "abstained": false,
+        "attribution_overclaim_rate": null,
+        "calibrated": true,
+        "evidence_span_precision": null,
+        "evidence_span_recall": null,
+        "matches": [],
+        "missed_critical_rate": null,
+        "n_fabricated": 0,
+        "no_moment_case": true,
+        "precision_at_3": null,
+        "recall_at_3": null,
+        "redundant_card_rate": null,
+        "run_id": "greeting_file__clean_pass"
+      },
+      {
+        "abstained": false,
+        "affected_check_overlap_rate": 0.5,
+        "attribution_ceiling_respected_rate": 1.0,
+        "attribution_overclaim_rate": 0.0,
+        "evidence_span_precision": 1.0,
+        "evidence_span_recall": 0.5,
+        "matches": [
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_check_failed_at_submission",
+            "mechanism_specificity": "check_agreement",
+            "prediction": "mom_cand_unresolved_requirement_at_submission_aggregate",
+            "status": "matched"
+          },
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_missing_summary_artifact",
+            "mechanism_specificity": "anchor_only",
+            "prediction": "mom_cand_required_artifact_absent_summary.txt",
+            "status": "matched"
+          }
+        ],
+        "missed_critical_rate": 0.0,
+        "no_moment_case": false,
+        "precision_at_3": 1.0,
+        "recall_at_3": 1.0,
+        "redundant_card_rate": 0.0,
+        "run_id": "greeting_report__seed7"
+      },
+      {
+        "abstained": false,
+        "affected_check_overlap_rate": 0.0,
+        "attribution_ceiling_respected_rate": 1.0,
+        "attribution_overclaim_rate": 0.0,
+        "evidence_span_precision": 0.5,
+        "evidence_span_recall": 0.25,
+        "matches": [
+          {
+            "better_action_present": false,
+            "claim_support": "within_ceiling",
+            "gold": "m_recovery_via_strategy_change",
+            "mechanism_specificity": "anchor_only",
+            "prediction": "mom_cand_successful_recovery_via_strategy_change_evt_004",
+            "status": "matched"
+          }
+        ],
+        "missed_critical_rate": null,
+        "no_moment_case": false,
+        "precision_at_3": 1.0,
+        "recall_at_3": 1.0,
+        "redundant_card_rate": 0.0,
+        "run_id": "solve_task__recovered"
+      }
+    ],
+    "skipped_runs": [],
+    "summary": {
+      "abstention_rate": 0.0,
+      "affected_check_overlap_rate": 0.5,
+      "attribution_ceiling_respected_rate": 1.0,
+      "attribution_overclaim_rate": 0.0,
+      "evidence_span_precision": 0.8571,
+      "evidence_span_recall": 0.3529,
+      "fabrication_on_clean_pass_rate": 0.0,
+      "missed_critical_rate": 0.0,
+      "n_abstained_runs": 0,
+      "n_decisive_runs": 4,
+      "n_fabricated_on_clean_pass": 0,
+      "n_no_moment_runs": 2,
+      "n_runs": 6,
+      "n_skipped_runs": 0,
+      "no_moment_calibration": 1.0,
+      "precision_at_3": 1.0,
+      "recall_at_3": 1.0,
+      "redundant_card_rate": 0.0,
+      "reviewer_eval_version": "reviewer-eval-0.2"
+    }
+  },
+  "source_commit": null,
+  "versions": {
+    "agr_package": "0.2.0",
+    "detector": "detectors-0.5",
+    "python": "3.12.9",
+    "redaction": "redaction-0.2",
+    "reviewer": "reviewer-det-0.3",
+    "reviewer_eval": "reviewer-eval-0.2"
+  }
+}

@@ -218,8 +218,12 @@ def _iter_raw_spans(doc: dict) -> list[dict]:
     return spans
 
 
-def _load_otlp_documents(source: Union[str, Path, list]) -> list[dict]:
+def _load_otlp_documents(source: Union[str, Path, list, dict]) -> list[dict]:
     """Read one or more OTLP JSON files (see the module docstring)."""
+    if isinstance(source, dict):
+        if "resourceSpans" not in source:
+            raise ValueError("not an OTLP JSON export (expected top-level 'resourceSpans')")
+        return [source]
     paths = source if isinstance(source, (list, tuple)) else [source]
     docs: list[dict] = []
     for p in paths:
@@ -338,7 +342,7 @@ def _default_configuration_id(model: Optional[str], tool_names: set[str]) -> str
 
 
 def convert(
-    source: Union[str, Path, list],
+    source: Union[str, Path, list, dict],
     *,
     task_id: Optional[str] = None,
     instruction: Optional[str] = None,
@@ -420,7 +424,8 @@ def convert(
         warnings=warnings,
         meta={"span_count": len(raw_spans), "derived_steps": len(result.steps),
               "subagent_names": result.meta.get("subagent_names", []),
-              "retry_count": result.meta.get("retry_count", 0)},
+              "retry_count": result.meta.get("retry_count", 0),
+              "source_span_steps": result.meta.get("source_span_steps", {})},
     )
 
 

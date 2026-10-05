@@ -10,7 +10,7 @@
 // Compare versions) rather than a run's investigation shell. Workspaces get
 // the full content width and no persistent evidence panel; opening a run
 // switches into the investigation shell below.
-function isWorkspaceView(view) { return view === "runs" || view === "fleet" || view === "versions"; }
+function isWorkspaceView(view) { return view === "runs" || view === "fleet" || view === "versions" || (typeof isEngineerView === "function" && isEngineerView(view)); }
 
 // The top bar's run stepper (‹ 5/27 ›) — empty when there is
 // no active queue position (no run loaded, or a run opened outside any
@@ -19,7 +19,7 @@ function renderTopbarStepper() {
   const host = $("#topbar-stepper"); host.textContent = "";
   const pos = queuePosition();
   if (!pos) return;
-  const ids = state.queue.run_ids;
+  const ids = activeQueueIds();
   const stepper = el("span", "run-stepper");
   const prev = el("button", "step-arrow"); prev.append(icon("chevron-left"));
   prev.title = "Previous run in this queue";
@@ -37,6 +37,7 @@ function renderTopbarStepper() {
 
 function render() {
   const main = $("#main"); main.textContent = "";
+  if (typeof syncProjectChrome === "function") syncProjectChrome();
   // A review view with no SELECTED run (e.g. a stray fallback) has nothing to
   // investigate, so it resolves to the Runs workspace before the layout mode
   // below is decided — never a bare "review" mode with an empty three-pane
@@ -68,7 +69,7 @@ function render() {
   // ambiguous for both a human and a test's selector.
   if (workspace) {
     $("#queue-controls").textContent = ""; $("#run-list").textContent = "";
-    $("#crumb-task").textContent = state.view === "runs" ? "Runs"
+    $("#crumb-task").textContent = isEngineerView(state.view) ? engineerViewTitle(state.view) : state.view === "runs" ? "Runs"
       : state.view === "fleet" ? "Patterns" : "Compare versions";
     $("#topbar-stepper").textContent = "";
   }
@@ -79,6 +80,7 @@ function render() {
   if (state.view === "runs") { renderRunsSurface(main); syncUrl(); return; }
   if (state.view === "versions") { renderVersionsSurface(main); syncUrl(); return; }
   if (state.view === "fleet") { renderFleetSurface(main); syncUrl(); return; }
+  if (isEngineerView(state.view)) { renderEngineerSurface(main); syncUrl(); return; }
   if (!state.review) {
     main.append(el("div", "empty", state.runId && state.loading ? "Loading…" : "Select a run to begin."));
     syncUrl(); return;
@@ -131,6 +133,11 @@ function render() {
   header.append(left);
   main.append(header);
   main.append(renderShellMeta(rv));
+  if (state.captureId) {
+    const snapshot = el("div", "notice callout", "Saved evidence snapshot · " + state.captureId + " · read-only ");
+    snapshot.append(workspaceButton("Open latest capture", () => selectRun(state.runId))); main.append(snapshot);
+  }
+  renderInvestigationComposer(main);
 
   if (rv.watermark) { const w = el("div", "watermark callout callout-warn"); w.append(icon("alert-triangle", "watermark-icon"), document.createTextNode(" " + rv.watermark)); main.append(w); }
   // Not-reviewable routing (§4.15): the capture is too incomplete for a

@@ -389,6 +389,28 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_audit_integrity(args) -> int:
+    """Report the evidence-integrity audit for one served review.
+
+    Consolidates the grounding checks the reviewer already ran (references,
+    quotes, fact recomputation, rejected proposals) and reports their coverage.
+    A mechanical pass is not a claim that the review is true — the report says
+    so explicitly (see ``agr.integrity``).
+    """
+    from . import integrity
+
+    store = Store(args.store)
+    if store.latest_capture_id(args.run_id) is None:
+        print(f"run {args.run_id!r} not found in store {args.store!r}", file=sys.stderr)
+        return 1
+    report = integrity.audit_run(store, args.run_id, getattr(args, "reviewer", None))
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(integrity.format_text(report))
+    return 0
+
+
 def cmd_confirm(args) -> int:
     """Record a human confirmation of the task contract (spec §8.2).
 
@@ -1085,6 +1107,184 @@ def _already_enriched(store: Store, run_id: str) -> bool:
     return any(key.startswith("model") for key in store.list_reviews(run_id, capture_id))
 
 
+def _benchmark_adapter(name: str):
+    """Resolve a registered benchmark adapter by name."""
+    from .benchmark_whowhen import WHO_WHEN_ADAPTER
+    from .benchmark_trail import TRAIL_ADAPTER
+    return {WHO_WHEN_ADAPTER.name: WHO_WHEN_ADAPTER,
+            TRAIL_ADAPTER.name: TRAIL_ADAPTER}.get(name)
+
+
+def _fmt_rate(rate) -> str:
+    return f"{rate:.3f}" if rate is not None else "n/a"
+
+
+def _print_benchmark(result) -> None:
+    """Print the EV-1 attribution result with its declared rule and limits."""
+    m = result.metrics()
+    manifest = result.manifest
+    print(f"Attribution benchmark — {manifest.benchmark} ({manifest.version})")
+    print(f"  source            {manifest.source_url}  ·  {manifest.license}")
+    print(f"  single-prediction {manifest.single_prediction_rule}")
+    print(f"  cases             {m['n_cases']} scored  ·  {m['n_warnings']} warning(s)")
+    for label, rate_key, count_key in (() if "trail_span_metrics" in m else (
+        ("step accuracy", "step_accuracy", "step_correct_count"),
+        ("agent accuracy", "agent_accuracy", "agent_correct_count"),
+        ("both accuracy", "both_accuracy", "both_correct_count"),
+    )):
+        print(f"  {label:<17} {_fmt_rate(m[rate_key])}  ({m[count_key]}/{m['n_cases']})")
+    if "trail_span_metrics" in m:
+        t = m["trail_span_metrics"]
+        print(f"  span precision    {t['span_precision']:.3f} ({t['true_positives']}/{t['predicted_spans']})")
+        print(f"  span recall       {t['span_recall']:.3f} ({t['true_positives']}/{t['gold_spans']})")
+        print(f"  span F1           {t['span_f1']:.3f}")
+        print(f"  high-impact recall { _fmt_rate(t['high_impact_recall'])} "
+              f"({t['high_impact_numerator']}/{t['high_impact_denominator']})")
+    if "trail_span_metrics" not in m:
+        print(f"  {'abstention rate':<17} {_fmt_rate(m['abstention_rate'])}")
+    print()
+    print(manifest.scoring_protocol)
+    if manifest.limits:
+        print()
+        print("Limits (carry these with any number above):")
+        for limit in manifest.limits:
+            print(f"  - {limit}")
+
+
+def cmd_benchmark(args) -> int:
+    """Score AGR against an external failure-attribution benchmark (EV-1).
+
+    Converts a benchmark's records into ingestable ATIF runs plus reference
+    labels, runs AGR's reviewer over them, and scores the declared
+    single-prediction rule against the benchmark's own protocol. The manifest
+    (version, provenance, rule, limits) is part of every result.
+    """
+    import tempfile
+
+    from . import benchmark as bench
+
+    adapter = _benchmark_adapter(args.benchmark)
+    if adapter is None:
+        print(f"unknown benchmark {args.benchmark!r}", file=sys.stderr)
+        return 2
+    if not os.path.isdir(args.data):
+        print(f"--data is not a directory: {args.data!r}", file=sys.stderr)
+        return 2
+
+    if args.store_explicit:
+        store = Store(args.store)
+    else:
+        store = Store(tempfile.mkdtemp(prefix="agr-benchmark-"))
+
+    reviewer = None
+    reviewer_factory = None
+    if args.provider:
+        model_id = args.model or os.environ.get("AGR_REVIEW_MODEL")
+        from .model_reviewer import make_reviewer
+        try:
+            reviewer = make_reviewer(args.provider, model_id, args.base_url)
+        except (ValueError, RuntimeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 3
+        reviewer_factory = lambda: reviewer  # noqa: E731 - one reviewer, reused per case
+
+    run_manifest = None
+    if args.manifest:
+        if args.out and os.path.normcase(os.path.abspath(args.manifest)) == os.path.normcase(
+            os.path.abspath(args.out)
+        ):
+            print("--manifest and --out must use different paths", file=sys.stderr)
+            return 2
+        if os.path.exists(args.manifest):
+            print(f"run manifest already exists: {args.manifest!r}", file=sys.stderr)
+            return 2
+        try:
+            protocol = _load(args.protocol) if args.protocol else {}
+            run_manifest = bench.build_run_manifest(
+                adapter,
+                args.data,
+                limit=args.limit,
+                provider=args.provider,
+                model=getattr(reviewer, "model", None) if reviewer else None,
+                base_url=args.base_url,
+                protocol=protocol,
+            )
+            # Exclusive creation keeps a frozen record from being silently
+            # replaced by a later run with different inputs or settings.
+            with open(args.manifest, "x", encoding="utf-8") as fh:
+                json.dump(run_manifest, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+        except (OSError, ValueError) as exc:
+            print(f"could not freeze benchmark run: {exc}", file=sys.stderr)
+            return 2
+
+    result = bench.run_benchmark(
+        adapter, args.data, store, limit=args.limit,
+        reviewer_factory=reviewer_factory,
+        reviewer_key=getattr(reviewer, "reviewer_key", None) if reviewer else None,
+        run_manifest=run_manifest,
+    )
+    _print_benchmark(result)
+    report = result.report()
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, ensure_ascii=False)
+        print(f"\nwrote report to {args.out}")
+    if args.manifest:
+        print(f"froze run manifest to {args.manifest}")
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_audit_pack(args) -> int:
+    """Create the reproducible EV-3 sample, blind/revealed packets and rubric."""
+    from .evaluation import create_audit_pack
+    try:
+        metadata = create_audit_pack(
+            Store(args.store), args.out, sample_size=args.sample_size,
+            double_review_fraction=args.double_review_fraction, seed=args.seed,
+            reviewer_key=args.reviewer,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"could not create audit pack: {exc}", file=sys.stderr)
+        return 2
+    print(f"created audit pack: {metadata['selected_count']} of {metadata['eligible_count']} reviews")
+    print(f"double-reviewed cases: {metadata['double_review_count']}")
+    print(f"blind phase: {os.path.join(args.out, 'blind', 'cases.json')}")
+    print(f"blind annotation form: {os.path.join(args.out, 'blind', 'annotations-template.json')}")
+    print(f"revealed phase and form: {os.path.join(args.out, 'revealed')}")
+    print(f"sealed key: {os.path.join(args.out, 'key', 'case-map.json')}")
+    return 0
+
+
+def cmd_publish_evaluation(args) -> int:
+    """Combine frozen benchmark, human audit, and integrity evidence (EV-4)."""
+    from .evaluation import build_evaluation_report
+    try:
+        benchmark_reports = [_load(p) for p in args.benchmark_report]
+        audits = [_load(p) for p in args.audit]
+        integrity_reports = [_load(p) for p in args.integrity]
+        if args.thresholds:
+            thresholds = _load(args.thresholds)
+        else:
+            thresholds = None
+        report = build_evaluation_report(
+            benchmark_reports, audits, integrity_reports=integrity_reports,
+            thresholds=thresholds,
+        )
+        with open(args.out, "x", encoding="utf-8") as fh:
+            json.dump(report, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        print(f"could not publish evaluation report: {exc}", file=sys.stderr)
+        return 2
+    print(f"wrote scoped evaluation report to {args.out}")
+    print(f"human-audited reviews: {report['human_audit']['n_reviews']} across {report['human_audit']['n_cases']} cases")
+    print("claims are limited to the attached benchmark cases and audited sample")
+    return 0
+
+
 def cmd_review(args) -> int:
     """Run the Stage F model reviewer over a run (spec §8.7).
 
@@ -1244,9 +1444,24 @@ def cmd_serve(args) -> int:
     # AGR_READ_ONLY env var, so a container platform can set it without a
     # code-level flag.
     read_only = True if getattr(args, "read_only", False) else None
-    app = create_app(args.store, read_only=read_only)
+    from .workspace_api import loopback
+    allowed_hosts = list(getattr(args, "allowed_host", None) or [])
+    if args.host not in ("0.0.0.0", "::"):
+        allowed_hosts.append(args.host)
+    app = create_app(args.store, read_only=read_only,
+                     allowed_hosts=allowed_hosts,
+                     session_token=os.environ.get("AGR_SESSION_TOKEN"),
+                     require_session=not loopback(args.host))
     mode = " (read-only)" if getattr(app.state, "agr_read_only", False) else ""
     print(f"serving read API for store {args.store!r} at http://{args.host}:{args.port}{mode}")
+    if not app.state.agr_read_only and (not loopback(args.host) or getattr(args, "allowed_host", None)):
+        browser_host = (getattr(args, "allowed_host", None) or [args.host])[0]
+        if browser_host in ("0.0.0.0", "::"):
+            browser_host = "127.0.0.1"
+        if ":" in browser_host:
+            browser_host = "[" + browser_host + "]"
+        print(f"Open http://{browser_host}:{args.port}/#agr-session={app.state.workspace_session_token}")
+        print("Use this session fragment on your HTTPS proxy URL; keep the link private.")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
@@ -1347,6 +1562,13 @@ def build_parser() -> argparse.ArgumentParser:
     ps = sub.add_parser("show", help="show the deterministic review for a run")
     ps.add_argument("run_id", help="logical run id")
     ps.set_defaults(func=cmd_show)
+
+    pai = sub.add_parser("audit-integrity",
+                         help="report what the grounding checks covered for one review")
+    pai.add_argument("run_id", help="logical run id")
+    pai.add_argument("--reviewer", help="reviewer key to audit (default: the served one)")
+    pai.add_argument("--json", action="store_true", help="print the full report as JSON")
+    pai.set_defaults(func=cmd_audit_integrity)
 
     pc = sub.add_parser("confirm", help="record a human confirmation of the task contract")
     pc.add_argument("run_id", help="logical run id")
@@ -1460,6 +1682,52 @@ def build_parser() -> argparse.ArgumentParser:
                          "adjudication status, invocation) to PATH")
     pe.set_defaults(func=cmd_eval)
 
+    pb = sub.add_parser(
+        "benchmark",
+        help="score AGR against an external failure-attribution benchmark (EV-1)")
+    pb.add_argument("benchmark", choices=["who-and-when", "trail"],
+                    help="which benchmark to run")
+    pb.add_argument("--data", required=True,
+                    help="directory of benchmark records (the split, e.g. "
+                         "Who&When split or locally supplied TRAIL JSON/JSONL export)")
+    pb.add_argument("--limit", type=int, default=None,
+                    help="score only the first N records (quick check)")
+    pb.add_argument("--provider", default=None, choices=["anthropic", "openai"],
+                    help="also run the model reviewer instead of the deterministic baseline "
+                         "(needs the matching 'model-*' extra + a key)")
+    pb.add_argument("--model", default=None,
+                    help="model id for --provider (default: $AGR_REVIEW_MODEL or the provider default)")
+    pb.add_argument("--base-url", default=None,
+                    help="OpenAI/Anthropic-compatible endpoint for --provider")
+    pb.add_argument("--out", default=None, metavar="PATH",
+                    help="write the full JSON report (manifest + per-case scores) to PATH")
+    pb.add_argument("--manifest", default=None, metavar="PATH",
+                    help="freeze selected record hashes and reviewer settings before scoring")
+    pb.add_argument("--protocol", default=None, metavar="JSON",
+                    help="predeclared JSON with configuration, thresholds, and partition_policy; model runs also require training_cutoff")
+    pb.add_argument("--json", action="store_true",
+                    help="print the full JSON report")
+    pb.set_defaults(func=cmd_benchmark)
+
+    pap = sub.add_parser("audit-pack", help="prepare a reproducible EV-3 human-audit sample")
+    pap.add_argument("--out", required=True, help="new output directory for blind/revealed packets")
+    pap.add_argument("--sample-size", type=int, default=30)
+    pap.add_argument("--double-review-fraction", type=float, default=0.25)
+    pap.add_argument("--seed", type=int, default=1)
+    pap.add_argument("--reviewer", default=None, help="reviewer key to audit (default: served review)")
+    pap.set_defaults(func=cmd_audit_pack)
+
+    ppe = sub.add_parser("publish-evaluation", help="publish scoped EV-4 results from supplied evidence")
+    ppe.add_argument("--benchmark-report", action="append", default=[], metavar="JSON",
+                     help="benchmark result report; repeat for each benchmark")
+    ppe.add_argument("--audit", action="append", default=[], metavar="JSON",
+                     help="completed human annotations JSON; repeat as needed")
+    ppe.add_argument("--integrity", action="append", default=[], metavar="JSON",
+                     help="agr audit-integrity JSON report; repeat for each audited run")
+    ppe.add_argument("--thresholds", help="predeclared threshold JSON (optional)")
+    ppe.add_argument("--out", required=True, help="new output JSON path")
+    ppe.set_defaults(func=cmd_publish_evaluation)
+
     prv = sub.add_parser(
         "review", help="run the model reviewer over a run (needs a 'model-*' extra + key)")
     prv.add_argument("run_id", nargs="?", default=None,
@@ -1506,6 +1774,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="bind host (default: $AGR_HOST, else 127.0.0.1; use 0.0.0.0 in a container)")
     pv.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")),
                     help="bind port (default: $PORT, else 8000)")
+    pv.add_argument("--allowed-host", action="append", default=[],
+                    help="allow an exact browser/proxy host name (repeatable); remote access requires the printed session link")
     pv.add_argument("--read-only", action="store_true",
                     help="reject every non-GET/HEAD request with 403 (also: $AGR_READ_ONLY=1); "
                          "for a hosted public demo that must never be written to")

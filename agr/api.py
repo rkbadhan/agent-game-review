@@ -54,7 +54,8 @@ from .store import InvalidRunId, Store
 _STATIC = Path(__file__).parent / "static"
 
 
-def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None):
+def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None,
+               *, allowed_hosts=None, session_token=None, require_session=False):
     """Build the FastAPI application bound to a store directory.
 
     Imported lazily so the rest of the package never requires FastAPI. Raises a
@@ -93,6 +94,14 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
         summary="Read-only forensic view over the deterministic review store.",
     )
     app.state.agr_read_only = read_only
+    from .workspace_api import attach_workspace
+    workspace, store = attach_workspace(app, store, read_only, allowed_hosts=allowed_hosts,
+                                        session_token=session_token, require_session=require_session)
+
+    def review_actor(payload):
+        # Project UI identity comes from persisted local settings. Legacy
+        # single-store API callers retain their explicit attribution contract.
+        return workspace.settings()["reviewer"] if store.project.get() is not None else payload.get("actor")
 
     # P0-4: a run_id rejected by validate_run_id (e.g. path traversal like
     # "..") is a not-found run to every route's caller, not a server error —
@@ -299,7 +308,7 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
         if not isinstance(events, list) or not events:
             raise HTTPException(status_code=422, detail="events[] is required")
         try:
-            written = instrumentation.record_batch(store, events, actor=payload.get("actor"))
+            written = instrumentation.record_batch(store, events, actor=review_actor(payload))
         except instrumentation.InstrumentationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"recorded": written}
@@ -373,7 +382,7 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
         try:
             return workflow.set_workflow(
                 store, run_id,
-                actor=payload.get("actor"),
+                actor=review_actor(payload),
                 base_version=payload["base_version"],
                 progress=payload.get("progress"),
                 disposition=payload.get("disposition"),
@@ -406,7 +415,7 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
         try:
             record, wf = workflow.add_feedback(
                 store, run_id,
-                actor=payload.get("actor"),
+                actor=review_actor(payload),
                 mutation_id=payload["mutation_id"],
                 moment_id=payload["moment_id"],
                 kind=payload["kind"],
@@ -443,7 +452,7 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
                                 detail=f"moment {payload['moment_id']!r} not found")
         try:
             lesson = lessons.create_lesson(
-                store, run_id, moment=moment, actor=payload.get("actor"),
+                store, run_id, moment=moment, actor=review_actor(payload),
                 mutation_id=payload["mutation_id"],
                 reviewer_key=review.get("reviewer_key"))
         except lessons.LessonError as exc:
@@ -459,7 +468,7 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
         try:
             lesson = lessons.set_lesson_status(
                 store, run_id, lesson_id, base_version=payload["base_version"],
-                actor=payload.get("actor"), status=payload.get("status"),
+                actor=review_actor(payload), status=payload.get("status"),
                 edits=payload.get("edits"))
         except lessons.VersionConflict as exc:
             raise _lesson_conflict(exc)
@@ -487,13 +496,13 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None)
                     outcome_checks=payload.get("outcome_checks"),
                     comparison_limits=payload.get("comparison_limits"),
                     measured_improvement=payload.get("measured_improvement"),
-                    actor=payload.get("actor"))
+                    actor=review_actor(payload))
             elif action == "approve":
                 lesson = lessons.approve_experiment(
-                    store, run_id, lesson_id, actor=payload.get("actor"))
+                    store, run_id, lesson_id, actor=review_actor(payload))
             else:
                 lesson = lessons.propose_experiment(
-                    store, run_id, lesson_id, actor=payload.get("actor"))
+                    store, run_id, lesson_id, actor=review_actor(payload))
         except lessons.LessonError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"lesson": lesson}

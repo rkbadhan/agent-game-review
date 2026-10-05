@@ -261,6 +261,7 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
     ordered = sorted(spans, key=_sort_key)
 
     steps: list[dict] = []
+    source_span_steps: dict[str, list[str]] = {}
     seq = 0
 
     def add(kind: str, actor: str, span: NormalizedSpan, **payload: Any) -> None:
@@ -268,6 +269,7 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
         seq += 1
         payload.setdefault("provenance", "observed")
         step = {"step_id": f"sp{seq}", "kind": kind, "actor": actor, **payload}
+        source_span_steps.setdefault(span.span_id, []).append(step["step_id"])
         if span.timestamp is not None:
             step["timestamp"] = span.timestamp
             step["start_time"] = span.timestamp
@@ -542,6 +544,7 @@ def flatten_span_tree(spans: list[NormalizedSpan]) -> FlattenResult:
         "retry_count": retry_count,
         "unmapped_span_count": unmapped_count,
         "saw_agent_activity": saw_body_span,
+        "source_span_steps": source_span_steps,
     }
 
     return FlattenResult(steps=steps, capabilities=capabilities, warnings=warnings, meta=meta)

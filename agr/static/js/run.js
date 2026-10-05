@@ -18,6 +18,7 @@ async function selectRun(runId, restore) {
   // state.runId, so they re-enabled (via `loading`) and submitted against the
   // wrong run while a different run's review sat on screen.
   const prev = {
+    captureId: state.captureId, readOnly: state.readOnly,
     runId: state.runId, review: state.review, forensic: state.forensic,
     momentIdx: state.momentIdx, dispOpen: state.dispOpen, view: state.view,
     chapter: state.chapter, viewed: state.viewed,
@@ -26,6 +27,8 @@ async function selectRun(runId, restore) {
     compare: state.compare,
   };
   state.loading = true;
+  state.captureId = restore && restore.capture || null;
+  state.readOnly = state.serverReadOnly || !!(activeProject() || {}).sample || !!(activeProject() || {}).archived || !!state.captureId;
   state.runId = runId; state.momentIdx = 0; state.dispOpen = false;
   state.view = "review"; state.chapter = "moments"; state.viewed = new Set();
   state.expandedMoments = new Set(); state.expandedLessons = new Set(); state.evidenceFocus = null;

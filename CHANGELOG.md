@@ -12,6 +12,47 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Added
 
+- **EV-1 attribution benchmark: Who&When adapter + scorer (`agr benchmark
+  who-and-when`).** The first half of the benchmark-first evaluation strategy
+  (`docs/evaluation-strategy.md`, `docs/benchmark-who-and-when.md`). It converts
+  the 184 public Who&When failure traces (126 algorithm-generated, 58
+  hand-crafted; MIT) into ingestable ATIF runs plus reference labels, and scores
+  AGR's attribution under the benchmark's own agent/step/both protocol. A
+  `BenchmarkManifest` records provenance, coverage and limits, and **declares
+  AGR's single-prediction rule before scoring** — its highest-ranked negative
+  selected moment — so AGR's best of five never poses as one prediction.
+  Mapping is exact and 1:1: every `history` entry is one ATIF step, so
+  `mistake_step = k` anchors step `s{k+1}`; reference labels never enter the
+  reviewer-visible document; a terminal turn's literal `exitcode: N` is read
+  into the step (the only failure signal a source without structured tool
+  metadata offers); and no verifier is invented, so those runs ingest as "Task
+  success unverified". Scoring keeps errors and abstentions in the denominator
+  with zero credit, and reports step/agent/both accuracy with explicit
+  numerators and denominators for EV-4's scoped wording. On the
+  algorithm-generated split the deterministic baseline is an honest floor
+  (step 0/126, agent 14/126, 76% abstention): its detectors flag the tool-failure
+  step while the human label marks the earlier reasoning step — the gap the
+  model reviewer (GR-1) exists to close.
+- **Evidence-integrity audit (`agr audit-integrity <run_id>`).** Consolidates the
+  grounding checks the reviewer already ran — event-reference validity, quote
+  authenticity, structured-fact recomputation, rejected proposals — into one
+  report for a served review, and states what they *cover*. It exists to enforce
+  the honest rule that **zero mechanical failures is not zero fabricated facts**:
+  free-form prose is reported as an unchecked narrative unit, never as verified.
+  Problems are classified as contradicted facts, unsupported factual assertions,
+  or unsupported interpretations, and coverage is the share of assertion-like
+  units the automated checks can test (`agr/integrity.py`; evaluation strategy
+  §2 / EV-2). Displayed claims and rejected proposals are reported in separate
+  scopes, so a moment dropped for a failed fact or dangling reference cannot read
+  as "zero contradicted facts"; coverage counts only facts the grounding layer
+  actually recomputed (an unrecomputable fact is an unchecked claim, not
+  coverage); invalid identifiers in prose are reported separately from quote
+  mismatches, backed by a distinct `prose_references` gate result so a failed
+  quote is never double-counted as a prose-reference failure. Older stored
+  reviews that predate that signal and carry both failures report the
+  prose-reference result as **unknown** rather than a verified zero. Pure
+  stdlib, no model call. The strategy itself is now versioned at
+  `docs/evaluation-strategy.md`.
 - **GR-4 pre-computed demo reviews.** `agr demo` now builds the demo from the
   **real Terminal-Bench runs** and their **pre-computed model reviews** instead
   of a synthetic slice alone: the baked snapshots are installed into each run's
@@ -143,6 +184,22 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Fixed
 
+- **GR-3: a model review no longer erases an existing finding's mechanical
+  category.** The prompt tells the model reviewer to *reuse packet
+  candidate_ids when judging existing candidates*, but `run_reviewer` stamped
+  every resulting moment with `detector="model"`. `agr.read` derives a moment's
+  idea category from its detector's behaviour tags, and `"model"` has none — so
+  the moment a model reviewed a run, the mechanically supported category (e.g. a
+  recovery's *Good recovery from a failed plan*, with its `mechanical` basis and
+  *Supported recovery* label) silently disappeared, leaving only the model's own
+  tag. `_effective_detector` now keeps the deterministic detector for a model
+  moment that names a real candidate, so the category is the union the idea asks
+  for while genuinely novel model moments (`sem_1` …) still read as `model`.
+  Inheriting is gated on the model moment still *representing* that candidate
+  (same kind and polarity, the detector's own anchors retained, and every
+  detector fact retained), so a model that reuses the id but changes the finding
+  or re-anchors it at another step never gets the detector's mechanical category
+  or *Supported recovery* label.
 - **Runs page control bar redesigned: orientation before controls, chip
   counts, and the "More filters" wrap bug fixed at its root.** Follow-up UX
   pass on the Runs page (mocked up first as a Design canvas, then built):

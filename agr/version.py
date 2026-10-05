@@ -256,3 +256,14 @@ RECOVERY_VERSION = "recovery-0.12"
 # logical runs, active captures) every later stage's counts must reconcile
 # against. See agr/corpus_manifest.py.
 CORPUS_MANIFEST_VERSION = "corpus-manifest-0.1"
+
+# Attribution-benchmark evaluation (EV-1). A benchmark manifest freezes what a
+# benchmark IS and how AGR maps onto its protocol; a result record references
+# both stamps so a score is auditable against the dataset version, the label
+# provenance, the declared single-prediction rule, and the scoring code that
+# produced it. Bump BENCHMARK_EVAL_VERSION when a metric's definition or
+# denominator changes — two differently-defined accuracy numbers are not
+# comparable.
+BENCHMARK_MANIFEST_VERSION = "benchmark-manifest-0.1"
+BENCHMARK_EVAL_VERSION = "benchmark-eval-0.2"
+BENCHMARK_RUN_MANIFEST_VERSION = "benchmark-run-0.2"

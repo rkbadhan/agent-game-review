@@ -1,0 +1,31 @@
+{
+  "history": [
+    {
+      "role": "human",
+      "content": "Where can I take martial arts classes within a five-minute walk from the New York Stock Exchange?"
+    },
+    {
+      "role": "Orchestrator (thought)",
+      "content": "Initial plan: have the WebSurfer search for nearby martial arts studios."
+    },
+    {
+      "role": "Orchestrator (-> WebSurfer)",
+      "content": "Search for martial arts classes within a five-minute walk from the New York Stock Exchange."
+    },
+    {
+      "role": "WebSurfer",
+      "content": "I clicked the first result and found one studio nearby."
+    },
+    {
+      "role": "Orchestrator (termination condition)",
+      "content": "The request appears satisfied."
+    }
+  ],
+  "question": "Where can I take martial arts classes within a five-minute walk from the New York Stock Exchange?",
+  "ground_truth": "A studio within five minutes of the NYSE",
+  "is_corrected": true,
+  "question_ID": "00000000-0000-0000-0000-0000000000bb",
+  "mistake_agent": "WebSurfer",
+  "mistake_step": "3",
+  "mistake_reason": "The WebSurfer stopped at the first search result instead of checking whether it was within five minutes."
+}

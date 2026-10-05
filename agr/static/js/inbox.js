@@ -55,8 +55,12 @@ function setEntryPreference(v) {
 }
 // Position of the current run within the active frozen queue, for the §4.2 header.
 // One-based for display; null when the run is not part of the current queue view.
-function queuePosition() {
+function activeQueueIds() {
   const ids = (state.queue && state.queue.run_ids) || [];
+  return state.importRunIds ? ids.filter(id => state.importRunIds.has(id)) : ids;
+}
+function queuePosition() {
+  const ids = activeQueueIds();
   const i = ids.indexOf(state.runId);
   return i >= 0 ? { index: i + 1, total: ids.length } : null;
 }
@@ -113,7 +117,7 @@ function renderSweep() {
   titleRow.append(el("span", "count-pill", String(s.total_runs)));
   host.append(titleRow);
   host.append(el("div", "sweep-name", detail));
-  $("#crumb-sweep").textContent = sweep;
+  $("#crumb-sweep").textContent = (typeof activeProject === "function" && activeProject() ? activeProject().name : sweep);
   const bo = s.by_outcome || {};
   const stats = el("div", "sweep-stats");
   const stat = (cls, n, lbl) => { const d = el("div", "sweep-stat " + cls); d.append(el("strong", null, String(n)), el("span", null, lbl)); return d; };
@@ -292,7 +296,7 @@ function renderQueueControls() {
 // them (see app.css's .sr-only comment) even though a sighted reader now
 // sees only the small state icon at the row's end.
 function renderRunList() {
-  const list = $("#run-list"), runs = (state.queue && state.queue.runs) || [];
+  const list = $("#run-list"), runs = ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
   list.textContent = "";
   if (!runs.length) { list.append(el("div", "empty", "No runs match this queue.")); return; }
   for (const r of runs) {

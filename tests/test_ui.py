@@ -15,6 +15,7 @@ import contextlib
 import glob
 import json
 import os
+from pathlib import Path
 import socket
 import threading
 import time
@@ -46,8 +47,10 @@ def _find_chromium():
     if not root:
         return None
     for pat in ("chromium-*/chrome-linux/chrome",
+                "chromium-*/chrome-linux64/chrome",
                 "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
-                "chromium-*/chrome-win/chrome.exe"):
+                "chromium-*/chrome-win/chrome.exe",
+                "chromium-*/chrome-win64/chrome.exe"):
         hits = sorted(glob.glob(os.path.join(root, pat)))
         if hits:
             return hits[-1]
@@ -74,8 +77,13 @@ def _page(browser, **kwargs):
     return browser.new_page(**kwargs)
 
 
+def _open_review(page, base):
+    """Enter the first review explicitly; bare URLs now open project Home."""
+    page.goto(base + "/?view=review")
+
+
 @contextlib.contextmanager
-def _serving(store_root, read_only=False):
+def _serving(store_root, read_only=False, **app_options):
     """Serve one store on a free port for the duration of a test."""
     import uvicorn
 
@@ -84,7 +92,7 @@ def _serving(store_root, read_only=False):
     port = sock.getsockname()[1]
     sock.close()
 
-    config = uvicorn.Config(create_app(store_root, read_only=read_only), host="127.0.0.1", port=port,
+    config = uvicorn.Config(create_app(store_root, read_only=read_only, **app_options), host="127.0.0.1", port=port,
                             log_level="warning")
     srv = uvicorn.Server(config)
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -115,6 +123,87 @@ def server(tmp_path):
         _analyzed(store, name)
     with _serving(root) as base:
         yield base
+
+
+def test_default_entry_opens_project_home(server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.get_by_role("heading", name="Existing runs", exact=True).wait_for()
+        assert _query(page.url)["view"] == ["home"]
+        assert page.query_selector(".run-header") is None
+        page.click("#runs-button")
+        page.wait_for_selector(".runs-table-card")
+        assert page.locator(".runs-row").count() == 2
+        browser.close()
+
+
+def test_fresh_workspace_welcome_creates_project_and_lists_sources(tmp_path):
+    root = str(tmp_path / "fresh")
+    with _serving(root) as base, sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(base)
+        page.get_by_role("heading", name="Understand what your agent did", exact=True).wait_for()
+        page.get_by_label("Project name", exact=True).fill("Engineer project")
+        page.get_by_role("button", name="Create project", exact=True).click()
+        page.get_by_role("heading", name="Add runs to Engineer project", exact=True).wait_for()
+        assert _query(page.url)["project"]
+        page.click("#sources-button")
+        page.get_by_role("heading", name="Bring runs in from your tools", exact=True).wait_for()
+        assert page.locator(".source-card").count() == 7
+        browser.close()
+
+
+def test_corrupt_workspace_still_opens_shared_existing_run(tmp_path):
+    root = str(tmp_path / "store")
+    _analyzed(Store(root), "chess_best_move.atif.json")
+    with _serving(root) as base, sync_playwright() as pw:
+        (Path(root) / ".workspace" / "workspace.json").write_text("broken json", encoding="utf-8")
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/?run=" + CHESS)
+        _wait_chip(page, "Overview")
+        assert page.locator("#add-runs-button").is_disabled()
+        assert page.locator("#sources-button").is_disabled()
+        assert not errors
+        browser.close()
+
+
+def test_remote_session_survives_import_download_and_reload(tmp_path):
+    root = str(tmp_path / "store")
+    with _serving(root, require_session=True, session_token="browser-session") as base, sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser, accept_downloads=True)
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base)
+        page.get_by_text("Open the session link printed by agr serve", exact=False).wait_for()
+        page.goto(base + "/#agr-session=browser-session")
+        page.get_by_label("Project name", exact=True).fill("Session project")
+        page.get_by_role("button", name="Create project", exact=True).click()
+        page.get_by_role("heading", name="Add runs to Session project", exact=True).wait_for()
+        assert "agr-session" not in page.url
+        page.get_by_role("button", name="Custom ATIF", exact=False).click()
+        page.get_by_label("Choose files", exact=True).set_input_files(os.path.join(FIXTURES, "chess_best_move.atif.json"))
+        page.get_by_role("button", name="Preview selected runs", exact=True).click()
+        page.get_by_role("button", name="Import selected runs", exact=False).click()
+        page.get_by_text("completed", exact=False).first.wait_for()
+        page.get_by_text("Original input files", exact=True).click()
+        with page.expect_download() as downloaded:
+            page.locator(".engineer-original").first.click()
+        assert downloaded.value.suggested_filename == "chess_best_move.atif.json"
+        page.click("#home-button")
+        page.get_by_role("heading", name="Session project", exact=True).wait_for()
+        page.reload()
+        page.get_by_role("heading", name="Session project", exact=True).wait_for()
+        page.click("#sources-button")
+        page.get_by_role("heading", name="Bring runs in from your tools", exact=True).wait_for()
+        assert not errors
+        browser.close()
 
 
 def _grounded_facts(envelope_moment):
@@ -224,7 +313,7 @@ def test_version_comparison_surface(versions_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(versions_server)
+        _open_review(page, versions_server)
         page.wait_for_selector(".run-header")
 
         # The comparison is a surface of its own, reachable from the app bar.
@@ -299,7 +388,7 @@ def test_read_only_mode_hides_save_comparison(tmp_path):
         with sync_playwright() as pw:
             browser = _launch(pw)
             page = _page(browser)
-            page.goto(base)
+            _open_review(page, base)
             page.wait_for_selector(".run-header")
 
             page.click("#versions-button")
@@ -324,7 +413,7 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")  # boot still auto-opens the first run
 
         page.click("#runs-button")
@@ -459,7 +548,7 @@ def test_boot_landing_on_a_run_does_not_push_a_spurious_history_entry(server):
         browser = _launch(pw)
         page = _page(browser)
         count_history_calls(page)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")
         assert page.evaluate("() => window.__pushCalls") == 0
 
@@ -482,7 +571,7 @@ def test_browser_back_restores_workspace_and_run_destinations(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")
         first_run = _query(page.url)["run"][0]
 
@@ -519,7 +608,7 @@ def test_browser_back_to_runs_refreshes_the_table_under_restored_filters(server)
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")
 
         # An unfiltered Runs page goes on the history stack first.
@@ -565,7 +654,7 @@ def test_patterns_surface_representative_episodes_and_argument_shapes(patterns_s
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(patterns_server)
+        _open_review(page, patterns_server)
         page.wait_for_selector(".run-header")
 
         page.click("#fleet-button")
@@ -606,7 +695,7 @@ def test_execution_quality_matrix_expands_to_the_runs_behind_it(patterns_server)
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(patterns_server)
+        _open_review(page, patterns_server)
         page.wait_for_selector(".run-header")
 
         page.click("#fleet-button")
@@ -685,7 +774,7 @@ def test_patterns_regrouping_mid_load_lands_on_the_latest_choice(patterns_server
             return origFetch(url, opts);
           };
         """)
-        page.goto(patterns_server)
+        _open_review(page, patterns_server)
         page.wait_for_selector(".run-header")
 
         page.click("#fleet-button")
@@ -732,7 +821,7 @@ def test_overview_main_finding_is_the_most_prominent_element_and_opens_evidence(
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".finding-card")  # boot lands on Overview by default
 
         title = page.query_selector(".main-finding-title")
@@ -753,7 +842,7 @@ def test_workspace_and_full_trace(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
 
         page.wait_for_selector(".run")
         assert len(page.query_selector_all(".run")) == 2
@@ -898,7 +987,7 @@ def test_zero_count_filter_chips_are_not_oversized(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         # The sidebar's filter chips sit behind a collapsed-by-default
         # "Filter" disclosure — open it first.
         page.click(".queue-filter-disclosure summary")
@@ -925,7 +1014,7 @@ def test_triage_inbox_disposition_and_feedback(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         # The sweep summary and filter chips sit behind a collapsed-by-
         # default "Filter" disclosure — open it first.
         page.click(".queue-filter-disclosure summary")
@@ -978,7 +1067,7 @@ def test_rapid_run_switch_never_lets_a_stale_response_win(server):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
 
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
         # Delay chess's own API responses so they resolve well AFTER
         # greeting's — the out-of-order race this bug is about. Done entirely
@@ -1034,7 +1123,7 @@ def test_annotation_actions_disabled_while_a_newer_selection_is_loading(server):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
 
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
         page.click('.outline > .ochip:has-text("Key moments")')
@@ -1082,7 +1171,7 @@ def test_disposition_shortcut_honors_the_same_loading_guard_as_its_button(server
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
 
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
         page.wait_for_selector(".bottom-bar button:has-text('Set disposition')")
@@ -1138,7 +1227,7 @@ def test_entry_preference_chooses_where_a_run_opens(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
 
         # Default: opening a run lands on Overview.
@@ -1174,7 +1263,7 @@ def test_header_run_stepper_walks_the_queue(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")
 
         assert "of 2" in page.query_selector(".run-stepper .step-label").inner_text().lower()
@@ -1199,7 +1288,7 @@ def test_first_session_guidance_and_glossary(server):
         browser = _launch(pw)
         # A raw page (empty storage) — the overlay must still not appear.
         page = browser.new_page()
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
         assert page.query_selector("#intro-modal.open") is None
 
@@ -1253,7 +1342,7 @@ def test_tier3_correction_and_instrumentation(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".trace-chip")
         page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card")
@@ -1308,7 +1397,7 @@ def test_review_position_is_shareable_in_the_url(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run-header")
 
         # The default landing (Overview) is addressable; stepping into Key
@@ -1389,7 +1478,7 @@ def test_compare_surface_names_the_sides_it_is_comparing(compare_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(compare_server)
+        _open_review(page, compare_server)
         page.wait_for_selector(".run-header")
 
         # Two reviews exist, so comparing them is reachable through the unified
@@ -1442,7 +1531,7 @@ def test_side_panels_resize_and_remember(server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser, viewport={"width": 1600, "height": 900})
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
 
         def width(name):
@@ -1537,7 +1626,7 @@ def test_read_only_mode_hides_write_controls(read_only_lesson_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(read_only_lesson_server)
+        _open_review(page, read_only_lesson_server)
 
         page.wait_for_selector(".run")
         page.click(f'.run[data-run-id="{CHESS}"]')
@@ -1572,7 +1661,7 @@ def test_eval_lesson_lifecycle_and_experiment(lesson_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(lesson_server)
+        _open_review(page, lesson_server)
         page.wait_for_selector(".trace-chip")
         page.click('.outline > .ochip:has-text("Key moments")')
         page.wait_for_selector(".moment-card")
@@ -1626,7 +1715,7 @@ def test_not_reviewable_capture_says_why(not_reviewable_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(not_reviewable_server)
+        _open_review(page, not_reviewable_server)
         page.wait_for_selector(".run")
         page.click(".run")
         page.click('.outline > .ochip:has-text("Overview")')
@@ -1654,7 +1743,7 @@ def test_fresh_unconfirmed_import_opens_every_chapter(server):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
 
-        page.goto(server)
+        _open_review(page, server)
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="greeting_report__seed7"]')
 
@@ -1723,7 +1812,7 @@ def test_outcome_headlines_are_honest_for_undetermined_and_unverified(server, tm
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
 
-            page.goto(extra)
+            _open_review(page, extra)
             page.wait_for_selector(".run")
             page.click('.run[data-run-id="undetermined__seed9"]')
             page.click('.outline > .ochip:has-text("Overview")')
@@ -1771,7 +1860,7 @@ def test_missing_outcome_never_defaults_to_passed(tmp_path):
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
 
-            page.goto(extra)
+            _open_review(page, extra)
             page.wait_for_selector(".run")
             page.click(f'.run[data-run-id="{CHESS}"]')
             page.wait_for_selector(".run-verdict")
@@ -1832,7 +1921,7 @@ def test_superseded_check_never_makes_a_reconciled_pass_read_as_failed(tmp_path)
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
 
-            page.goto(extra)
+            _open_review(page, extra)
             page.wait_for_selector(".run")
 
             # Run list: already reads rv.outcome.status server-side.
@@ -1908,7 +1997,7 @@ def test_moment_card_shows_grounded_alternatives_by_kind(alternatives_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(alternatives_server)
+        _open_review(page, alternatives_server)
 
         page.wait_for_selector(".run")
         page.click(f'.run[data-run-id="{CHESS}"]')
@@ -1946,7 +2035,7 @@ def test_moment_card_shows_supported_recovery_category_and_basis(recovery_server
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(recovery_server)
+        _open_review(page, recovery_server)
 
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="solve_task__recovered"]')
@@ -1987,7 +2076,7 @@ def test_moment_card_shows_every_category_with_its_own_basis(multi_category_serv
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(multi_category_server)
+        _open_review(page, multi_category_server)
 
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="solve_task__recovered"]')
@@ -2022,7 +2111,7 @@ def test_neutral_label_without_a_category_still_shows_its_basis(neutral_label_se
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(neutral_label_server)
+        _open_review(page, neutral_label_server)
 
         page.wait_for_selector(".run")
         page.click(f'.run[data-run-id="{CHESS}"]')
@@ -2061,7 +2150,7 @@ def test_review_header_shows_precomputed_reviewer_model_and_date(review_meta_ser
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(review_meta_server)
+        _open_review(page, review_meta_server)
 
         page.wait_for_selector(".run")
         page.click(f'.run[data-run-id="{CHESS}"]')
@@ -2091,7 +2180,7 @@ def test_review_header_labels_a_demo_contract_override(demo_override_server):
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
-        page.goto(demo_override_server)
+        _open_review(page, demo_override_server)
 
         page.wait_for_selector(".run")
         page.click(".run")
