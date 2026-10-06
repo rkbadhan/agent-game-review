@@ -2,7 +2,7 @@
 
 This directory is the **gold review set** the spec sequences *before* the model
 reviewer (spec §15, §20 Milestone 0, principle #11). It is the ground truth the
-reviewer evaluation harness (`agr/reviewer_eval.py`) scores any reviewer against
+reviewer evaluation harness (`legacy/reviewer_eval.py`) scores any reviewer against
 — today the deterministic detector baseline, tomorrow the M4 model reviewer,
 through the same harness and the same metrics.
 
@@ -17,15 +17,15 @@ through the same harness and the same metrics.
 ## Files
 
 - `<run_id>.gold.json` — one gold trajectory per logical run, validated by
-  `agr.gold.GoldSet.validate` against `agr/gold.py` and against the run's
+  `legacy.gold.GoldSet.validate` against `legacy/gold.py` and against the run's
   immutable source (every step id must exist in the source).
 
-## The record (`agr.gold`)
+## The record (`legacy.gold`)
 
 A `GoldTrajectory` carries one or more `GoldAnnotation`s. More than one means the
 trajectory was **double-labelled**; then an `adjudicated` annotation records the
 resolved truth used for scoring. Disagreement between annotators is *reported,
-not erased* (`agr.gold.disagreement_report`).
+not erased* (`legacy.gold.disagreement_report`).
 
 Each `GoldMoment` follows the §15.2 protocol:
 
@@ -69,6 +69,6 @@ double-labelled and adjudicated; disagreement is reported.
 ## Validate
 
 ```bash
-python3 -m agr eval            # ingests fixtures, scores the baseline, prints metrics
-python3 -c "from agr.gold import load_gold_set; load_gold_set('gold').validate()"
+python3 -m legacy eval            # ingests fixtures, scores the baseline, prints metrics
+python3 -c "from legacy.gold import load_gold_set; load_gold_set('gold').validate()"
 ```

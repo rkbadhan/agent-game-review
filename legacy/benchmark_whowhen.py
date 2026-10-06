@@ -39,7 +39,7 @@ import os
 import re
 from typing import Any, Optional
 
-from .adapter import apply_capability_defaults
+from agr.adapter import apply_capability_defaults
 from .benchmark import BenchmarkCase, BenchmarkManifest
 from .gold import GoldAnnotation, GoldMoment, GoldTrajectory
 

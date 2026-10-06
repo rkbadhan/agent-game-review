@@ -254,7 +254,7 @@ RECOVERY_VERSION = "recovery-0.12"
 # corpus root — source locations/checksums, logical run ids, capture ids, and
 # the counting-stage definitions (discovered trials, ingested captures,
 # logical runs, active captures) every later stage's counts must reconcile
-# against. See agr/corpus_manifest.py.
+# against. See legacy/corpus_manifest.py.
 CORPUS_MANIFEST_VERSION = "corpus-manifest-0.1"
 
 # Attribution-benchmark evaluation (EV-1). A benchmark manifest freezes what a

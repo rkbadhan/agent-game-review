@@ -2,8 +2,8 @@
 
 This is the labeling protocol for human annotation of the published
 `eval-runs/` corpus. It complements, and does not replace, the annotation
-schema in `agr/gold.py` (spec §15.2) — this document says *what an annotator
-does*; `agr.gold` says *what the resulting record must look like*.
+schema in `legacy/gold.py` (spec §15.2) — this document says *what an annotator
+does*; `legacy.gold` says *what the resulting record must look like*.
 
 Run `python experiments/terminal_bench/build_corpus_manifest.py` first. The
 manifest it writes (`experiments/terminal_bench/corpus_manifest.json`) is the
@@ -26,7 +26,7 @@ annotation notes rather than silently keeping the label.
 
 ## What to label
 
-For each logical run in the manifest, produce one `agr.gold.GoldAnnotation`
+For each logical run in the manifest, produce one `legacy.gold.GoldAnnotation`
 (§15.2 schema) covering:
 
 ### 1. Episodes (recovery)
@@ -131,7 +131,7 @@ Do **not** set `frozen: true` on a trajectory until:
 1. Its annotation is complete per this protocol.
 2. If it was double-labelled, the two annotations have been adjudicated
    (`GoldTrajectory.adjudicated` is set) and the disagreement report
-   (`agr.gold.disagreement_report`) has been reviewed.
+   (`legacy.gold.disagreement_report`) has been reviewed.
 
 Only `frozen` trajectories are eligible for `GoldSet.independent_human_gold()`
 — the subset AGR-15 scores against. An unfrozen trajectory still loads and

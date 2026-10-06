@@ -9,6 +9,7 @@ site
 docs
 tests
 archive
+legacy
 *.md
 !README.md
 __pycache__

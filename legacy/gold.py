@@ -5,7 +5,7 @@ ahead of the model reviewer itself (§15, §20 Milestone 0, principle #11): you
 cannot accept the reviewer ("Precision@3 and missed-critical targets met on
 held-out labelled traces", §20 M4) without a yardstick that already exists and
 already runs. This module is the schema half of that yardstick; the scoring half
-is :mod:`agr.reviewer_eval`.
+is :mod:`legacy.reviewer_eval`.
 
 A gold record is *human annotation* grounded in the immutable source. Moments
 anchor on **source step ids** (``s1``…``sN``) rather than derived event ids, so a
@@ -32,11 +32,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import version
-from .schema import ATTRIBUTION_LEVELS, _clean
+from agr import version
+from agr.moments import anchor_overlap
+from agr.schema import ATTRIBUTION_LEVELS, _clean
 # Controlled vocabularies (spec §3.4, §9.1, §11) live in one place so the gold
 # schema and the model reviewer validate against the same sets.
-from .taxonomy import (  # re-exported for callers importing these from agr.gold
+from agr.taxonomy import (  # re-exported for callers importing these from legacy.gold
     BEHAVIOUR_TAGS,
     MOMENT_ANCHOR_TYPES,
     MOMENT_POLARITIES,
@@ -53,31 +54,9 @@ class GoldValidationError(ValueError):
 # Annotation provenance (AGR-01). ``human`` is independent expert annotation
 # from source evidence; ``model_draft`` is a model-generated draft label that
 # may seed or speed up annotation but must never silently stand in for it —
-# ``GoldSet.validate`` accepts either, but a scorer (agr.reviewer_eval) must
+# ``GoldSet.validate`` accepts either, but a scorer (legacy.reviewer_eval) must
 # check ``label_source`` before treating a trajectory as independent gold.
 LABEL_SOURCES = {"human", "model_draft"}
-
-
-# --- anchor overlap ----------------------------------------------------------
-
-
-def anchor_overlap(a: set[str], b: set[str], threshold: float = 0.0) -> bool:
-    """True when two anchor step-id sets overlap enough to be "the same moment".
-
-    Matching is by source-step overlap so gold labels and any reviewer's moments
-    compare in the same coordinate space. ``threshold`` is a Jaccard floor;
-    the default (``0.0``) treats any shared step as a match, which is the right
-    default for the short MVP traces (a decisive moment is typically one anchor
-    step). Raise the threshold to demand tighter agreement.
-    """
-    if not a or not b:
-        return False
-    inter = len(a & b)
-    if inter == 0:
-        return False
-    if threshold <= 0.0:
-        return True
-    return inter / len(a | b) >= threshold
 
 
 # --- schema records ----------------------------------------------------------
@@ -364,7 +343,7 @@ class GoldSet:
     def independent_human_gold(self) -> "GoldSet":
         """The subset usable as independent human gold (frozen + human-sourced).
 
-        A scorer (:mod:`agr.reviewer_eval`) should score against this, not
+        A scorer (:mod:`legacy.reviewer_eval`) should score against this, not
         against ``self`` directly, so an unfrozen batch or a model-drafted
         trajectory cannot silently inflate a precision/recall claim.
         """

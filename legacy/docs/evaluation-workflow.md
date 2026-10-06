@@ -2,7 +2,7 @@
 
 ## EV-1 benchmark runs
 
-`agr benchmark who-and-when --data DATA --manifest run.json --out results.json`
+`python -m legacy benchmark who-and-when --data DATA --manifest run.json --out results.json`
 continues to use the Who&When dataset. TRAIL uses an exported local JSON or
 JSONL directory:
 
@@ -33,7 +33,7 @@ endpoint origin (without credentials). A frozen manifest path cannot be reused.
 ## EV-3 human audit
 
 ```text
-agr audit-pack --store .agr-store --out audit-2026-09 --sample-size 30 \
+python -m legacy audit-pack --store .agr-store --out audit-2026-09 --sample-size 30 \
   --double-review-fraction 0.25 --seed 42
 ```
 
@@ -61,7 +61,7 @@ Save completed annotation forms as JSON objects with an `annotations` array.
 Then combine any number of result files:
 
 ```text
-agr publish-evaluation --benchmark-report trail-results.json \
+python -m legacy publish-evaluation --benchmark-report trail-results.json \
   --audit annotations.json --integrity integrity-run-1.json \
   --integrity integrity-run-2.json --out evaluation-report.json
 ```

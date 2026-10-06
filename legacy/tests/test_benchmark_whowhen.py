@@ -15,18 +15,18 @@ from pathlib import Path
 
 import pytest
 
-from agr.benchmark import (
+from legacy.benchmark import (
     AttributionPrediction,
     BenchmarkManifest,
     _resolve_agent,
     score_case,
 )
-from agr.benchmark_whowhen import (
+from legacy.benchmark_whowhen import (
     WHO_WHEN_MANIFEST,
     convert_record,
     load_cases,
 )
-from agr.gold import GoldSet
+from legacy.gold import GoldSet
 from agr.store import Store, validate_run_id
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "whowhen"
@@ -199,8 +199,8 @@ def test_abstention_is_scored_not_skipped():
 
 @pytest.mark.parametrize("directory", [ALG_DIR, HC_DIR])
 def test_run_benchmark_end_to_end(tmp_path, directory):
-    from agr.benchmark import run_benchmark
-    from agr.benchmark_whowhen import WHO_WHEN_ADAPTER
+    from legacy.benchmark import run_benchmark
+    from legacy.benchmark_whowhen import WHO_WHEN_ADAPTER
 
     store = Store(str(tmp_path / "store"))
     result = run_benchmark(WHO_WHEN_ADAPTER, directory, store, analyze_fn=_analyze_shim)
@@ -219,6 +219,6 @@ def _analyze_shim(doc, store, reviewer=None):
 
 
 def test_run_benchmark_reports_undefined_rate_on_empty_set():
-    from agr.benchmark import AttributionSetEval
+    from legacy.benchmark import AttributionSetEval
 
     assert AttributionSetEval().metrics()["step_accuracy"] is None

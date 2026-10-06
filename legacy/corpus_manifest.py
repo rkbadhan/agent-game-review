@@ -65,11 +65,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from . import version
-from .adapter import get_adapter
-from .ingest import ingest
-from .ingest_harbor import iter_trials_detailed
-from .store import Store
+from agr import version
+from agr.adapter import get_adapter
+from agr.ingest import ingest
+from agr.ingest_harbor import iter_trials_detailed
+from agr.store import Store
 
 MANIFEST_VERSION = version.CORPUS_MANIFEST_VERSION
 

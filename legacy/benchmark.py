@@ -15,7 +15,7 @@ Three pieces, deliberately separate:
   mean. A result without this record is not comparable to anything.
 * :class:`BenchmarkCase` — one benchmark item: the trace converted to the ATIF
   document :mod:`agr.ingest` already understands, plus its reference label as a
-  :class:`~agr.gold.GoldTrajectory` in **source-step coordinates**.
+  :class:`~legacy.gold.GoldTrajectory` in **source-step coordinates**.
 * scoring — a benchmark's own protocol, applied honestly. Who&When asks for one
   responsible agent and one decisive step; AGR proposes up to five moments, so
   the manifest declares the single-prediction rule (here: AGR's highest-ranked
@@ -39,9 +39,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
-from . import version
+from agr import version
 from .gold import GoldTrajectory
-from .schema import _clean
+from agr.schema import _clean
 
 
 # --- provenance --------------------------------------------------------------
@@ -182,7 +182,7 @@ def predict_from_store(
     selection order are respected — the top of the reviewer's own ranking, not
     an incidental timeline position.
     """
-    from . import read
+    from agr import read
 
     review = read.get_review(store, case.run_id, reviewer_key=reviewer_key)
     status = review.get("review_status")
@@ -483,7 +483,7 @@ def build_run_manifest(
 
     reviewer: dict[str, Any] = {"kind": "model" if provider else "deterministic"}
     if provider:
-        from .model_reviewer import SYSTEM_PROMPT
+        from agr.model_reviewer import SYSTEM_PROMPT
 
         reviewer.update({
             "provider": provider,
@@ -537,7 +537,7 @@ def run_benchmark(
     keeps the deterministic envelope, whose moments are still real predictions.
     """
     if analyze_fn is None:
-        from .pipeline import analyze as analyze_fn  # type: ignore[assignment]
+        from agr.pipeline import analyze as analyze_fn  # type: ignore[assignment]
 
     cases, warnings = adapter.load_cases(directory, limit=limit)
     scores: list[AttributionCaseScore] = []

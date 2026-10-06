@@ -9,7 +9,7 @@ relying on indirect coverage.
 """
 
 from agr.compare import compare_reviews, _align, _field_diff, _set_field_diff, _attribution_direction
-from agr.reviewer_eval import PredictedMoment
+from agr.moments import PredictedMoment
 
 # A shared forensic view mapping event ids onto source step ids. ``moments_from_review``
 # uses this to translate event-id anchors into the source-step coordinates the

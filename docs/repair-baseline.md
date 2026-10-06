@@ -120,7 +120,7 @@ Each reproduced failure gets a line here and a regression check in its ticket.
       top-k cut is pinned to the reviewer's selection ranking. Abstentions
       (incomplete reviews) stay in the denominator with zero credit;
       fabricated findings on clean passes are counted and named.
-      `agr eval --manifest` publishes versions, gold hashes, adjudication
+      `python -m legacy eval --manifest` publishes versions, gold hashes, adjudication
       status, and the invocation for reproducibility. The Gate B1 HOLD label
       was reconciled with its frozen rule in a dated addendum (correct label:
       GO fails, no REVISE majority); the README now distinguishes historical

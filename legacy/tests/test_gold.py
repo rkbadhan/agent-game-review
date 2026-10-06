@@ -12,12 +12,12 @@ import os
 
 import pytest
 
-from agr import gold
+from legacy import gold
 from agr.pipeline import analyze
 from agr.store import Store
 
-FIXTURES = os.path.join(os.path.dirname(__file__), "..", "archive", "synthetic", "fixtures")
-GOLD = os.path.join(os.path.dirname(__file__), "..", "archive", "synthetic", "gold")
+FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "archive", "synthetic", "fixtures")
+GOLD = os.path.join(os.path.dirname(__file__), "..", "gold", "synthetic")
 
 
 def _load_fixture(name):

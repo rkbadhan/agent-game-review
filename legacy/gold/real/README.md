@@ -2,17 +2,17 @@
 
 This directory holds independent human annotation of the **real** published
 corpus (`eval-runs/`), one `<run_id>.gold.json` file per logical run,
-in the schema defined by `agr/gold.py` (spec §15.2).
+in the schema defined by `legacy/gold.py` (spec §15.2).
 
 ## Status: no labels yet
 
 This directory is a scaffold, not a dataset. As of this commit it holds no
 `*.gold.json` files — human annotation is a separate, scheduled workstream
 (see `experiments/terminal_bench/annotation-protocol.md`), not something a
-coding change can produce. `agr.gold.load_gold_set("gold/real")` returns an
+coding change can produce. `legacy.gold.load_gold_set("legacy/gold/real")` returns an
 empty `GoldSet` until annotation lands; that is the honest state, not a bug.
 
-**Do not treat `archive/synthetic/gold/` as a substitute.** Those are
+**Do not treat `legacy/gold/synthetic/` as a substitute.** Those are
 synthetic reference labels authored for synthetic fixtures, used to pin the
 schema and scoring mechanics (see that directory's own README). They
 demonstrate the schema; they are not evidence about real-world precision or
@@ -28,8 +28,8 @@ recall, and must never be reported as if they were.
    with `label_batch` set to the batch this annotation pass belongs to.
 4. Complete and, where double-labelled, adjudicate a whole batch before
    setting `frozen: true` on its trajectories — see the protocol's Freezing
-   section. `agr.gold.GoldSet.unfrozen_run_ids()` lists what is still
-   in-progress; `agr.gold.GoldSet.independent_human_gold()` is the frozen,
+   section. `legacy.gold.GoldSet.unfrozen_run_ids()` lists what is still
+   in-progress; `legacy.gold.GoldSet.independent_human_gold()` is the frozen,
    human-sourced subset actually usable for scoring (AGR-15).
 
 ## Provenance a reader can check
@@ -39,12 +39,12 @@ Every file here should be loadable and should validate:
 ```bash
 python -c "
 from agr import gold
-gs = gold.load_gold_set('gold/real')
+gs = gold.load_gold_set('legacy/gold/real')
 print(len(gs.trajectories), 'trajectories,', len(gs.unfrozen_run_ids()), 'not yet frozen')
 gs.validate()
 "
 ```
 
 `GoldSet.validate` rejects out-of-vocabulary tags, unknown attribution
-levels, and an unknown `label_source` — see `agr/gold.py` and
+levels, and an unknown `label_source` — see `legacy/gold.py` and
 `agr/taxonomy.py` for the controlled vocabularies.

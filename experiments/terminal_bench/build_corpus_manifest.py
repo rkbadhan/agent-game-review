@@ -18,7 +18,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from agr.corpus_manifest import build_manifest, write_manifest  # noqa: E402
+from legacy.corpus_manifest import build_manifest, write_manifest  # noqa: E402
 
 # The commit the pinned review (docs/AGR final task list) was performed
 # against. Update only when re-pinning the review to a new baseline commit —

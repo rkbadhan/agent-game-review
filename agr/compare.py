@@ -12,11 +12,11 @@ and varies the reviewer, which makes it a reviewer-quality tool in the §15.3
 family rather than a version measurement.
 
 It is the generalization of the §15.3 prediction-vs-gold scoring in
-:mod:`agr.reviewer_eval` from *prediction vs adjudicated gold* to *review vs
+``legacy.reviewer_eval`` from *prediction vs adjudicated gold* to *review vs
 review*. Both sides are now reviewers; neither is assumed adjudicated. The
 alignment algorithm is reused verbatim: anchor-overlap in source-step coordinates
-(:func:`agr.gold.anchor_overlap`) with the greedy unmatched-first ordering
-(:func:`agr.reviewer_eval._best_gold`), so a moment that overlaps both a taken
+(:func:`agr.moments.anchor_overlap`) with the greedy unmatched-first ordering
+(``legacy.reviewer_eval._best_gold``), so a moment that overlaps both a taken
 and a free moment takes the free one before any is flagged redundant.
 
 Pure stdlib, no model calls, deterministic and idempotent: the same two inputs
@@ -29,8 +29,7 @@ from __future__ import annotations
 import hashlib
 from typing import Optional
 
-from .gold import anchor_overlap
-from .reviewer_eval import PredictedMoment, moments_from_review
+from .moments import PredictedMoment, anchor_overlap, moments_from_review
 from .schema import ATTRIBUTION_LEVELS
 
 _ATTR_RANK = {level: i for i, level in enumerate(ATTRIBUTION_LEVELS)}
@@ -57,7 +56,7 @@ def _best_overlap(pred: PredictedMoment, candidates: list[PredictedMoment],
     Greedy unmatched-first: an already-matched candidate is only chosen when no
     unmatched overlapping candidate remains — so a prediction overlapping both a
     taken and a free moment takes the free one, mirroring
-    :func:`agr.reviewer_eval._best_gold` exactly.
+    ``legacy.reviewer_eval._best_gold`` exactly.
     """
     scored = []
     for cand in candidates:
