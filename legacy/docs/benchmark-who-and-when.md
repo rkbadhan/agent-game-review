@@ -1,11 +1,11 @@
 # Attribution benchmark — Who&When (EV-1)
 
-**Status:** adapter + scorer implemented (`agr benchmark who-and-when`).
+**Status:** adapter + scorer implemented (`python -m legacy benchmark who-and-when`).
 **Benchmark:** [Who&When](https://github.com/ag2ai/Agents_Failure_Attribution)
 (ICML 2025), MIT. Dataset also on Hugging Face as `Kevin355/Who_and_When`.
 
 This is the first EV-1 deliverable from
-[`docs/evaluation-strategy.md`](evaluation-strategy.md): reuse an existing,
+[`legacy/docs/evaluation-strategy.md`](evaluation-strategy.md): reuse an existing,
 externally-labelled **failure-attribution** benchmark instead of inventing new
 labels. It answers one of the three questions in that strategy — *did AGR find
 the important error?* — and nothing else.
@@ -37,7 +37,7 @@ same interface once access is arranged.
 ## How AGR maps onto it
 
 Everything that makes the comparison fair is declared in
-`WHO_WHEN_MANIFEST` before any run (`agr/benchmark_whowhen.py`):
+`WHO_WHEN_MANIFEST` before any run (`legacy/benchmark_whowhen.py`):
 
 - **Single-prediction rule.** Who&When expects one decisive step; AGR proposes
   up to five moments. AGR's submission is its **highest-ranked negative
@@ -72,11 +72,11 @@ and abstentions stay in the denominator with zero credit.
 git clone --depth 1 https://github.com/ag2ai/Agents_Failure_Attribution
 
 # deterministic baseline (no credentials, no model calls)
-python -m agr benchmark who-and-when \
+python -m python -m legacy benchmark who-and-when \
     --data "./Agents_Failure_Attribution/Who&When/Algorithm-Generated"
 
 # the model reviewer (needs a 'model-*' extra + a key)
-python -m agr benchmark who-and-when \
+python -m python -m legacy benchmark who-and-when \
     --data "./Agents_Failure_Attribution/Who&When/Hand-Crafted" \
     --provider openai --out report.json
 ```

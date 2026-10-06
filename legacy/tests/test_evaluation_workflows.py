@@ -3,8 +3,8 @@ import json
 import pytest
 
 from agr import read
-from agr.benchmark_trail import TrailAdapter
-from agr.evaluation import build_evaluation_report, create_audit_pack
+from legacy.benchmark_trail import TrailAdapter
+from legacy.evaluation import build_evaluation_report, create_audit_pack
 
 
 def _trail_record():

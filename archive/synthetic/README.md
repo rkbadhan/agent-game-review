@@ -3,16 +3,16 @@
 Everything in this directory is **synthetic reference data** — authored by hand
 to build and test the deterministic core before any real trajectory source
 existed. It is parked here, not deleted, because the test suite still depends
-on it and the `agr eval` baseline harness still scores against it.
+on it and the `python -m legacy eval` baseline harness still scores against it.
 
 ## Contents
 
 - `fixtures/` — six synthetic ATIF runs (chess, recovery, retry,
   ignored-failure, contract-mismatch, clean-pass). Used by the test suite and
-  by `agr demo-store` / `agr eval` (via `--fixtures`).
-- `gold/` — synthetic gold labels for those fixtures, exercising the §15.2
-  annotation schema. **Not expert-adjudicated production data** — see
-  `gold/README.md` for the honesty note.
+  by `agr demo-store` / `python -m legacy eval` (via `--fixtures`).
+- The synthetic gold labels for those fixtures moved to
+  `legacy/gold/synthetic/` with the rest of the gold tooling. **Not
+  expert-adjudicated production data** — see its README for the honesty note.
 - `agr-store/` — a store snapshot ingested from the synthetic fixtures, kept
   for reference. The live store for real runs is the repo-default `.agr-store`.
 

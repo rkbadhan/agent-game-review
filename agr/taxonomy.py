@@ -3,7 +3,7 @@
 Single source of truth for the multi-axis vocabulary the *model* reviewer
 (Stage F) labels moments with: phase, behaviour (negative + positive),
 consequence, root-cause locus, and micro-ability. The deterministic gold schema
-(:mod:`agr.gold`) re-uses the anchor/behaviour/locus/polarity sets from here so
+(``legacy.gold``) re-uses the anchor/behaviour/locus/polarity sets from here so
 the two never drift.
 
 The taxonomy is versioned (``version.TAXONOMY_VERSION``): a moment stores the

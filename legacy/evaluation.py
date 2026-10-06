@@ -16,7 +16,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from . import read
+from agr import read
 
 RUBRIC = {
     "evidence_support": "Does the cited evidence support the explanation? (1-5)",

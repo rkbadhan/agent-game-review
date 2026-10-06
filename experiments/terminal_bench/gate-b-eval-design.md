@@ -64,7 +64,7 @@ The brief's 8 questions, each scored ✅ / ⚠ / ❌ with one-line justification
 Plus recorded measures:
 
 - **decisive-moment recall@3 / precision@3** against the adjudicated gold
-  (via `agr.reviewer_eval.evaluate_run` — step-overlap matching);
+  (via `legacy.reviewer_eval.evaluate_run` — step-overlap matching);
 - time-to-understand (minutes, reader stopwatch, single reader noted);
 - unsupported/misleading claim count;
 - attribution overclaim rate (harness metric).

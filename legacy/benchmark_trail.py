@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from .benchmark import BenchmarkManifest, _NON_ABSTENTION_STATUSES
 from .gold import GoldAnnotation, GoldMoment, GoldTrajectory
-from .ingest_otel import convert
+from agr.ingest_otel import convert
 
 TRAIL_VERSION = "trail-2025-05"
 TRAIL_MANIFEST = BenchmarkManifest(
@@ -188,7 +188,7 @@ class TrailAdapter:
         return cases, warnings
 
     def score_case(self, store, case, *, reviewer_key=None):
-        from . import read
+        from agr import read
         review = read.get_review(store, case.run_id, reviewer_key=reviewer_key)
         gold_pairs = case.meta["trail_spans"]
         gold = [span for span, _ in gold_pairs]

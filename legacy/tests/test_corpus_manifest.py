@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import os
 
-from agr import corpus_manifest, version
+from legacy import corpus_manifest
+from agr import version
 
-REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 EVAL_RUNS = os.path.join(REPO_ROOT, "eval-runs")
 REVIEWED_COMMIT = "dea7af10a0093642362d80abbc7637b2c3c12324"
 

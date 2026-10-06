@@ -1,9 +1,9 @@
 """Reviewer evaluation harness — scoring half of the M0 yardstick (spec §15.3).
 
 The spec builds the reviewer's evaluation set *before* the reviewer (§15, §20 M0,
-principle #11). :mod:`agr.gold` is the schema and ground-truth half; this module
+principle #11). :mod:`legacy.gold` is the schema and ground-truth half; this module
 is the scoring half. It is **reviewer-agnostic**: it scores a list of
-:class:`PredictedMoment` against a :class:`~agr.gold.GoldTrajectory`, regardless
+:class:`PredictedMoment` against a :class:`~legacy.gold.GoldTrajectory`, regardless
 of where the predictions came from. Today the only reviewer that exists is the
 deterministic detector layer, so its projected moments
 (``read.get_review(...)["moments"]``) are the *baseline* — which lets the harness
@@ -34,88 +34,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import version
-from .gold import GoldMoment, GoldSet, GoldTrajectory, anchor_overlap
-from .schema import ATTRIBUTION_LEVELS
+from agr import version
+from .gold import GoldMoment, GoldSet, GoldTrajectory
+from agr.moments import PredictedMoment, anchor_overlap, moments_from_review  # noqa: F401
+from agr.schema import ATTRIBUTION_LEVELS
 
 _ATTR_RANK = {level: i for i, level in enumerate(ATTRIBUTION_LEVELS)}
-
-
-# --- the reviewer-agnostic prediction shape ----------------------------------
-
-
-@dataclass
-class PredictedMoment:
-    """One moment a reviewer surfaced, normalised into gold coordinates.
-
-    ``attribution_ceiling`` is the strongest attribution language the *reviewer*
-    attached to the card. The deterministic baseline never claims more than
-    ``dependency_linked`` (the core's cap; README "relevance is not causality"),
-    so that is the default.
-    """
-
-    moment_id: str
-    anchor_step_ids: list[str]
-    polarity: str = "negative"
-    affected_checks: list[str] = field(default_factory=list)
-    evidence_span_step_ids: list[str] = field(default_factory=list)
-    attribution_ceiling: str = "dependency_linked"
-    # AGR-07: the reviewer's intended ranking for the top-k cut. The review
-    # view orders moments by selection rank; carrying it here keeps the cut on
-    # the reviewer's ranking rather than any incidental timeline order.
-    selection_rank: Optional[int] = None
-    better_action: Optional[str] = None
-
-    @property
-    def anchor_set(self) -> set[str]:
-        return set(self.anchor_step_ids)
-
-
-def moments_from_review(review: dict, forensic: dict) -> list[PredictedMoment]:
-    """Adapt the deterministic ``review["moments"]`` into predictions.
-
-    Uses the forensic view's step→event routing to translate each moment's
-    event-id anchors into source step ids, so predictions compare against gold in
-    the same coordinate space. Moment order is preserved (the review orders
-    moments by timeline), which is the order the top-k cut respects.
-    """
-    step_of_event: dict[str, str] = {}
-    for row in forensic.get("steps", []):
-        for eid in row.get("event_ids", []):
-            step_of_event[eid] = row["step_id"]
-
-    out: list[PredictedMoment] = []
-    for m in review.get("moments", []):
-        # Map each event-id anchor onto its source step. Keep any id we cannot
-        # ground as-is, so an unmappable anchor stays a *visible* (non-matching)
-        # prediction — counted against precision — rather than silently vanishing.
-        steps = _dedupe(step_of_event.get(e, e) for e in m.get("anchor_event_ids", []))
-        out.append(PredictedMoment(
-            moment_id=m.get("moment_id", ""),
-            anchor_step_ids=steps,
-            polarity=m.get("polarity", "negative"),
-            affected_checks=list(m.get("affected_checks", [])),
-            # The deterministic reviewer cites its anchors as the evidence span.
-            evidence_span_step_ids=steps,
-            attribution_ceiling=m.get("attribution_ceiling", "dependency_linked"),
-            # AGR-07: the reviewer's own selection ranking drives the top-k cut.
-            selection_rank=m.get("selection_rank"),
-            better_action=m.get("better_action"),
-        ))
-    # The top-k cut must respect the reviewer's intended ranking (AGR-07) —
-    # rank order when ranks exist, never an incidental timeline order.
-    out.sort(key=lambda p: (p.selection_rank is None, p.selection_rank or 0))
-    return out
-
-
-def _dedupe(it) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in it:
-        if x not in seen:
-            seen.add(x)
-            out.append(x)
-    return out
 
 
 # --- per-run evaluation ------------------------------------------------------
@@ -408,7 +332,7 @@ def predicted_from_store(store, run_id: str) -> list[PredictedMoment]:
     them. This is the reviewer the harness scores until the M4 model reviewer
     exists; the model reviewer will produce :class:`PredictedMoment`s the same way.
     """
-    from . import read
+    from agr import read
     review = read.get_review(store, run_id)
     forensic = read.get_forensic(store, run_id)
     return moments_from_review(review, forensic)
@@ -424,8 +348,8 @@ def evaluate_store(store, gold_set: GoldSet, k: int = 3, threshold: float = 0.0)
     review that abstained (no_decisive_moment) is the only abstention that
     earns calibration credit.
     """
-    from .read import RunNotFound
-    from . import read
+    from agr.read import RunNotFound
+    from agr import read
     predictions: dict[str, list[PredictedMoment] | None] = {}
     for traj in gold_set.trajectories:
         try:

@@ -133,7 +133,7 @@ findings.
 1. Correctness blockers + model-led review with explicit statuses. **(done)**
 2. Evidence-integrity audit and its coverage report. **(`agr.integrity`, done)**
 3. Attribution-benchmark adapters + scorers. Who&When and TRAIL are implemented
-   (`agr/benchmark.py`, `agr/benchmark_whowhen.py`, `agr/benchmark_trail.py`).
+   (`legacy/benchmark.py`, `legacy/benchmark_whowhen.py`, `legacy/benchmark_trail.py`).
    TRAIL takes a user-supplied local JSON/JSONL export; gated records are not
    fetched or redistributed. Its High-impact subset is a declared criticality
    proxy. Run the comparison once approved access and exports are available.
@@ -148,5 +148,5 @@ findings.
 | --- | --- |
 | EV-1 data + attribution adapters + scorers | Who&When and local TRAIL adapters/scorers implemented; actual TRAIL run needs gated data; supplementary sets and model cutoff evidence pending |
 | EV-2 evidence-integrity audit + coverage | done (`agr.integrity`) |
-| EV-3 human audit | `agr audit-pack` creates a seeded, stratified blind/revealed packet and rubric; independent human annotation and adjudication remain pending |
-| EV-4 publish scoped conclusions | `agr publish-evaluation` combines supplied benchmark, integrity, and human audit reports with denominators and cluster bootstrap intervals; final evidence and publication remain pending |
+| EV-3 human audit | `python -m legacy audit-pack` creates a seeded, stratified blind/revealed packet and rubric; independent human annotation and adjudication remain pending |
+| EV-4 publish scoped conclusions | `python -m legacy publish-evaluation` combines supplied benchmark, integrity, and human audit reports with denominators and cluster bootstrap intervals; final evidence and publication remain pending |

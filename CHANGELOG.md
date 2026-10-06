@@ -10,6 +10,22 @@ A hardening pass driven by two independent reviews of the deterministic
 core and the model-reviewer safety envelope (commit `82cc113` and this
 follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
+### Changed
+
+- **Gold, benchmark and evaluation tooling moved out of the core package into
+  `legacy/`.** The Who&When and TRAIL adapters, the gold-label schema and
+  reviewer-evaluation harness, the evaluation/audit pack, and the corpus manifest
+  (7 modules, ~2.7k lines, 83 tests) are kept runnable but no longer sit on the
+  main path. `agr eval|benchmark|audit-pack|publish-evaluation` are now stubs that
+  point at `python -m legacy <command>`. The default `pytest` covers the core only;
+  `pytest legacy` runs the legacy tests, and a separate non-blocking workflow runs
+  them nightly. `legacy` imports `agr`, never the reverse. The moment shape and
+  anchor matching that Compare shares with the gold tooling moved to `agr.moments`.
+  **Breaking for callers:** the four old commands exit with code 2, and
+  `python -m legacy` runs only from a repository checkout (repo root, or
+  `PYTHONPATH` set to it); it is not in the installed package, so `benchmark`,
+  `audit-pack` and `publish-evaluation` no longer work from a `pip install`.
+
 ### Added
 
 - **EV-1 attribution benchmark: Who&When adapter + scorer (`agr benchmark

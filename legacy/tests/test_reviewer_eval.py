@@ -11,13 +11,13 @@ criterion "Precision@3 and Recall@3 can be computed" exercised on live output.
 import json
 import os
 
-from agr import gold
-from agr import reviewer_eval as rev
+from legacy import gold
+from legacy import reviewer_eval as rev
 from agr.pipeline import analyze
 from agr.store import Store
 
-FIXTURES = os.path.join(os.path.dirname(__file__), "..", "archive", "synthetic", "fixtures")
-GOLD = os.path.join(os.path.dirname(__file__), "..", "archive", "synthetic", "gold")
+FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "archive", "synthetic", "fixtures")
+GOLD = os.path.join(os.path.dirname(__file__), "..", "gold", "synthetic")
 
 
 def _store(tmp_path):
