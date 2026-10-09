@@ -137,6 +137,8 @@ function render() {
     const snapshot = el("div", "notice callout", "Saved evidence snapshot · " + state.captureId + " · read-only ");
     snapshot.append(workspaceButton("Open latest capture", () => selectRun(state.runId))); main.append(snapshot);
   }
+  if (!state.loading && !state.readOnly && !state.workspace.unavailable)
+    main.append(workspaceButton("Run AI review", () => openAIReview([state.runId])));
   renderInvestigationComposer(main);
 
   if (rv.watermark) { const w = el("div", "watermark callout callout-warn"); w.append(icon("alert-triangle", "watermark-icon"), document.createTextNode(" " + rv.watermark)); main.append(w); }
@@ -294,6 +296,12 @@ function renderShellMeta(rv) {
       wrap.append(statusChip);
     }
   }
+  const configured = (rv.available_review_configurations || {})[rv.reviewer_key];
+  if (configured) {
+    const provenance = el("span", "shell-chip mode-det", "Reviewer: " + configured.model);
+    provenance.title = configured.provider + " · " + configured.base_url;
+    wrap.append(provenance);
+  }
   // GR-4: a pre-computed demo review names its reviewer model and date, so a
   // reader sees the provenance of an offline review (and it is not mistaken for
   // a live model call, which the demo never makes).
@@ -322,12 +330,18 @@ function renderShellMeta(rv) {
       // wraps a segmented tab onto two lines on a narrow screen — the last
       // path segment is enough to tell reviewers apart; the full id is
       // still one hover (or the header's provenance chip) away.
-      const fullModel = key.startsWith("model:") ? key.slice(6) : null;
+      const fullModel = key.startsWith("model:") ? key.slice(6).replace(/#[a-f0-9]{12}$/, "") : null;
+      const config = (rv.available_review_configurations || {})[key];
+      const matching = fullModel && avail.filter(k => k.startsWith("model:") && k.slice(6).replace(/#[a-f0-9]{12}$/, "") === fullModel).length > 1;
+      let destination = config && config.provider;
+      try { if (config && config.base_url) destination = new URL(config.base_url).host; } catch (_) {}
+      const suffix = matching && config ? " · " + destination + " " + String(config.configuration_id || "").slice(0, 4) : "";
       const label = key === "deterministic" ? "Deterministic"
-        : fullModel ? "AI · " + shortModelName(fullModel) : key;
+        : fullModel ? "AI · " + shortModelName(fullModel) + suffix : key;
       const tab = el("button", "seg flip-tab" + (key === active ? " active" : ""), label);
       tab.title = fullModel ? "Serve this reviewer's snapshot of the run (" + fullModel + ")"
         : "Serve this reviewer's snapshot of the run";
+      if (config) tab.title = config.provider + " · " + config.model + " · " + (config.base_url || "provider default");
       tab.addEventListener("click", async () => {
         if (key === state.reviewerKey || (key === active && state.reviewerKey == null)) return;
         state.reviewerKey = key === "deterministic" && avail.includes(active) ? key : (key === active ? null : key);

@@ -100,9 +100,16 @@ class Analysis:
                 f"contract (v{self.contract.contract_version}); not human-confirmed.")
 
 
-def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
+class CaptureChangedError(ValueError):
+    """A review capture was superseded during model work."""
+
+
+def analyze(doc: dict, store: Store, reviewer=None, *, expected_capture_id=None) -> Analysis:
     result: IngestResult = ingest(doc, store)
     rs = result.run_source
+    if expected_capture_id is not None and (rs.source_capture_id != expected_capture_id or
+                                            store.latest_capture_id(rs.run_id) != expected_capture_id):
+        raise CaptureChangedError("This run has a newer capture. Start a new review from the latest run.")
     profile = result.capabilities
 
     events = derive_events(doc, rs)
@@ -264,16 +271,6 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # ``"deterministic"``; a Stage F model reviewer's is ``"model:<source>"``.
     reviewer_key = getattr(reviewer, "reviewer_key", "deterministic")
 
-    # F1 follow-up: per-attempt records persist separately from the CURRENT
-    # error state. ``review_attempts.json`` is the historical log;
-    # ``review_errors.json`` holds only each reviewer's ACTIVE error, so a
-    # successful retry resolves its state instead of history haunting it.
-    prior_errors = store.read_derived(rs.run_id, rs.source_capture_id, "review_errors.json") \
-        if store.has_derived(rs.run_id, rs.source_capture_id, "review_errors.json") else []
-    prior_attempts = store.read_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") \
-        if store.has_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") else []
-    attempt_id = f"att_{len(prior_attempts) + 1:04d}"
-
     partial = Analysis(
         run_source=rs, capabilities=profile, events=events, phases=phases, checks=checks,
         outcome=run_outcome, contract=contract, contract_observations=contract_observations,
@@ -287,122 +284,139 @@ def analyze(doc: dict, store: Store, reviewer=None) -> Analysis:
     # result can legitimately imply. Deterministic; never overrides the result.
     audit = build_audit(partial)
 
-    # Identity + capability profile as first-class derived records so the read
-    # layer (and the forensic view's capability badge, §4.5/§6.2) can consume
-    # them without re-parsing the raw source or recomputing the pipeline.
-    store.write_derived(rs.run_id, rs.source_capture_id, "run_source.json", rs.to_dict())
-    store.write_derived(rs.run_id, rs.source_capture_id, "capabilities.json", profile.to_dict())
-    store.write_derived(rs.run_id, rs.source_capture_id, "signature.json", [s.to_dict() for s in signature])
-    store.write_derived(rs.run_id, rs.source_capture_id, "audit.json", [f.to_dict() for f in audit])
-    store.write_derived(rs.run_id, rs.source_capture_id, "phases.json", [p.to_dict() for p in phases])
-    # events.json is written after phase segmentation so each event carries its phase_id.
-    store.write_derived(rs.run_id, rs.source_capture_id, "events.json", [e.to_dict() for e in events])
-    store.write_derived(rs.run_id, rs.source_capture_id, "checks.json", [c.to_dict() for c in checks])
-    store.write_derived(rs.run_id, rs.source_capture_id, "outcome.json", run_outcome)
-    store.write_derived(rs.run_id, rs.source_capture_id, "opportunities.json", [o.to_dict() for o in opportunities])
-    store.write_derived(rs.run_id, rs.source_capture_id, "recoveries.json", [r.to_dict() for r in recoveries])
-    store.write_derived(rs.run_id, rs.source_capture_id, "evidence_slices.json", [s.to_dict() for s in slices])
-    store.write_derived(
-        rs.run_id, rs.source_capture_id, "detector_results.json", [r.to_dict() for r in detector_results]
-    )
-    store.write_derived(
-        rs.run_id, rs.source_capture_id, "execution_quality.json", execution_quality
-    )
-    # Each reviewer writes only its own slot, so a model pass no longer
-    # destroys the deterministic baseline. The legacy ``review_moments.json`` is
-    # still mirrored as the most-recent review for backward compatibility with
-    # older readers and the CLI eval harness until those are updated.
-    review_payload = [m.to_dict() for m in review_moments]
-    if review_error is None and review_incomplete is not None:
-        # GR-1: an early stop writes no partial model snapshot and records no
-        # review error — the deterministic baseline stands and the attempt
-        # logs 'incomplete' with its reason. Persist that fallback in its own
-        # slot so the default view can honestly serve "the deterministic
-        # baseline" (finding 4) rather than a stale model snapshot.
-        store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
-        prior_attempts.append({
-            "attempt_id": attempt_id,
-            "reviewer_key": reviewer_key,
-            "outcome": "incomplete",
-            "incomplete": review_incomplete,
-        })
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
-    elif review_error is None:
-        store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
-        # F1 follow-up: a successful review RESOLVES this reviewer's active
-        # error — the historical attempt log keeps what happened, but the
-        # current error state no longer reports a failure that a retry fixed.
-        active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
-        prior_attempts.append({
-            "attempt_id": attempt_id,
-            "reviewer_key": reviewer_key,
-            "outcome": "ok",
-            "selected": sum(1 for m in review_moments if m.selected),
-        })
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
-    else:
-        # AGR-06: the model's slot stays EMPTY on failure — the deterministic
-        # baseline (its own slot) is never overwritten, and the error state is
-        # explicit and separate. GR-1: persist the fallback the pipeline just
-        # computed as the deterministic slot too (a run reviewed only by a model
-        # had none), so the default view serves the baseline it claims to serve
-        # instead of a stale model snapshot. The fallback moments still mirror
-        # to the legacy file so older readers see a served review. F1 follow-up:
-        # the error record REPLACES this reviewer's previous active error
-        # (current status per reviewer), and carries the attempt id that failed.
-        store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
-        active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
-        active.append({**review_error, "reviewer_key": reviewer_key, "attempt_id": attempt_id})
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
-        prior_attempts.append({
-            "attempt_id": attempt_id,
-            "reviewer_key": reviewer_key,
-            "outcome": "failed",
-            "error_type": review_error.get("error_type"),
-        })
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
-    if telemetry.get("proposed") is not None or reviewer is not None:
-        record = dict(telemetry)
-        # F1 follow-up: persist the per-attempt provider-round records — the
-        # redaction/redaction-map, per-call latency, and token ESTIMATES
-        # (character-derived; actual provider usage is not available from the
-        # parsed response and is never fabricated).
-        rounds = getattr(reviewer, "telemetry", None) or []
-        # Review 2026-09-07: slice to THIS attempt's rounds (a reused reviewer
-        # carries earlier runs' rounds in its telemetry list) and store the
-        # record under the attempt id — per-attempt telemetry coexists instead
-        # of one latest record overwriting the last.
-        attempt_rounds = rounds[_rounds_before:]
-        if attempt_rounds:
-            record["provider_rounds"] = [dict(r) for r in attempt_rounds]
-            # GR-1: per-review cost (estimated) and latency summed over THIS
-            # attempt's rounds only — a reused reviewer must not double-count.
-            record["cost_estimate_usd"] = round(sum(
-                r.get("cost_estimate_usd") or 0.0 for r in attempt_rounds), 6)
-            record["latency_ms"] = sum(r.get("latency_ms") or 0 for r in attempt_rounds)
-        record["cost_budget_usd"] = getattr(reviewer, "cost_budget_usd", None)
-        record["time_budget_s"] = getattr(reviewer, "time_budget_s", None)
-        record["attempt_id"] = attempt_id
-        store.write_derived(rs.run_id, rs.source_capture_id,
-                            f"review_telemetry/{attempt_id}.json", record)
-        store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", record)
-    store.write_derived(
-        rs.run_id, rs.source_capture_id, "review_moments.json", review_payload
-    )
-    store.write_derived(rs.run_id, rs.source_capture_id, "contract.json", contract.to_dict())
-    # Version trail: the draft, and the confirmed version that superseded it.
-    history = []
-    if contract.contract_version != draft.contract_version:
-        superseded = draft.to_dict()
-        superseded["status"] = "superseded"
-        history.append(superseded)
-    history.append(contract.to_dict())
-    store.write_derived(rs.run_id, rs.source_capture_id, "contract_history.json", history)
-    store.write_derived(
-        rs.run_id, rs.source_capture_id, "contract_observations.json",
-        [o.to_dict() for o in contract_observations],
-    )
+    # Merge attempt history and persist only after provider work has finished.
+    with store.index_lock(rs.run_id):
+        if expected_capture_id is not None and store.latest_capture_id(rs.run_id) != expected_capture_id:
+            raise CaptureChangedError("This run has a newer capture. Start a new review from the latest run.")
+        prior_errors = store.read_derived(rs.run_id, rs.source_capture_id, "review_errors.json") \
+            if store.has_derived(rs.run_id, rs.source_capture_id, "review_errors.json") else []
+        prior_attempts = store.read_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") \
+            if store.has_derived(rs.run_id, rs.source_capture_id, "review_attempts.json") else []
+        attempt_id = f"att_{len(prior_attempts) + 1:04d}"
+
+        # Identity + capability profile as first-class derived records so the read
+        # layer (and the forensic view's capability badge, §4.5/§6.2) can consume
+        # them without re-parsing the raw source or recomputing the pipeline.
+        store.write_derived(rs.run_id, rs.source_capture_id, "run_source.json", rs.to_dict())
+        store.write_derived(rs.run_id, rs.source_capture_id, "capabilities.json", profile.to_dict())
+        store.write_derived(rs.run_id, rs.source_capture_id, "signature.json", [s.to_dict() for s in signature])
+        store.write_derived(rs.run_id, rs.source_capture_id, "audit.json", [f.to_dict() for f in audit])
+        store.write_derived(rs.run_id, rs.source_capture_id, "phases.json", [p.to_dict() for p in phases])
+        # events.json is written after phase segmentation so each event carries its phase_id.
+        store.write_derived(rs.run_id, rs.source_capture_id, "events.json", [e.to_dict() for e in events])
+        store.write_derived(rs.run_id, rs.source_capture_id, "checks.json", [c.to_dict() for c in checks])
+        store.write_derived(rs.run_id, rs.source_capture_id, "outcome.json", run_outcome)
+        store.write_derived(rs.run_id, rs.source_capture_id, "opportunities.json", [o.to_dict() for o in opportunities])
+        store.write_derived(rs.run_id, rs.source_capture_id, "recoveries.json", [r.to_dict() for r in recoveries])
+        store.write_derived(rs.run_id, rs.source_capture_id, "evidence_slices.json", [s.to_dict() for s in slices])
+        store.write_derived(
+            rs.run_id, rs.source_capture_id, "detector_results.json", [r.to_dict() for r in detector_results]
+        )
+        store.write_derived(
+            rs.run_id, rs.source_capture_id, "execution_quality.json", execution_quality
+        )
+        # Each reviewer writes only its own slot, so a model pass no longer
+        # destroys the deterministic baseline. The legacy ``review_moments.json`` is
+        # still mirrored as the most-recent review for backward compatibility with
+        # older readers and the CLI eval harness until those are updated.
+        review_payload = [m.to_dict() for m in review_moments]
+        if review_error is None and review_incomplete is not None:
+            # GR-1: an early stop writes no partial model snapshot and records no
+            # review error — the deterministic baseline stands and the attempt
+            # logs 'incomplete' with its reason. Persist that fallback in its own
+            # slot so the default view can honestly serve "the deterministic
+            # baseline" (finding 4) rather than a stale model snapshot.
+            store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
+            prior_attempts.append({
+                "attempt_id": attempt_id,
+                "reviewer_key": reviewer_key,
+                "outcome": "incomplete",
+                "incomplete": review_incomplete,
+            })
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
+        elif review_error is None:
+            store.write_review(rs.run_id, rs.source_capture_id, reviewer_key, review_payload)
+            # F1 follow-up: a successful review RESOLVES this reviewer's active
+            # error — the historical attempt log keeps what happened, but the
+            # current error state no longer reports a failure that a retry fixed.
+            active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
+            prior_attempts.append({
+                "attempt_id": attempt_id,
+                "reviewer_key": reviewer_key,
+                "outcome": "ok",
+                "selected": sum(1 for m in review_moments if m.selected),
+            })
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
+        else:
+            # AGR-06: the model's slot stays EMPTY on failure — the deterministic
+            # baseline (its own slot) is never overwritten, and the error state is
+            # explicit and separate. GR-1: persist the fallback the pipeline just
+            # computed as the deterministic slot too (a run reviewed only by a model
+            # had none), so the default view serves the baseline it claims to serve
+            # instead of a stale model snapshot. The fallback moments still mirror
+            # to the legacy file so older readers see a served review. F1 follow-up:
+            # the error record REPLACES this reviewer's previous active error
+            # (current status per reviewer), and carries the attempt id that failed.
+            store.write_review(rs.run_id, rs.source_capture_id, "deterministic", review_payload)
+            active = [e for e in prior_errors if e.get("reviewer_key") != reviewer_key]
+            active.append({**review_error, "reviewer_key": reviewer_key, "attempt_id": attempt_id})
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_errors.json", active)
+            prior_attempts.append({
+                "attempt_id": attempt_id,
+                "reviewer_key": reviewer_key,
+                "outcome": "failed",
+                "error_type": review_error.get("error_type"),
+            })
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_attempts.json", prior_attempts)
+        if telemetry.get("proposed") is not None or reviewer is not None:
+            record = dict(telemetry)
+            # F1 follow-up: persist the per-attempt provider-round records — the
+            # redaction/redaction-map, per-call latency, and token ESTIMATES
+            # (character-derived; actual provider usage is not available from the
+            # parsed response and is never fabricated).
+            rounds = getattr(reviewer, "telemetry", None) or []
+            # Review 2026-09-07: slice to THIS attempt's rounds (a reused reviewer
+            # carries earlier runs' rounds in its telemetry list) and store the
+            # record under the attempt id — per-attempt telemetry coexists instead
+            # of one latest record overwriting the last.
+            attempt_rounds = rounds[_rounds_before:]
+            if attempt_rounds:
+                record["provider_rounds"] = [dict(r) for r in attempt_rounds]
+                # GR-1: per-review cost (estimated) and latency summed over THIS
+                # attempt's rounds only — a reused reviewer must not double-count.
+                record["cost_estimate_usd"] = round(sum(
+                    r.get("cost_estimate_usd") or 0.0 for r in attempt_rounds), 6)
+                record["latency_ms"] = sum(r.get("latency_ms") or 0 for r in attempt_rounds)
+            record["cost_budget_usd"] = getattr(reviewer, "cost_budget_usd", None)
+            record["time_budget_s"] = getattr(reviewer, "time_budget_s", None)
+            if getattr(reviewer, "configuration_id", None):
+                record["review_configuration"] = {
+                    "configuration_id": reviewer.configuration_id,
+                    "provider": reviewer.provider, "model": reviewer.model,
+                    "base_url": reviewer.base_url,
+                    "request_timeout_s": reviewer.request_timeout_s,
+                }
+            record["attempt_id"] = attempt_id
+            store.write_derived(rs.run_id, rs.source_capture_id,
+                                f"review_telemetry/{attempt_id}.json", record)
+            store.write_derived(rs.run_id, rs.source_capture_id, "review_telemetry.json", record)
+        store.write_derived(
+            rs.run_id, rs.source_capture_id, "review_moments.json", review_payload
+        )
+        store.write_derived(rs.run_id, rs.source_capture_id, "contract.json", contract.to_dict())
+        # Version trail: the draft, and the confirmed version that superseded it.
+        history = []
+        if contract.contract_version != draft.contract_version:
+            superseded = draft.to_dict()
+            superseded["status"] = "superseded"
+            history.append(superseded)
+        history.append(contract.to_dict())
+        store.write_derived(rs.run_id, rs.source_capture_id, "contract_history.json", history)
+        store.write_derived(
+            rs.run_id, rs.source_capture_id, "contract_observations.json",
+            [o.to_dict() for o in contract_observations],
+        )
 
     return Analysis(
         run_source=rs, capabilities=profile, events=events, phases=phases, checks=checks,

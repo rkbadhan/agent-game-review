@@ -43,6 +43,9 @@ def _find_chromium():
     Playwright's bundled download may not match the browser staged in the
     environment; fall back to any chrome under PLAYWRIGHT_BROWSERS_PATH.
     """
+    override = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if override and os.path.isfile(override):
+        return override
     root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if not root:
         return None
@@ -108,6 +111,8 @@ def _serving(store_root, read_only=False, **app_options):
     finally:
         srv.should_exit = True
         thread.join(timeout=5)
+        srv.config.app.state.workspace.executor.shutdown(wait=True)
+        srv.config.app.state.workspace.review_executor.shutdown(wait=True)
 
 
 def _analyzed(store, name, **kwargs):

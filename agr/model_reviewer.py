@@ -30,6 +30,7 @@ import time
 from typing import Optional
 
 from . import taxonomy, version
+from .userconfig import configuration_id
 from .model_packet import (
     _CHUNK_SUMMARY_MAX_CHARS,
     _PACKET_BUDGET_CHARS,
@@ -56,6 +57,40 @@ class ModelOutputError(RuntimeError):
     provider failure: a malformed response is an explicit enrichment error,
     never silently a "no decisive moment" result.
     """
+
+
+
+class ProviderRequestError(RuntimeError):
+    """Bounded provider failure safe for durable review records."""
+    def __init__(self, exc):
+        status = getattr(exc, "status_code", None)
+        kind = type(exc).__name__.lower()
+        self.status_code = status
+        if status in (401, 403) or "authentication" in kind:
+            self.code = "authentication_failed"
+            message = "The provider rejected authentication. Check the key and model access."
+        elif status == 404:
+            self.code = "model_not_found"
+            message = "The endpoint or model was not found."
+        elif status == 429:
+            self.code = "rate_limited"
+            message = "The provider is rate limited or out of quota."
+        elif "timeout" in kind:
+            self.code = "request_timeout"
+            message = "The provider request timed out."
+        else:
+            self.code = "provider_failed"
+            message = "The provider request failed. Check connectivity, credentials, endpoint, and JSON output support."
+        super().__init__(message)
+
+
+def _safe_complete(reviewer, system: str, user_json: str):
+    try:
+        return reviewer._complete(system, user_json)
+    except (ProviderRequestError, ModelOutputError):
+        raise
+    except Exception as exc:
+        raise ProviderRequestError(exc) from None
 
 
 # GR-1: per-review budget TARGETS, checked at the start of every provider round.
@@ -459,11 +494,15 @@ class _LazyModelReviewer:
 
     def __init__(self, model: str, base_url: Optional[str] = None,
                  cost_budget_usd: Optional[float] = None,
-                 time_budget_s: Optional[float] = None):
+                 time_budget_s: Optional[float] = None,
+                 api_key: Optional[str] = None, request_timeout_s: float = 600.0):
         self.model = model
         self.base_url = base_url
         self._source = f"model:{model}"
-        self.reviewer_key = self._source
+        self.configuration_id = configuration_id({"provider": self.provider or "openai", "model": model, "base_url": base_url})
+        self.reviewer_key = f"{self._source}#{self.configuration_id}"
+        self._api_key = api_key
+        self.request_timeout_s = request_timeout_s
         # GR-1: the per-review budgets and the early-stop state they produce.
         self.cost_budget_usd = (_env_float("AGR_REVIEW_COST_BUDGET_USD", _REVIEW_COST_BUDGET_USD)
                                 if cost_budget_usd is None else cost_budget_usd)
@@ -522,6 +561,7 @@ class _LazyModelReviewer:
     def _record(self, **entry) -> None:
         entry.setdefault("provider", self.provider)
         entry.setdefault("model", self.model)
+        entry.setdefault("configuration_id", self.configuration_id)
         self.telemetry.append(entry)
 
     def _complete(self, system: str, user_json: str) -> dict:  # pragma: no cover - provider I/O
@@ -561,7 +601,7 @@ class _LazyModelReviewer:
                 f"{request_size_chars - budget_chars} chars; the provider was not called")
         t0 = time.monotonic()
         try:
-            payload = self._complete(system, user_json)
+            payload = _safe_complete(self, system, user_json)
         finally:
             self._record(kind=kind, input_chars=len(user_json),
                          input_tokens_est=len(user_json) // 4,
@@ -743,9 +783,11 @@ class AnthropicReviewer(_LazyModelReviewer):
 
     def __init__(self, model: str = "claude-opus-4-8", base_url: Optional[str] = None,
                  cost_budget_usd: Optional[float] = None,
-                 time_budget_s: Optional[float] = None):
+                 time_budget_s: Optional[float] = None,
+                 api_key: Optional[str] = None, request_timeout_s: float = 600.0):
         super().__init__(model, base_url, cost_budget_usd=cost_budget_usd,
-                         time_budget_s=time_budget_s)
+                         time_budget_s=time_budget_s, api_key=api_key,
+                         request_timeout_s=request_timeout_s)
 
     @staticmethod
     def _import_sdk():
@@ -760,7 +802,12 @@ class AnthropicReviewer(_LazyModelReviewer):
 
     def _client(self):
         anthropic = self._import_sdk()
-        return anthropic.Anthropic(base_url=self.base_url) if self.base_url else anthropic.Anthropic()
+        options = {"timeout": self.request_timeout_s}
+        if self.base_url:
+            options["base_url"] = self.base_url
+        if self._api_key:
+            options["api_key"] = self._api_key
+        return anthropic.Anthropic(**options)
 
     def _complete(self, system: str, user_json: str) -> dict:  # pragma: no cover - network
         client = self._client()
@@ -787,9 +834,11 @@ class OpenAIReviewer(_LazyModelReviewer):
 
     def __init__(self, model: str = "gpt-4o", base_url: Optional[str] = None,
                  cost_budget_usd: Optional[float] = None,
-                 time_budget_s: Optional[float] = None):
+                 time_budget_s: Optional[float] = None,
+                 api_key: Optional[str] = None, request_timeout_s: float = 600.0):
         super().__init__(model, base_url or os.environ.get("OPENAI_BASE_URL"),
-                         cost_budget_usd=cost_budget_usd, time_budget_s=time_budget_s)
+                         cost_budget_usd=cost_budget_usd, time_budget_s=time_budget_s, api_key=api_key,
+                         request_timeout_s=request_timeout_s)
 
     @staticmethod
     def _import_sdk():
@@ -804,7 +853,12 @@ class OpenAIReviewer(_LazyModelReviewer):
 
     def _client(self):
         openai = self._import_sdk()
-        return openai.OpenAI(base_url=self.base_url) if self.base_url else openai.OpenAI()
+        options = {"timeout": self.request_timeout_s}
+        if self.base_url:
+            options["base_url"] = self.base_url
+        if self._api_key:
+            options["api_key"] = self._api_key
+        return openai.OpenAI(**options)
 
     def _complete(self, system: str, user_json: str) -> dict:  # pragma: no cover - network
         client = self._client()
@@ -844,7 +898,7 @@ def _loads_lenient(text: str) -> dict:
                 pass
     raise ModelOutputError(
         f"model response was not parsable as a JSON object "
-        f"({len(text)} chars starting {text[:80]!r})"
+        f"({len(text)} chars)"
     )
 
 
@@ -854,7 +908,8 @@ _REVIEWERS = {"anthropic": AnthropicReviewer, "openai": OpenAIReviewer}
 def make_reviewer(provider: str, model: Optional[str] = None,
                   base_url: Optional[str] = None,
                   cost_budget_usd: Optional[float] = None,
-                  time_budget_s: Optional[float] = None) -> Reviewer:
+                  time_budget_s: Optional[float] = None,
+                  api_key: Optional[str] = None, request_timeout_s: float = 600.0) -> Reviewer:
     """Construct a model reviewer by provider name (used by ``agr review``).
 
     ``base_url`` points the adapter at any compatible endpoint — with
@@ -873,6 +928,9 @@ def make_reviewer(provider: str, model: Optional[str] = None,
         kwargs["cost_budget_usd"] = cost_budget_usd
     if time_budget_s is not None:
         kwargs["time_budget_s"] = time_budget_s
+    if api_key:
+        kwargs["api_key"] = api_key
+    kwargs["request_timeout_s"] = request_timeout_s
     reviewer = cls(**kwargs)
     # P0-3: check the provider SDK is importable up front, at construction
     # time — before the pipeline's own catch-all around the review call can
@@ -882,3 +940,13 @@ def make_reviewer(provider: str, model: Optional[str] = None,
     if import_sdk is not None:
         import_sdk()
     return reviewer
+
+
+def test_connection(reviewer):
+    """One explicit synthetic completion; never sends a user's trace."""
+    payload = _safe_complete(reviewer,
+        'Return exactly the JSON object {"moments": []}. This is a connection test, not a trace review.',
+        json.dumps({"self_test": True, "expected": {"moments": []}}))
+    if payload != {"moments": []}:
+        raise ModelOutputError('The endpoint did not return the expected JSON reviewer response.')
+    return True

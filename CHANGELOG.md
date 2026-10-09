@@ -10,7 +10,31 @@ A hardening pass driven by two independent reviews of the deterministic
 core and the model-reviewer safety envelope (commit `82cc113` and this
 follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
+### Added
+
+- **AI review in the local app.** Settings configures the provider, model,
+  endpoint, session-only credentials, and review targets using the same saved
+  defaults as the CLI. An explicit synthetic connection test validates JSON
+  response support without sending a trace. Single-run and selected batch
+  reviews have durable progress, cancellation between runs, history, and
+  retries that preserve successful work. Reviews use a separate worker from
+  imports and reject captures superseded during model work.
+- **Configuration-aware review snapshots.** Provider/model/endpoint identity
+  separates results and determines which successful reviews a batch can skip.
+  The latest successful healthy reviewer becomes the default view, with
+  destination provenance available alongside the model. Matching legacy reviews
+  remain eligible for batch skipping; failed attempts require a retry.
+
 ### Changed
+
+- Reviewer settings now display concrete effective values and their sources.
+  Environment overrides are consistent across provider/model/endpoint/limits;
+  changing providers clears incompatible saved fields. Cost/time targets and
+  per-request timeout can be persisted. Corrupt settings require an explicit
+  repair/reset instead of silently choosing another paid destination. Combined
+  CLI connection tests save only on success. Provider requests default to a
+  600-second timeout and retain SDK transient-error retries.
+  Provider exception text is sanitized before it reaches saved review records.
 
 - **Gold, benchmark and evaluation tooling moved out of the core package into
   `legacy/`.** The Who&When and TRAIL adapters, the gold-label schema and

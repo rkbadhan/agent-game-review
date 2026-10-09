@@ -16,6 +16,10 @@ async function dispatchLocation(want, isBoot) {
   }
   if (isEngineerView(want.view)) {
     state.view = want.view;
+    if (want.reviewJobId) {
+      state.ai.job = await api(projectPath("/ai-reviews/" + encodeURIComponent(want.reviewJobId)));
+      if (["queued", "running", "cancelling"].includes(state.ai.job.status)) pollAIReview();
+    }
     if (want.importId) { state.workspace.job = await api(projectPath("/imports/" + encodeURIComponent(want.importId))); pollImport(); }
     await loadEngineerData(); render(); return;
   }

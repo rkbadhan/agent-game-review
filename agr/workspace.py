@@ -121,6 +121,7 @@ class Workspace:
         self.secrets = {}
         self._stores = {"existing": default_store} if default_store is not None else {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agr-import")
+        self.review_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agr-review")
         self.futures = {}
         with _locks_guard:
             self.lock = _locks.setdefault(str(self.root), threading.RLock())

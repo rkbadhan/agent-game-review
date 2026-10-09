@@ -8,7 +8,13 @@
 //   is identical. Shown only when two or more reviews exist; otherwise the
 //   Compare control stays disabled with an honest tooltip.
 const REVIEW_LABELS = { deterministic: "Deterministic baseline" };
-function reviewerLabel(key) { return REVIEW_LABELS[key] || (key && key.startsWith("model:") ? key.slice(6) : key); }
+function reviewerLabel(key) {
+  if (REVIEW_LABELS[key]) return REVIEW_LABELS[key];
+  if (!key || !key.startsWith("model:")) return key;
+  const model = key.slice(6).replace(/#[a-f0-9]{12}$/, "");
+  const config = ((state.review || {}).available_review_configurations || {})[key];
+  return model + (config && config.base_url ? " · " + config.base_url : "");
+}
 async function renderCompare(main) {
   const avail = (state.review && state.review.available_reviews) || [];
   if (avail.length < 2) {
