@@ -95,7 +95,7 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
 let _lastMajorKey;
 function _majorDestinationKey() {
   const prefix = (state.projectId || "existing") + ":";
-  if (typeof isEngineerView === "function" && isEngineerView(state.view)) return (state.projectId || "existing") + ":" + state.view + ":" + ((state.workspace.job || {}).id || "");
+  if (typeof isEngineerView === "function" && isEngineerView(state.view)) return (state.projectId || "existing") + ":" + state.view + ":" + (((state.view === "ai-review" ? state.ai.job : state.workspace.job) || {}).id || "");
   if (state.view === "versions") return prefix + "versions:" + (state.versions.savedId || "");
   if (state.view === "fleet" || state.view === "runs") return prefix + state.view;
   return prefix + (state.runId ? "run:" + state.runId : "runs");
@@ -113,6 +113,7 @@ function syncUrl() {
   if (typeof isEngineerView === "function" && isEngineerView(state.view)) {
     p.set("view", state.view);
     if (state.view === "import" && state.workspace.job) p.set("import", state.workspace.job.id);
+    if (state.view === "ai-review" && state.ai.job) p.set("review_job", state.ai.job.id);
     _commitUrl(p.toString()); return;
   }
   if (state.view === "runs") {
@@ -184,7 +185,7 @@ function readUrl() {
   if (p.get("axis")) v.axis = p.get("axis");
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
-  return { project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
+  return { project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
     left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

@@ -407,8 +407,17 @@ def _healthy_model_key(store: Store, run_id: str, capture_id: str,
     not resurrect that older slot: when the store records attempts/errors, the
     chosen reviewer must have a latest ``ok`` attempt and no active error.
     """
-    key = next((k for k in store.list_reviews(run_id, capture_id)
-                if k.startswith("model:") and model in k), None)
+    from .review_identity import reviewer_model
+    keys = store.list_reviews(run_id, capture_id)
+    exact = model if model.startswith("model:") else "model:" + model
+    if model.startswith("model:") or reviewer_model(model) != model:
+        key = exact if exact in keys else None
+    else:
+        candidates = [k for k in keys if k.startswith("model:") and reviewer_model(k) == model]
+        if len(candidates) > 1:
+            raise ValueError("Multiple review configurations for " + model +
+                             "; pass the full reviewer key to --model: " + ", ".join(candidates))
+        key = candidates[0] if candidates else None
     if key is None:
         return None
     if store.has_derived(run_id, capture_id, "review_errors.json"):
@@ -438,6 +447,7 @@ def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> 
     so a re-bake can never leave runs or reviews from a previous corpus behind.
     """
     from . import read
+    from .review_identity import reviewer_model
 
     model = model or _DEFAULT_REVIEW_MODEL
     parent = os.path.dirname(os.path.abspath(out_dir)) or "."
@@ -455,7 +465,7 @@ def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> 
             if key is None:
                 continue
             moments = store.read_review_slot(run_id, capture_id, key)
-            reviewer_model = key.split("model:", 1)[1] if key.startswith("model:") else key
+            model_name = reviewer_model(key)
             stem = _safe_name(run_id)
             with open(os.path.join(runs_dir, stem + ".atif.json"), "w", encoding="utf-8") as fh:
                 json.dump(store.read_source(run_id, capture_id), fh, indent=1)
@@ -465,7 +475,7 @@ def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> 
                 "run_id": run_id,
                 "task_id": source.get("task_id"),
                 "reviewer_key": key,
-                "model": reviewer_model,
+                "model": model_name,
                 "reviewed_at": _iso_mtime(store.review_slot_path(run_id, capture_id, key)),
                 "source_hash": source.get("source_hash"),
                 "moment_count": len(moments),

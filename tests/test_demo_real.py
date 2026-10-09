@@ -290,3 +290,21 @@ def test_demo_store_cli_builds_the_real_demo_offline(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "real demo store" in out
     assert "pre-computed" in out
+
+
+def test_bake_selects_full_configuration_key_and_keeps_plain_model_name(tmp_path):
+    import pytest
+    model = "gpt-4o"
+    keys = ["model:gpt-4o#aaaaaaaaaaaa", "model:gpt-4o#bbbbbbbbbbbb"]
+    store = Store(str(tmp_path / "source"))
+    doc = _fixture("chess_best_move.atif.json")
+    for key in keys:
+        analyze(doc, store, reviewer=ScriptedReviewer({"moments": []}, source=key))
+    with pytest.raises(ValueError, match="full reviewer key"):
+        demo.bake_reviews(store, str(tmp_path / "ambiguous"), model=model)
+    out = str(tmp_path / "baked-config")
+    assert demo.bake_reviews(store, out, model=keys[1])["runs"] == 1
+    (review,) = demo._load_json_dir(os.path.join(out, "reviews"))
+    assert review["reviewer_key"] == keys[1]
+    assert review["model"] == model
+    assert demo.bake_reviews(store, str(tmp_path / "partial-model"), model="gpt-4")["runs"] == 0

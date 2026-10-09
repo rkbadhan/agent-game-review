@@ -1,8 +1,8 @@
 "use strict";
 
-const ENGINEER_VIEWS = ["welcome", "home", "sources", "add-runs", "import", "investigations", "settings"];
+const ENGINEER_VIEWS = ["welcome", "home", "sources", "add-runs", "import", "investigations", "settings", "ai-review"];
 function isEngineerView(view) { return ENGINEER_VIEWS.includes(view); }
-function engineerViewTitle(view) { return ({ welcome: "Welcome", home: "Home", sources: "Sources", "add-runs": "Add runs", import: "Import", investigations: "Investigations", settings: "Settings" })[view]; }
+function engineerViewTitle(view) { return ({ welcome: "Welcome", home: "Home", sources: "Sources", "add-runs": "Add runs", import: "Import", investigations: "Investigations", settings: "Settings", "ai-review": "AI review" })[view]; }
 function activeProject() { return state.projects.find(p => p.id === state.projectId); }
 function projectPath(suffix) { return "/projects/" + encodeURIComponent(state.projectId) + suffix; }
 function workspaceButton(text, callback, primary = false) {
@@ -76,6 +76,8 @@ async function switchProject(projectId, navigate = true) {
   state.fleet.loadToken++;
   state.fleet = { groupBy: "tool,error_signature", episodes: null, pending: false, error: null, loadToken: 0, usageSummary: null, executionQuality: null, total: null, hasMore: false, loadingMore: false, argumentShapes: null };
   Object.assign(state.workspace, { detail: null, files: [], preview: null, job: null, error: null, selected: new Set(), busy: false, connectionId: null, connectionForm: null, reviewerDraft: null, projectDraft: null });
+  if (state.ai) { state.ai.token++; state.ai.job = null; state.ai.jobs = []; state.ai.plan = null; state.ai.selected.clear(); state.ai.error = null; }
+  clearTimeout(aiPollTimer);
   closeTrace();
   if (!state.serverReadOnly) await apiPatch("/workspace", { last_project: projectId });
   await loadInbox();
@@ -88,6 +90,7 @@ async function loadEngineerData() {
   const [detail, connections, investigations] = await Promise.all([api(prefix), api(prefix + "/connections"), api(prefix + "/investigations")]);
   if (projectId !== state.projectId || token !== state.workspace.token) return;
   state.workspace.detail = detail; state.workspace.connections = connections.connections; state.workspace.investigations = investigations.investigations;
+  if (state.view === "settings" || state.view === "ai-review") await loadAIReviewData();
 }
 async function goEngineer(view) {
   state.captureId = null;
@@ -112,6 +115,7 @@ function renderEngineerSurface(host) {
   else if (state.view === "import") renderImportJob(wrap);
   else if (state.view === "investigations") renderInvestigations(wrap);
   else if (state.view === "settings") renderWorkspaceSettings(wrap);
+  else if (state.view === "ai-review") renderAIReview(wrap);
   workspaceError(wrap);
   if (state.workspace.busy) {
     const status = el("p", "engineer-status", state.workspace.uploadProgress || "Working…"); status.setAttribute("role", "status"); wrap.append(status);
@@ -387,6 +391,7 @@ function renderWorkspaceSettings(host) {
   }); }); host.append(form);
   host.append(el("p", "engineer-hint", "Connection keys last for the server session. Original input files are retained locally with imports. Hosted login, automatic sync, and external notifications are not enabled."));
   if (!state.serverReadOnly) host.append(workspaceButton(project.archived ? "Restore project" : "Archive project", () => workspaceAction(async () => { const result = await apiPatch(projectPath(""), { archived: !project.archived }); state.projects = state.projects.map(p => p.id === result.id ? result : p); state.readOnly = state.serverReadOnly || !!result.sample || result.archived; })));
+  renderAISettings(host);
   host.append(el("h2", "engineer-section-title", "Automate local imports"));
   host.append(el("p", "engineer-hint", "Run a CLI import against this project's store. The command uses the same adapters and deterministic engine as browser import. The storage path is shown below; source files stay under your control."));
   const storePath = (state.workspace.detail || {}).store_path;

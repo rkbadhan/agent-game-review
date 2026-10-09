@@ -42,6 +42,15 @@ def attach_workspace(app, default_store, read_only, *, allowed_hosts=None, sessi
     workspace = Workspace(default_store.root, read_only, default_store=default_store)
     store = ScopedStore(default_store)
     app.state.workspace = workspace
+    from .ai_review import AIReviewService
+    from .userconfig import ConfigError
+    reviews = AIReviewService(workspace)
+    workspace.ai_reviews = reviews
+
+    @app.exception_handler(ConfigError)
+    async def config_problem(request, exc):
+        return failure(ImportProblem("invalid_configuration", str(exc)))
+
     # Exact host names only: trusting the request's own Host permits DNS rebinding.
     hosts = {"localhost", "127.0.0.1", "::1"}
     for host in allowed_hosts or ():
@@ -154,6 +163,56 @@ def attach_workspace(app, default_store, read_only, *, allowed_hosts=None, sessi
     @app.patch("/workspace")
     def update_settings(payload: dict = Body(...)):
         return workspace.update_settings(payload)
+
+    @app.get("/workspace/ai-review")
+    def ai_settings():
+        return reviews.settings()
+
+    @app.patch("/workspace/ai-review")
+    def save_ai_settings(payload: dict = Body(...)):
+        return reviews.save(payload)
+
+    @app.post("/workspace/ai-review/test")
+    def test_ai_settings(payload: dict = Body(...)):
+        return reviews.test(payload)
+
+    @app.delete("/workspace/ai-review")
+    def reset_ai_settings():
+        if read_only:
+            raise ImportProblem("read_only", "Sample data is read-only.", 403)
+        from .userconfig import clear_config
+        clear_config()
+        reviews.keys.clear()
+        reviews.tests.clear()
+        return reviews.settings()
+
+    @app.delete("/workspace/ai-review/credentials")
+    def forget_ai_credentials():
+        return reviews.forget_key()
+
+    @app.post("/projects/{project_id}/ai-reviews/plan")
+    def ai_plan(project_id: str, payload: dict = Body(...)):
+        return reviews.plan(project_id, payload.get("run_ids"))
+
+    @app.post("/projects/{project_id}/ai-reviews")
+    def start_ai_review(project_id: str, payload: dict = Body(...)):
+        return reviews.submit(project_id, payload)
+
+    @app.get("/projects/{project_id}/ai-reviews")
+    def ai_jobs(project_id: str):
+        return {"jobs": workspace.records("reviews", project_id) if not read_only else []}
+
+    @app.get("/projects/{project_id}/ai-reviews/{job_id}")
+    def ai_job(project_id: str, job_id: str):
+        return workspace.record("reviews", job_id, project_id)
+
+    @app.post("/projects/{project_id}/ai-reviews/{job_id}/cancel")
+    def cancel_ai_review(project_id: str, job_id: str):
+        return reviews.cancel(project_id, job_id)
+
+    @app.post("/projects/{project_id}/ai-reviews/{job_id}/retry")
+    def retry_ai_review(project_id: str, job_id: str):
+        return reviews.retry(project_id, job_id)
 
     @app.get("/sources/catalog")
     def source_catalog():

@@ -360,19 +360,19 @@ def test_review_model_resolves_flag_then_env_then_default(tmp_path, load_fixture
     with pytest.raises(SystemExit):
         cli.cmd_review(_review_args(tmp_path, load_fixture, None))
     assert captured["model"] == "env-model"
-    # GR-1: unset budget flags resolve to None, so the reviewer defaults apply.
-    assert captured["kwargs"] == {"cost_budget_usd": None, "time_budget_s": None}
+    # Unset flags resolve through saved settings/environment to concrete defaults.
+    assert captured["kwargs"] == {"cost_budget_usd": 0.15, "time_budget_s": 90.0, "request_timeout_s": 600.0}
 
     # explicit --model wins over the env var
     with pytest.raises(SystemExit):
         cli.cmd_review(_review_args(tmp_path, load_fixture, "flag-model"))
     assert captured["model"] == "flag-model"
 
-    # neither set -> None, so make_reviewer applies the provider default
+    # Neither set: the resolver reports the actual provider default.
     monkeypatch.delenv("AGR_REVIEW_MODEL", raising=False)
     with pytest.raises(SystemExit):
         cli.cmd_review(_review_args(tmp_path, load_fixture, None))
-    assert captured["model"] is None
+    assert captured["model"] == "gpt-4o"
 
 
 def test_cli_loads_env_file_without_overriding_real_env(tmp_path, monkeypatch):

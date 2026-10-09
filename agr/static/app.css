@@ -1579,3 +1579,12 @@
 .engineer-action-composer summary { cursor:pointer; font-size:13px; font-weight:500; }
 .engineer-surface progress { width:100%; height:12px; accent-color:var(--accent); }
 @media (max-width:640px) { .engineer-heading h1 { font-size:24px; } .engineer-cards, .source-grid { grid-template-columns:1fr; } .engineer-stat-row { grid-template-columns:repeat(2,1fr); } .engineer-card, .preview-item, .upload-zone { padding:18px; } }
+
+/* Optional model review settings and project review jobs. */
+.ai-settings { margin-top: 24px; max-width: 800px; }
+.ai-effective { overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: 12px; line-height: 1.7; }
+.ai-run-option { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; overflow-wrap: anywhere; cursor: pointer; }
+.ai-run-option input { flex: none; margin-top: 4px; }
+.ai-selection, #ai-plan { margin: 16px 0; }
+.ai-run-list { max-height: 360px; overflow-y: auto; }
+.ai-settings .engineer-actions, #ai-plan .engineer-actions { flex-wrap: wrap; }

@@ -764,7 +764,11 @@ def cmd_bake_reviews(args) -> int:
     """
     from . import demo
     store = Store(args.store)
-    result = demo.bake_reviews(store, args.out, model=args.model)
+    try:
+        result = demo.bake_reviews(store, args.out, model=args.model)
+    except ValueError as exc:
+        print(f"cannot bake reviews: {exc}", file=sys.stderr)
+        return 2
     print(f"Baked {result['runs']} review(s) into {result['out_dir']!r} "
           f"(reviewer model {result['model']})")
     print("  runs/    real trajectory sources")
@@ -877,11 +881,12 @@ def cmd_legacy_moved(args) -> int:
 
 def _review_one(store: Store, run_id: str, reviewer):
     """Run the model-enriched pipeline over a run's latest capture (raises on failure)."""
-    capture_id = store.latest_capture_id(run_id)
-    if capture_id is None:
-        raise KeyError(f"run {run_id!r} not found in store")
-    doc = store.read_source(run_id, capture_id)
-    return analyze(doc, store, reviewer=reviewer)
+    with store.index_lock(run_id):
+        capture_id = store.latest_capture_id(run_id)
+        if capture_id is None:
+            raise KeyError(f"run {run_id!r} not found in store")
+        doc = store.read_source(run_id, capture_id)
+    return analyze(doc, store, reviewer=reviewer, expected_capture_id=capture_id)
 
 
 def _review_all(store: Store, reviewer, settings: dict, force: bool = False) -> int:
@@ -893,7 +898,7 @@ def _review_all(store: Store, reviewer, settings: dict, force: bool = False) -> 
         return 1
     done = skipped = failed = 0
     for run_id in run_ids:
-        if not force and _already_enriched(store, run_id):
+        if not force and _already_enriched(store, run_id, reviewer.reviewer_key):
             print(f"  · {run_id} — skipped (already model-enriched; use --force to redo)")
             skipped += 1
             continue
@@ -931,12 +936,14 @@ def _review_all(store: Store, reviewer, settings: dict, force: bool = False) -> 
     return 0
 
 
-def _already_enriched(store: Store, run_id: str) -> bool:
+def _already_enriched(store: Store, run_id: str, reviewer_key=None) -> bool:
     """Does the run's latest capture already carry a model-enriched review slot?"""
     capture_id = store.latest_capture_id(run_id)
     if capture_id is None:
         return False
-    return any(key.startswith("model") for key in store.list_reviews(run_id, capture_id))
+    keys = store.list_reviews(run_id, capture_id)
+    from .review_identity import matching_review_key
+    return bool(matching_review_key(store, run_id, capture_id, reviewer_key)) if reviewer_key else any(key.startswith("model") for key in keys)
 
 
 
@@ -952,7 +959,7 @@ def cmd_review(args) -> int:
     """
     store = Store(args.store)
     from .model_reviewer import make_reviewer
-    from .userconfig import resolve_review_settings
+    from .userconfig import effective_review_config
 
     # A bare usage error is checked before setting up a reviewer — no point
     # demanding credentials/SDK for a command that has nothing to review.
@@ -962,12 +969,16 @@ def cmd_review(args) -> int:
 
     # Settings resolve --flag > $AGR_REVIEW_MODEL / $OPENAI_BASE_URL > saved
     # `agr config` file > the provider's built-in default.
-    settings = resolve_review_settings(args.provider, args.model, args.base_url)
+    settings = effective_review_config(provider=args.provider, model=args.model, base_url=args.base_url,
+        cost_budget_usd=getattr(args, "cost_budget", None),
+        time_budget_s=getattr(args, "time_budget", None),
+        request_timeout_s=getattr(args, "request_timeout", None))
     try:
         reviewer = make_reviewer(
             settings["provider"], settings["model"], settings["base_url"],
-            cost_budget_usd=getattr(args, "cost_budget", None),
-            time_budget_s=getattr(args, "time_budget", None))
+            cost_budget_usd=settings["cost_budget_usd"],
+            time_budget_s=settings["time_budget_s"],
+            request_timeout_s=settings["request_timeout_s"])
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -1017,73 +1028,38 @@ def cmd_review(args) -> int:
 
 
 def cmd_config(args) -> int:
-    """Show / save / validate the model-reviewer settings used by `agr review`.
-
-    One-time setup so `agr review <id>` and `agr review --all` work without
-    flags: `agr config --provider openai --model <id> --base-url <url>`.
-    `--test` makes one real completion call against the effective settings
-    (flag > env > saved file) and reports exactly what it reached.
-    """
-    from .userconfig import clear_config, config_path, load_config, resolve_review_settings, save_config
-
+    """Inspect, save, or explicitly test shared local reviewer settings."""
+    from .userconfig import clear_config, config_path, effective_review_config, save_config
+    from .model_reviewer import make_reviewer, test_connection
     if args.clear:
-        if clear_config():
-            print(f"cleared saved reviewer settings ({config_path()})")
-        else:
-            print("no saved reviewer settings to clear")
+        print("cleared saved reviewer settings" if clear_config() else "no saved reviewer settings to clear")
         return 0
-
-    saving = any(v is not None for v in (args.provider, args.model, args.base_url))
-    if saving:
-        if args.provider is not None and args.provider not in ("anthropic", "openai"):
-            print(f"unknown provider {args.provider!r}; choose from ['anthropic', 'openai']",
-                  file=sys.stderr)
-            return 2
-        cfg = save_config(args.provider, args.model, args.base_url)
+    changes = {"provider": args.provider, "model": args.model, "base_url": args.base_url,
+               "cost_budget_usd": args.cost_budget, "time_budget_s": args.time_budget,
+               "request_timeout_s": args.request_timeout}
+    effective = effective_review_config(**changes)
+    print(f"reviewer settings ({config_path()}):")
+    for field in ("provider", "model", "base_url", "cost_budget_usd", "time_budget_s", "request_timeout_s"):
+        print(f"  {field}: {effective[field]} ({effective['origins'][field]})")
+    if args.test:
+        try:
+            reviewer = make_reviewer(**{k: effective[k] for k in changes})
+            test_connection(reviewer)
+        except RuntimeError as exc:
+            from .model_reviewer import ModelOutputError, ProviderRequestError
+            if isinstance(exc, (ModelOutputError, ProviderRequestError)):
+                print(f"FAILED: {exc}", file=sys.stderr)
+                return 4
+            print(f"MISSING SDK: {exc}", file=sys.stderr)
+            return 3
+        except Exception:
+            print("FAILED: check the API key, endpoint, model ID, and JSON response support.", file=sys.stderr)
+            return 4
+        print("OK — the endpoint returned the expected JSON response. No trace was sent.")
+    # Combined --test/save does not activate settings that failed the test.
+    if any(value is not None for value in changes.values()):
+        save_config(**changes)
         print(f"saved reviewer settings to {config_path()}")
-    else:
-        cfg = load_config()
-
-    effective = resolve_review_settings(args.provider, args.model, args.base_url)
-    print(f"\nreviewer settings (effective, flag > env > {config_path()} > provider default):")
-    print(f"  provider: {effective['provider']}")
-    print(f"  model:    {effective['model'] or '(provider default)'}")
-    print(f"  base_url: {effective['base_url'] or '(provider default)'}")
-    if saving and cfg.get("updated_at"):
-        print(f"  saved:    {cfg['updated_at']}")
-
-    if not args.test:
-        return 0
-
-    # One real completion call — validates SDK install, credentials, endpoint,
-    # and model id in a single cheap round trip.
-    from .model_reviewer import make_reviewer
-    try:
-        reviewer = make_reviewer(effective["provider"], effective["model"], effective["base_url"])
-    except ValueError as exc:
-        print(f"\nconfiguration error: {exc}", file=sys.stderr)
-        return 2
-    except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
-        print(f"\nMISSING SDK: {exc}", file=sys.stderr)
-        return 3
-    except Exception as exc:  # noqa: BLE001 - auth/network error while constructing the client
-        print(f"\nFAILED: {exc}", file=sys.stderr)
-        print("hints: check the API key env (ANTHROPIC_API_KEY / OPENAI_API_KEY), "
-              "the base_url, and that the model id exists at that endpoint", file=sys.stderr)
-        return 4
-    print(f"\ntesting {effective['provider']} · {effective['model'] or '(default model)'}")
-    try:
-        reviewer._complete("You are a connectivity test.",
-                           '{"self_test": "reply with the JSON object {"ok": true}"}')
-    except RuntimeError as exc:  # the provider SDK (optional extra) is not installed
-        print(f"MISSING SDK: {exc}", file=sys.stderr)
-        return 3
-    except Exception as exc:  # noqa: BLE001 - auth/network/model errors surface here
-        print(f"FAILED: {exc}", file=sys.stderr)
-        print("hints: check the API key env (ANTHROPIC_API_KEY / OPENAI_API_KEY), "
-              "the base_url, and that the model id exists at that endpoint", file=sys.stderr)
-        return 4
-    print("OK — the reviewer endpoint is reachable and the model responded.")
     return 0
 
 
@@ -1359,6 +1335,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="elapsed-time budget target: a round that would START past it "
                           "is skipped (status: incomplete). Default 90, 0 disables "
                           "(also $AGR_REVIEW_TIME_BUDGET_S)")
+    prv.add_argument("--request-timeout", type=float, default=None, metavar="SECONDS",
+                     help="timeout for each provider request (default: saved setting or 60)")
     prv.set_defaults(func=cmd_review)
 
     pcfg = sub.add_parser(
@@ -1372,6 +1350,12 @@ def build_parser() -> argparse.ArgumentParser:
     pcfg.add_argument("--test", action="store_true",
                       help="make one real completion call with the effective settings")
     pcfg.add_argument("--clear", action="store_true", help="delete the saved settings")
+    pcfg.add_argument("--cost-budget", type=float, default=None, metavar="USD",
+                      help="save the estimated per-review cost target (0 disables)")
+    pcfg.add_argument("--time-budget", type=float, default=None, metavar="SECONDS",
+                      help="save the elapsed-time target (0 disables)")
+    pcfg.add_argument("--request-timeout", type=float, default=None, metavar="SECONDS",
+                      help="save the timeout for each provider request")
     pcfg.set_defaults(func=cmd_config)
 
     pv = sub.add_parser("serve", help="serve the read API over HTTP (needs the 'api' extra)")
@@ -1412,7 +1396,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.store is None:
         args.store = ".agr-store"
     _load_env(getattr(args, "env_file", None))
-    return args.func(args)
+    from .userconfig import ConfigError
+    try:
+        return args.func(args)
+    except ConfigError as exc:
+        print(f"configuration error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
