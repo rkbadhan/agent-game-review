@@ -34,7 +34,10 @@ Pass distribution (tasks by x of 5):
 
 ## Failure shape (60 failures)
 
-- 49 database mismatch · 10 unmet NL assertion · 4 operational `agent_error`
+- 49 database mismatch · 10 unmet NL assertion · 4 `agent_error`. The groups
+  overlap: a failure can fall in more than one, so they sum to 63, not 60.
+  `agent_error` is the agent's own error and counts as a failure (adapter
+  0.13 treats only the verifier-side runtime-log statuses as operational).
 - 88 failed action checks: **64 omitted / 24 mismatch**
 - 40 of 60 failures are all-omitted-writes, across 23 of 74 tasks
 - most-failed actions: `exchange_delivered_order_items` (37),
@@ -60,8 +63,8 @@ So the recurring shape — the agent omits a required *write* — holds at scale
 
 A bare model given only raw traces + the verifier diff reaches the **same**
 diagnosis AGR does ("omitted the required … call"), and sometimes disagrees
-("no single common cause"). 10-task blind package assembled; the named human
-judge is the one open item.
+("no single common cause"). 10-task blind package assembled; it has not been
+judged.
 
 ## Conclusion
 

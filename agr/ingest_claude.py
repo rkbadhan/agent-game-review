@@ -58,7 +58,12 @@ from .execution_quality import generation_usage_capability
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
-CLAUDE_ADAPTER_VERSION = "claude-adapter-0.7"
+# 0.8: image/document blocks are recorded as placeholders instead of vanishing
+#      (a screenshot-only user turn used to leave no step at all); the newer
+#      harness entry types (attachment, progress, last-prompt, custom-title)
+#      are skipped as bookkeeping; any other unmapped entry type gets ONE
+#      warning with a count, not one warning per entry.
+CLAUDE_ADAPTER_VERSION = "claude-adapter-0.8"
 
 # Item 10 (2026-09-07): harness-injected wrapper tags that ride inside a
 # user-role message's TEXT content — a system-reminder, a slash command's
@@ -102,7 +107,22 @@ _SKIP_ENTRY_TYPES = {
     "summary",     # conversation summary lines, not agent behaviour
     "file-history-snapshot",
     "queue-operation",
+    # Newer harness bookkeeping. ``attachment`` carries harness-injected
+    # context (environment, date, tool listings, reminders) — the same
+    # content as the system-reminder blocks stripped from user text below;
+    # ``progress`` is a live hook/tool progress tick whose outcome lands in
+    # the tool_result anyway; ``last-prompt`` and ``custom-title`` are
+    # session-picker metadata.
+    "attachment",
+    "progress",
+    "last-prompt",
+    "custom-title",
 }
+
+# Content block types that carry non-text media. Their bytes are never kept as
+# evidence, but the block is recorded as a placeholder so a turn that holds
+# only a screenshot still shows up in the timeline.
+_MEDIA_BLOCK_TYPES = ("image", "document")
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -134,11 +154,24 @@ def _text_of(content: Any) -> str:
     return ""
 
 
+def _media_placeholders(content: Any) -> list[str]:
+    """One ``[image: image/png]``-style placeholder per media block."""
+    if not isinstance(content, list):
+        return []
+    out = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") in _MEDIA_BLOCK_TYPES:
+            source = block.get("source")
+            media = source.get("media_type") if isinstance(source, dict) else None
+            out.append(f"[{block['type']}: {media}]" if media else f"[{block['type']}]")
+    return out
+
+
 def _result_text(content: Any) -> str:
     """Tool-result payload text: a string, or a list of typed blocks."""
     if isinstance(content, str):
         return content
-    return _text_of(content)
+    return "\n".join(p for p in [_text_of(content), *_media_placeholders(content)] if p)
 
 
 def _is_final_result_object(data: Any) -> bool:
@@ -263,8 +296,10 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             # that is all it holds.
             continue
         if etype not in ("user", "assistant"):
-            builder.warnings.append(
-                f"unmapped Claude entry type {etype!r}; step skipped, not dropped silently")
+            # Counted, then reported once per type after the walk: a newer
+            # harness type can appear hundreds of times in one session.
+            unmapped = state.setdefault("unmapped_entry_types", {})
+            unmapped[etype] = unmapped.get(etype, 0) + 1
             continue
 
         msg = entry.get("message") or {}
@@ -282,6 +317,7 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                 tool_results = [b for b in content
                                 if isinstance(b, dict) and b.get("type") == "tool_result"]
             text = _strip_meta_blocks(_text_of(content))
+            media = _media_placeholders(content)
             if tool_results:
                 # Tool results ride in as user-role messages; they are harness
                 # output, never the agent speaking or the task statement. Each
@@ -304,6 +340,8 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                     }
                     if tid:
                         payload["tool_use_id"] = tid
+                    state["media_blocks"] = (state.get("media_blocks", 0)
+                                             + len(_media_placeholders(tr.get("content"))))
                     if isinstance(raw_result, dict) and len(tool_results) == 1:
                         extra = {k: raw_result[k] for k in ("stdout", "stderr", "interrupted")
                                 if k in raw_result}
@@ -322,6 +360,8 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                         # step it corresponds to, after the fact.
                         state.setdefault("tool_result_steps_by_tid", {})[tid] = builder.steps[-1]
                     pending_calls.pop(tid, None)
+                text = "\n".join(p for p in [text, *media] if p)
+                state["media_blocks"] = state.get("media_blocks", 0) + len(media)
                 if text:
                     builder.add("environment_observation", "user", content=text)
                 continue
@@ -339,6 +379,7 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                 else:
                     builder.add("environment_observation", "user", content=text)
                 continue
+            state["media_blocks"] = state.get("media_blocks", 0) + len(media)
             if state["first_user_text"] is None:
                 # Review finding #1 (2026-09-07): a first turn that strips to
                 # "" (an unflagged harness wrapper like a bare command-name
@@ -348,13 +389,20 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                 # environment_observation, and the "no real user message"
                 # warning below checks `is None`, which is already false.
                 # Wait for a message that actually has text.
+                # Only real text claims the instruction slot: a screenshot-only
+                # first turn is recorded below as the user's observation, and
+                # the first turn WITH text becomes the instruction.
                 if text:
                     state["first_user_text"] = text
-                    builder.add("task_received", "harness", content=text)
-            elif text:
+                    builder.add("task_received", "harness",
+                                content="\n".join([text, *media]))
+                elif media:
+                    builder.add("environment_observation", "user", content="\n".join(media))
+            elif text or media:
                 # Finding #5: an all-meta turn that strips to "" carries
                 # nothing to record — no content-free padding step.
-                builder.add("environment_observation", "user", content=text)
+                builder.add("environment_observation", "user",
+                            content="\n".join(p for p in [text, *media] if p))
 
         elif role == "assistant":
             state["saw_agent_step"] = True
@@ -450,6 +498,15 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             builder.warnings.append(
                 f"unmapped Claude message role {role!r}; step skipped, not dropped silently")
 
+    for etype, count in (state.get("unmapped_entry_types") or {}).items():
+        builder.warnings.append(
+            f"unmapped Claude entry type {etype!r} ({count} entr{'y' if count == 1 else 'ies'}); "
+            f"skipped, not dropped silently")
+    if state.get("media_blocks"):
+        n = state["media_blocks"]
+        builder.warnings.append(
+            f"{n} image/document block{'' if n == 1 else 's'} recorded as placeholder"
+            f"{'' if n == 1 else 's'} only — the media itself is not retained as evidence")
     if pending_calls:
         builder.warnings.append(
             f"{len(pending_calls)} tool call(s) never observed a result — tool-result "

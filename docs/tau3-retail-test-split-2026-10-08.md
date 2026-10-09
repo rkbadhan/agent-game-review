@@ -40,7 +40,7 @@ Pass distribution (tasks by x of 5):
 | --- | --- |
 | database mismatch | 22 |
 | unmet NL assertion | 0 |
-| operational `agent_error` | 2 |
+| `agent_error` (the agent's own error, counted as a failure) | 2 |
 | failed action checks | 36 (**23 omitted / 13 mismatch**) |
 | failures that are ALL omitted writes | 11 |
 | tasks with an omitted required write | 10 |
@@ -64,7 +64,7 @@ Most-failed actions: `return_delivered_order_items` (8), `cancel_pending_order`
 
 The same shape appears on held-out tasks — omitted required writes, mostly
 returns/cancellations — but weaker, and with no NL-assertion failures at all
-(every test-split failure was a database mismatch or an operational error).
+(every test-split failure was a database mismatch or an `agent_error`).
 
 ## Reading
 

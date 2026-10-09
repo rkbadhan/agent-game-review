@@ -880,3 +880,83 @@ def test_step_cost_survives_into_derived_event(tmp_path):
     events = derive_events(doc, rs)
     model_output = next(e for e in events if e.event_type == "model_output")
     assert model_output.cost == {"usage": {"input_tokens": 7, "output_tokens": 3}}
+
+
+_PNG = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+
+
+def test_screenshot_only_user_turn_is_recorded_as_a_placeholder(tmp_path):
+    """A user turn holding only a pasted screenshot used to leave no step and
+    no warning. It is now the user's own observation, with a placeholder, and
+    the media bytes are never retained."""
+    lines = [
+        {"type": "user", "sessionId": "sess-img-1",
+         "message": {"role": "user", "content": "Fix the layout bug."}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "Which page?"}]}},
+        {"type": "user", "message": {"role": "user", "content": [_PNG]}},
+    ]
+    result = convert(_write_session(tmp_path, lines))
+    last = result.doc["steps"][-1]
+    assert last["kind"] == "environment_observation" and last["actor"] == "user"
+    assert last["content"] == "[image: image/png]"
+    assert "iVBORw0KGgo=" not in json.dumps(result.doc)
+    assert any("1 image/document block recorded as placeholder" in w for w in result.warnings)
+
+
+def test_screenshot_only_first_turn_does_not_claim_the_instruction(tmp_path):
+    lines = [
+        {"type": "user", "sessionId": "sess-img-2", "message": {"role": "user", "content": [_PNG]}},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "Make it match this screenshot."}, _PNG]}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "ok"}]}},
+    ]
+    result = convert(_write_session(tmp_path, lines))
+    kinds = [(s["kind"], s["content"]) for s in result.doc["steps"][:2]]
+    assert kinds == [
+        ("environment_observation", "[image: image/png]"),
+        ("task_received", "Make it match this screenshot.\n[image: image/png]"),
+    ]
+    assert result.doc["task"]["instruction"] == "Make it match this screenshot."
+    assert any("2 image/document blocks" in w for w in result.warnings)
+
+
+def test_image_tool_result_keeps_a_placeholder(tmp_path):
+    lines = [
+        {"type": "user", "sessionId": "sess-img-3", "message": {"role": "user", "content": "Look at it."}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "m", "content": [
+            {"type": "tool_use", "id": "toolu_r", "name": "Read", "input": {"file_path": "shot.png"}}]}},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_r", "content": [_PNG]}]}},
+    ]
+    result = convert(_write_session(tmp_path, lines))
+    tr = next(s for s in result.doc["steps"] if s["kind"] == "tool_result")
+    assert tr["content"] == "[image: image/png]" and tr["status"] == "ok"
+
+
+def test_newer_bookkeeping_entry_types_are_skipped_without_warnings(tmp_path):
+    lines = [
+        {"type": "attachment", "attachment": {"type": "date", "date": "2026-10-09"},
+         "renderedRole": "system"},
+        {"type": "user", "sessionId": "sess-types", "message": {"role": "user", "content": "Go."}},
+        {"type": "progress", "data": {"type": "hook_progress"}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "ok"}]}},
+        {"type": "last-prompt", "lastPrompt": "Go."},
+        {"type": "custom-title", "customTitle": "my session"},
+    ]
+    result = convert(_write_session(tmp_path, lines))
+    assert not any("unmapped" in w for w in result.warnings)
+    assert [s["kind"] for s in result.doc["steps"]] == ["task_received", "model_output"]
+
+
+def test_unknown_entry_type_warns_once_with_a_count(tmp_path):
+    lines = [{"type": "user", "sessionId": "sess-unk", "message": {"role": "user", "content": "Go."}}]
+    lines += [{"type": "future-thing", "n": i} for i in range(5)]
+    lines += [{"type": "assistant",
+               "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "ok"}]}}]
+    result = convert(_write_session(tmp_path, lines))
+    unmapped = [w for w in result.warnings if "unmapped Claude entry type" in w]
+    assert unmapped == ["unmapped Claude entry type 'future-thing' (5 entries); "
+                        "skipped, not dropped silently"]
