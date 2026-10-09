@@ -51,17 +51,21 @@ file and one registry entry — never a new CLI verb:
 - **Registry** — add your adapter to `_BUILTIN_ADAPTERS` in `agr/adapter.py`
   (`name -> (module, attribute)`); `agr ingest-from --adapter <name>` then
   dispatches to it. Registry order is support priority: eval-framework sources
-  first (Harbor), then interactive-session sources (pi). See
+  first (Harbor), then interactive-session sources (pi, Claude Code). See
   `agr/ingest_harbor.py:HARBOR_ADAPTER` for the worked example.
 
-Two adapters ship today, in support priority order: **`harbor`** (a
-Terminal-Bench 2.0 / Harbor trial directory or job directory —
-`agr/ingest_harbor.py`) and **`pi`** (a pi session `.jsonl` —
-`agr/ingest_pi.py`). The harbor adapter is the primary path and also shows the
-two mappings most adapters need: fanning a coarse-grained turn into kinded
-steps, and synthesising the verifier from the harness's own pass/fail (Harbor's
-`result.json` reward). For the end-to-end Terminal-Bench recipe see
-[`terminal-bench.md`](./terminal-bench.md).
+Six adapters ship today, in registry (support priority) order: **`harbor`**
+(a Terminal-Bench 2.0 / Harbor trial directory or job directory, including
+τ³-bench trials — `agr/ingest_harbor.py`), **`pi`** (a pi session `.jsonl` —
+`agr/ingest_pi.py`), **`claude`** (a Claude Code session `.jsonl` or `claude -p`
+export — `agr/ingest_claude.py`), and the span-tree sources **`otel`**,
+**`langfuse`** and **`langsmith`** (see the roadmap below). A hand-built ATIF
+document needs no adapter at all: `agr ingest <file.json>`. The harbor adapter
+is the primary path and also shows the two mappings most adapters need: fanning
+a coarse-grained turn into kinded steps, and synthesising the verifier from the
+harness's own pass/fail (Harbor's `result.json` reward, or τ³-bench's
+`verifier/result.json` reward breakdown, kept behind one aggregate check). For
+the end-to-end Terminal-Bench recipe see [`terminal-bench.md`](./terminal-bench.md).
 - **`apply_capability_defaults`** — the one definition of "missing capability →
   unavailable"; ingest runs every doc through it, so omitting a capability
   yields the honest default for free.
@@ -73,6 +77,9 @@ Support priority, newest last:
 1. **`harbor`** — shipped. The eval-framework path; a `harbor run` job directory
    ingests batch with one command (`agr ingest-harbor <job-dir>`).
 2. **`pi`** — shipped. Interactive pi sessions.
+   **`claude`** — shipped. Claude Code saved sessions and `claude -p`
+   stream-json / json exports. Task-subagent turns are dropped with a warning
+   (the event timeline has no parent linkage for them yet).
 3. **`opencode`** — scaffolded, not yet implemented. To add it:
    - Locate opencode's on-disk session storage for your install (its docs
      describe the storage layout; verify against your version before mapping —
