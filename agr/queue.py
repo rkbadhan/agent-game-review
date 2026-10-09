@@ -35,20 +35,30 @@ from .store import Store
 #   fail         — a verifier was present and a check failed (or errored)
 #   undetermined — a verifier ran and reached no clean verdict
 #   unverified   — no verifier evidence at all
+#   operational_error — the harness broke; no valid verdict, NOT an agent failure
 # ``UNDETERMINED`` and ``UNVERIFIED`` are genuinely different states and must
-# never collapse into one bucket (an earlier chip matched both).
-OUTCOME_BUCKETS = ("pass", "fail", "undetermined", "unverified")
+# never collapse into one bucket (an earlier chip matched both); an
+# operational error is a third kind of "no verdict" and must not be read as a
+# failure either.
+OUTCOME_BUCKETS = ("pass", "fail", "undetermined", "unverified", "operational_error")
+
+# Explicit status -> bucket map for every status ``checks.outcome`` can emit
+# (schema.OUTCOME_STATUSES) plus the legacy review-level ``WARNING``/``ERROR``
+# strings older stores carry. Anything else still falls to "unverified" (the
+# honest "no evidence" default) — tests/test_outcome_status_coverage.py fails
+# when a status the backend emits is missing from this map.
+_STATUS_BUCKET = {
+    "PASSED": "pass",
+    "FAILED": "fail",
+    "ERROR": "fail",
+    "UNDETERMINED": "undetermined",
+    "UNVERIFIED": "unverified",
+    "OPERATIONAL_ERROR": "operational_error",
+}
 
 
 def outcome_bucket(status: Optional[str]) -> str:
-    s = (status or "").upper()
-    if s == "PASSED":
-        return "pass"
-    if s in ("FAILED", "ERROR"):
-        return "fail"
-    if s == "UNDETERMINED":
-        return "undetermined"
-    return "unverified"
+    return _STATUS_BUCKET.get((status or "").upper(), "unverified")
 
 
 # §4.3.2 — the primary visible filter chips, each a predicate over a run card.
@@ -64,7 +74,8 @@ FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
     "passed": lambda r: outcome_bucket(_status(r)) == "pass",
     "undetermined": lambda r: outcome_bucket(_status(r)) == "undetermined",
     "unverified": lambda r: outcome_bucket(_status(r)) == "unverified",
-    "needs_attention": lambda r: _status(r) in ("FAILED", "WARNING", "ERROR"),
+    "operational_error": lambda r: outcome_bucket(_status(r)) == "operational_error",
+    "needs_attention": lambda r: _status(r) in ("FAILED", "WARNING", "ERROR", "OPERATIONAL_ERROR"),
     "ground_truth": lambda r: bool((r.get("verification") or {}).get("has_verifier")),
     "analysis_only": lambda r: not (r.get("verification") or {}).get("has_verifier"),
     "recovered": lambda r: bool(r.get("recovered")),
@@ -86,7 +97,7 @@ GROUPINGS = ("none", "outcome", "task_family", "review_progress", "disposition",
             "review_mode", "verification")
 
 # Deterministic outcome order for sorting / grouping.
-_OUTCOME_RANK = {"ERROR": 0, "FAILED": 1, "WARNING": 2, "PASSED": 3}
+_OUTCOME_RANK = {"ERROR": 0, "FAILED": 1, "WARNING": 2, "OPERATIONAL_ERROR": 2, "PASSED": 3}
 _PROGRESS_RANK = {"unreviewed": 0, "in_progress": 1, "handled": 2}
 
 
@@ -107,8 +118,11 @@ def _triage_rank(r: dict) -> int:
         return 0  # failed with a supported decisive moment
     if status == "WARNING" or r.get("recovered"):
         return 1  # WARNING outcome or supported recovery
-    if r.get("verifier_concern"):
-        return 2  # possible task/verifier concern
+    if r.get("verifier_concern") or status == "OPERATIONAL_ERROR":
+        # possible task/verifier concern — or a run whose verdict was never
+        # produced because the harness broke: it needs a rerun, not a verdict,
+        # and must never sink into the "clean pass" tier below.
+        return 2
     if status in ("FAILED", "ERROR"):
         return 3  # other failed runs
     if status == "PASSED" and r.get("review_mode") == "model_enriched":
@@ -174,7 +188,7 @@ def sweep_summary(store: Store) -> dict:
     was inspected or that review progress is an agent-quality measure (§4.3.1).
     """
     runs = read.list_runs(store)
-    by_outcome = {"PASSED": 0, "FAILED": 0, "WARNING": 0, "ERROR": 0}
+    by_outcome = {"PASSED": 0, "FAILED": 0, "WARNING": 0, "ERROR": 0, "OPERATIONAL_ERROR": 0}
     by_mode = {"deterministic_only": 0, "model_enriched": 0}
     handled = triage_eligible = 0
     harnesses: set[str] = set()

@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Optional
 
 from . import version
 from ._util import action_signature, is_state_changing_action_related_to
-from .schema import CHECK_SOURCES, CHECK_STATUSES, CHECK_TIMINGS, RunSource, VerifierCheck
+from .schema import (
+    CHECK_SOURCES, CHECK_STATUSES, CHECK_TIMINGS, RunSource, VerifierCheck, diagnostic_entry,
+)
 
 if TYPE_CHECKING:
     from .schema import DerivedEvent, TaskContract
@@ -19,6 +21,40 @@ if TYPE_CHECKING:
 
 class CheckExtractionError(ValueError):
     pass
+
+
+def _diagnostic_evidence(raw) -> Optional[dict]:
+    """Validate a check's optional ``diagnostic_evidence`` (never counted as a check).
+
+    Adapters own the shape of the evidence (tau3's reward breakdown), so every
+    key passes through verbatim. The one key this module validates is
+    ``state_diff``: a list of state-diff entries, normalised via
+    ``diagnostic_entry`` so writer provenance is always well-formed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise CheckExtractionError("check diagnostic_evidence must be an object")
+    if "state_diff" not in raw:
+        return raw
+    entries = raw["state_diff"]
+    if not isinstance(entries, list):
+        raise CheckExtractionError("diagnostic_evidence state_diff must be a list")
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            raise CheckExtractionError("each state_diff entry needs a string 'path'")
+        try:
+            out.append(diagnostic_entry(
+                entry["path"], entry.get("change_type", ""),
+                observed=entry.get("observed"), expected=entry.get("expected"),
+                last_writer_event_id=entry.get("last_writer_event_id"),
+                writer_status=entry.get("writer_status"),
+                provenance_version=entry.get("provenance_version", ""),
+            ))
+        except ValueError as exc:
+            raise CheckExtractionError(str(exc)) from exc
+    return {**raw, "state_diff": out}
 
 
 def extract_checks(doc: dict, run_source: RunSource) -> list[VerifierCheck]:
@@ -48,6 +84,11 @@ def extract_checks(doc: dict, run_source: RunSource) -> list[VerifierCheck]:
                 observed=raw.get("observed"),
                 source_pointers=list(raw.get("source_pointers", [])),
                 derivation_version=version.CHECK_DERIVATION_VERSION,
+                # Carried through when the adapter attached it (only a
+                # ``state_diff`` list is validated); it is diagnostic evidence
+                # on an authoritative check, not a check, so outcome()/detectors
+                # never count it (see schema.VerifierCheck).
+                diagnostic_evidence=_diagnostic_evidence(raw.get("diagnostic_evidence")),
                 timing=timing,
                 # AGR-02: carried through only when the source (currently
                 # agr.verifier_synth) declared them; a native/structured
@@ -203,11 +244,17 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
     total = len(current)
     passed = sum(1 for _, s in current if s == "passed")
     failed = [c.check_id for c, s in current if s == "failed"]
+    operational = [c.check_id for c, s in current if s == "operational_error"]
     undetermined = [c.check_id for c, s in current if s in ("unknown", "skipped", "error")]
     coverage_gaps: list[str] = []
     coverage_unknown = False
     if total == 0:
         status = "UNVERIFIED"
+    elif operational:
+        # The harness broke, so the attempt has no valid verdict — not an agent
+        # failure, and ahead of FAILED so a real failure observed alongside a
+        # harness error is never counted as a clean measurement either.
+        status = "OPERATIONAL_ERROR"
     elif failed:
         status = "FAILED"
     elif passed == total:
@@ -227,6 +274,7 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
         "passed": passed,
         "total": total,
         "failed_checks": failed,
+        "operational_error_checks": operational,
         "undetermined_checks": undetermined,
         "total_observations": len(checks),
         "superseded_checks": [c.check_id for c in checks if c.superseded_by is not None],

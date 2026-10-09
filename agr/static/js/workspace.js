@@ -147,7 +147,7 @@ function renderProjectHome(host) {
   if (!detail) { host.append(el("p", null, "Loading project…")); return; }
   if (!detail.runs.length) { host.append(emptyState("list-tree", "No runs yet. Add a run from your tools to start investigating.", workspaceButton("Choose a source", startAddingRuns))); return; }
   const stats = el("div", "engineer-stat-row");
-  const counts = { Runs: detail.runs.length, Failed: detail.runs.filter(r => r.outcome.status === "FAILED").length, Unverified: detail.runs.filter(r => r.outcome.status === "UNVERIFIED").length, Undetermined: detail.runs.filter(r => r.outcome.status === "UNDETERMINED").length };
+  const counts = { Runs: detail.runs.length, Failed: detail.runs.filter(r => r.outcome.status === "FAILED").length, Unverified: detail.runs.filter(r => r.outcome.status === "UNVERIFIED").length, Undetermined: detail.runs.filter(r => r.outcome.status === "UNDETERMINED").length, "Operational error": detail.runs.filter(r => r.outcome.status === "OPERATIONAL_ERROR").length };
   for (const [label, value] of Object.entries(counts)) { const card = el("div", "engineer-stat"); card.append(el("strong", null, String(value)), el("span", null, label)); stats.append(card); } host.append(stats);
   let last; try { last = localStorage.getItem("agr-last-" + state.projectId); } catch (_) {}
   if (last) {

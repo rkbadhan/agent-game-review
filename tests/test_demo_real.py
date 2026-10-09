@@ -28,7 +28,12 @@ def test_the_committed_real_demo_dataset_is_present_and_well_formed():
     assert real_dir is not None, "the GR-4 real demo dataset must ship with the package"
     runs = demo._load_json_dir(os.path.join(real_dir, "runs"))
     reviews = demo._load_json_dir(os.path.join(real_dir, "reviews"))
-    assert len(runs) >= 10 and len(reviews) == len(runs)
+    assert len(runs) >= 10 and len(reviews) >= 10
+    # Every baked review belongs to a shipped run. Not every run needs one: the
+    # tau3 set ships a passing sibling per failing run so the divergence view
+    # has a passing run to compare against (checked in the next test).
+    run_ids = {doc["run"]["logical_run_id"] for doc in runs}
+    assert {review["run_id"] for review in reviews} <= run_ids
     for doc in runs:
         # The exported source is a real ATIF document the pipeline can analyze.
         assert isinstance(doc.get("run"), dict) and doc.get("steps")
@@ -43,7 +48,18 @@ def test_build_real_demo_store_serves_a_precomputed_model_review(tmp_path):
     store = Store(str(tmp_path / "store"))
     definition = demo.build_real_demo_store(store)
     assert definition["real_runs"] >= 10
-    assert definition["model_reviews"] == definition["real_runs"]
+    assert 10 <= definition["model_reviews"] <= definition["real_runs"]
+    # A run ships without a baked review only as a passing comparison sibling;
+    # every non-passing run carries its pre-computed model review.
+    real_dir = demo.find_real_demo_dir()
+    real_ids = {doc["run"]["logical_run_id"]
+                for doc in demo._load_json_dir(os.path.join(real_dir, "runs"))}
+    for row in read.list_runs(store):
+        # The synthetic comparison slice never carries baked reviews.
+        if row["run_id"] not in real_ids or (row["outcome"] or {}).get("status") == "PASSED":
+            continue
+        keys = store.list_reviews(row["run_id"], row["capture_id"])
+        assert any(k.startswith("model:") for k in keys), row["run_id"]
     landing = definition["landing_run"]
     assert landing
 

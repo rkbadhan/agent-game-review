@@ -376,8 +376,30 @@ def _label_change(stats: dict, higher_is_better: bool,
 # --- per-run measurements ----------------------------------------------------
 
 
+def _status(run: dict) -> Optional[str]:
+    return (run.get("outcome") or {}).get("status")
+
+
 def _passed(run: dict) -> float:
-    return 1.0 if (run.get("outcome") or {}).get("status") == "PASSED" else 0.0
+    return 1.0 if _status(run) == "PASSED" else 0.0
+
+
+def _operational_error(run: dict) -> bool:
+    """The attempt produced no valid verdict because the harness broke.
+
+    Such an attempt is not a success and not an agent failure; it is *excluded*
+    from per-attempt success denominators and reported as its own rate. Counting
+    it as a failure would let a candidate that merely errors more often look
+    like a regression (or, if it errors less, like an improvement).
+    """
+    return _status(run) == "OPERATIONAL_ERROR"
+
+
+def _pass_observation(run: dict) -> tuple[int, int]:
+    """``(passed, eligible)`` for one attempt; an operational error is ``(0, 0)``."""
+    if _operational_error(run):
+        return 0, 0
+    return int(_passed(run)), 1
 
 
 def _behaviour_observations(run: dict) -> dict[str, tuple[int, int, int]]:
@@ -515,9 +537,27 @@ def _clustered_metric(pairs: list[dict], observe, *, metric_id: str, label: str,
 
 
 def _pass_rate_metric(pairs: list[dict]) -> dict:
-    return _clustered_metric(pairs, lambda run: (int(_passed(run)), 1),
+    """Per-attempt success, with operational errors left out of the denominator.
+
+    ``_clustered_metric`` already drops a side with a zero denominator from a
+    task's rate, so a task whose attempts all errored on one side contributes
+    nothing to the paired difference rather than a spurious 0.
+    """
+    return _clustered_metric(pairs, _pass_observation,
                              metric_id="pass_rate", label="Pass rate",
                              higher_is_better=True)
+
+
+def _operational_error_rate_metric(pairs: list[dict]) -> dict:
+    """Share of attempts that errored operationally, per arm.
+
+    Reported beside the pass rate so a reader (and the pre-registered error
+    guard) can see whether the arms errored at different rates. Lower is better.
+    """
+    return _clustered_metric(pairs, lambda run: (int(_operational_error(run)), 1),
+                             metric_id="operational_error_rate",
+                             label="Operational error rate",
+                             higher_is_better=False)
 
 
 def _behaviour_metrics(pairs: list[dict]) -> list[dict]:
@@ -776,6 +816,7 @@ def compare_versions(store: Store, baseline_selector: dict, candidate_selector: 
         },
     }
     result["pass_rate"] = _pass_rate_metric(pairs)
+    result["operational_error_rate"] = _operational_error_rate_metric(pairs)
     result["behaviours"] = _behaviour_metrics(pairs)
     result["failure_modes"] = _failure_mode_metrics(pairs)
     result["resources"] = _cost_metrics(pairs)

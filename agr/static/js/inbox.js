@@ -20,7 +20,8 @@
 // a run that carries a verifier can still be evaluated even if it is not clean.
 const FILTER_GROUPS = [
   ["Outcome", [["failed", "Failed"], ["passed", "Passed"],
-    ["undetermined", "Undetermined"], ["unverified", "Unverified"]]],
+    ["undetermined", "Undetermined"], ["unverified", "Unverified"],
+    ["operational_error", "Operational error"]]],
   ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Handled"]]],
 ];
 const MORE_FILTER_CHIPS = [["needs_attention", "Needs attention"], ["recovered", "Recovered"],
@@ -35,6 +36,7 @@ const MORE_FILTER_DESCRIPTIONS = {
   analysis_only: "No verifier evidence — only execution findings are supported.",
 };
 const FILTER_TIPS = {
+  operational_error: "The harness broke (rate limit, simulator or judge crash, runner failure) — no valid verdict, and not an agent failure.",
   undetermined: "A verifier ran but reached no clean verdict.",
   unverified: "No verifier evidence at all — task success is not established.",
   ground_truth: "Runs carrying verifier evidence.",
@@ -74,8 +76,9 @@ function relTime(iso) { if (!iso) return null; const t = Date.parse(iso); if (is
 function fmtCost(c) { return c == null ? null : "$" + Number(c).toFixed(2); }
 function statusClass(s) { s = (s||"").toUpperCase();
   // F1 follow-up: UNDETERMINED/UNVERIFIED are honest "no verdict" states —
-  // neutral, not the red a failure implies.
-  return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED")?"undetermined":"failed"; }
+  // neutral, not the red a failure implies. OPERATIONAL_ERROR is the same: the
+  // harness broke, so it is not an agent failure.
+  return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED"||s==="OPERATIONAL_ERROR")?"undetermined":"failed"; }
 
 async function loadInbox() {
   // UX audit finding #2: capture the token before the request so a NEWER
@@ -121,7 +124,7 @@ function renderSweep() {
   const bo = s.by_outcome || {};
   const stats = el("div", "sweep-stats");
   const stat = (cls, n, lbl) => { const d = el("div", "sweep-stat " + cls); d.append(el("strong", null, String(n)), el("span", null, lbl)); return d; };
-  stats.append(stat("failed", (bo.FAILED||0)+(bo.ERROR||0), "failed"), stat("warning", bo.WARNING||0, "warning"), stat("passed", bo.PASSED||0, "passed"));
+  stats.append(stat("failed", (bo.FAILED||0)+(bo.ERROR||0), "failed"), stat("warning", bo.WARNING||0, "warning"), stat("passed", bo.PASSED||0, "passed"), stat("undetermined", bo.OPERATIONAL_ERROR||0, "operational error"));
   host.append(stats);
   const handled = el("div", "handled");
   handled.append(el("span", null, s.handled + " of " + s.triage_eligible + " handled"));

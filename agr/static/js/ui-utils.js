@@ -81,6 +81,12 @@ function outcomeNarrative(rv) {
   if (o.status === "UNVERIFIED" || !checks.length)
     return { tone: "warn", headline: "Task success unverified —",
       detail: "no verifier evidence was captured, so nothing here should be read as a pass; supported execution findings still appear below." };
+  if (o.status === "OPERATIONAL_ERROR") {
+    const broken = o.operational_error_checks || [];
+    return { tone: "warn", headline: "Operational error —",
+      detail: "the harness around the agent broke (" + (broken.length ? broken.map(nameOf).join("; ") : "see the verifier checks")
+        + "), so this attempt has no valid verdict. It is not an agent failure and is excluded from success rates." };
+  }
   if (o.status === "FAILED") {
     const failed = o.failed_checks || [];
     return { tone: "fail", headline: "Failed —",

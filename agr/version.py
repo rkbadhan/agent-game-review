@@ -43,7 +43,14 @@ DERIVATION_VERSION = "event-map-0.2"
 # and skipped the AGR-08 detectors (they select on effective_status ==
 # "failed"). The tool-level signal now only overrides a PASSING parse it
 # contradicts, never a parse that already found real failures.
-CHECK_DERIVATION_VERSION = "check-extract-0.5"
+#
+# 0.6: ``operational_error`` check status (run rolls up to OPERATIONAL_ERROR,
+# excluded from success denominators) and validation of the
+# ``state_diff`` list inside a check's ``diagnostic_evidence`` (state-diff
+# entries with writer provenance, carried without ever counting as a check).
+CHECK_DERIVATION_VERSION = "check-extract-0.6"
+# Tool-to-state provenance (which tool call last wrote each diff path).
+PROVENANCE_DERIVATION_VERSION = "state-provenance-0.1"
 SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # 0.2 (AGR-08): UnresolvedRequirementAtSubmission and
 # TerminalFailureWithFailingChecks each emit ONE aggregate candidate per

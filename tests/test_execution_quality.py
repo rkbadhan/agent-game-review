@@ -697,7 +697,8 @@ def test_fleet_execution_quality_counts_runs_without_a_pass_fail_outcome(
     by_outcome = fleet_execution_quality(store)["by_outcome"]
     # The four shared buckets all exist, and each run lands in exactly one —
     # undetermined and unverified are distinguished, never merged into "other".
-    assert set(by_outcome) == {"pass", "fail", "undetermined", "unverified"}
+    assert set(by_outcome) == {"pass", "fail", "undetermined", "unverified", "operational_error"}
+    assert by_outcome["operational_error"]["runs"] == 0
     assert by_outcome["pass"]["runs"] == 1
     assert by_outcome["undetermined"]["runs"] == 1
     assert by_outcome["unverified"]["runs"] == 1

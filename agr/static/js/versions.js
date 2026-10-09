@@ -275,7 +275,8 @@ function renderVersionResult(main, r) {
 
   if (!r.pairs.length) return;
 
-  main.append(metricCard("Outcome", [r.pass_rate], r));
+  main.append(metricCard("Outcome", [r.pass_rate].concat(r.operational_error_rate ? [r.operational_error_rate] : []), r,
+    "Pass rate leaves operational errors (harness failures) out of its denominator; their rate is shown beside it."));
   if (r.behaviours.length)
     main.append(metricCard("Opportunity-normalized behaviour", r.behaviours, r,
       "Denominators are eligible opportunities, not runs — an ability the task never "
