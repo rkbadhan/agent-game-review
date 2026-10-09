@@ -626,6 +626,10 @@ function renderChecksChapter(main) {
         + "; this " + (c.status || "?").toUpperCase() + " no longer counts as a current pass."));
     body.append(kvLine("Expected", fmt(c.expected) || "—"));
     body.append(kvLine("Observed", fmt(c.observed) || "—"));
+    // Diagnostic evidence behind an aggregate check (e.g. tau3's tau2 reward
+    // breakdown): why the check reached its status — which DB field mismatched,
+    // which actions failed — never a separate verdict.
+    if (c.diagnostic_evidence) body.append(renderDiagnosticEvidence(c.diagnostic_evidence));
     const mapped = (c.contract_item_ids || []).map(id => (itemById[id] || {}).description || id);
     body.append(kvLine("Covers contract", mapped.length ? mapped.join("; ") : "No mapped contract item"));
     for (const w of (contract.warnings || []).filter(w => (w.check_ids || []).includes(c.check_id)))
@@ -965,6 +969,56 @@ async function saveLessonEdits(lesson, inputs, err) {
 
 // --- chapter helpers ---------------------------------------------------------
 function kvLine(k, v) { const r = el("div", "kv-line"); r.append(el("span", "kv-k", k), el("span", "kv-v", v)); return r; }
+
+// Diagnostic evidence attached to a check (schema.VerifierCheck.diagnostic_evidence).
+// tau3-bench puts the full tau2 reward breakdown here behind one pass/fail
+// aggregate check. Rendered as evidence, clearly not a second verdict: it never
+// changes the outcome, it explains it.
+function renderDiagnosticEvidence(ev) {
+  const wrap = el("div", "check-diag");
+  const head = "Verifier breakdown" + (ev.verifier_status ? " · " + ev.verifier_status : "");
+  wrap.append(el("p", "check-sub", head));
+  const basis = ev.reward_basis || [];
+  if (basis.length) wrap.append(kvLine("Reward basis", basis.join(", ")));
+  const db = ev.db_check;
+  if (db && db.db_match !== undefined) {
+    const ok = !!db.db_match;
+    wrap.append(kvLine("Database match", ok ? "match" : "MISMATCH" +
+      (db.db_reward !== undefined && db.db_reward !== null ? " (reward " + db.db_reward + ")" : "")));
+  }
+  const actions = ev.action_checks || [];
+  if (actions.length) {
+    const failed = actions.filter(a => a.action_match === false);
+    wrap.append(kvLine("Actions", actions.length + " checked · " + failed.length + " failed"));
+    for (const a of failed) {
+      const act = a.action || {};
+      const label = (act.name || "action") + (a.tool_type ? " · " + a.tool_type : "") +
+        (act.action_id ? " · " + act.action_id : "");
+      wrap.append(el("div", "check-warn callout callout-warn", "✗ " + label));
+    }
+  }
+  const nls = ev.nl_assertions || [];
+  if (nls.length) {
+    const unmet = nls.filter(x => x.met === false);
+    wrap.append(kvLine("NL assertions", nls.length + " checked · " + unmet.length + " unmet"));
+    for (const x of unmet) wrap.append(el("div", "check-warn callout callout-warn", "✗ " +
+      (x.justification || x.assertion || "unmet")));
+  }
+  const comms = ev.communicate_checks || [];
+  if (comms.length) {
+    const unmet = comms.filter(x => x.met === false);
+    wrap.append(kvLine("Communicate checks", comms.length + " checked · " + unmet.length + " unmet"));
+  }
+  const envs = ev.env_assertions || [];
+  if (envs.length) wrap.append(kvLine("Env assertions", String(envs.length)));
+  const diff = ev.state_diff || [];
+  if (diff.length) {
+    wrap.append(kvLine("State diff", diff.length + " path(s)"));
+    for (const d of diff) wrap.append(el("div", "check-warn callout callout-warn", "✗ " + d.path +
+      " · " + (d.change_type || "changed") + " · writer " + (d.writer_status || "unknown")));
+  }
+  return wrap;
+}
 function kvBlock(k, v) { const r = el("div", "kv-block"); r.append(el("span", "kv-k", k), el("span", "kv-v", v)); return r; }
 function badgeClass(status) { return status === "passed" ? "pass" : status === "failed" ? "fail" : "warn"; }
 function warnKind(t) { return (t || "warning").replace(/_/g, " "); }

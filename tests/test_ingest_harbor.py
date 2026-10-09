@@ -1023,3 +1023,622 @@ def test_packet_carries_the_full_instruction_and_check_timing(tmp_path):
         events=[], task_instruction=full)
     packet, _red = build_packet(ctx)
     assert packet["task_instruction"] == full
+
+
+# --- tau3-bench: full tau2 reward breakdown behind one aggregate reward -------
+
+def _write_tau3(trial, reward_info, *, status="passed", reward=1.0):
+    vdir = Path(trial) / "verifier"
+    vdir.mkdir(exist_ok=True)
+    (vdir / "result.json").write_text(json.dumps({
+        "status": status,
+        "reward": reward,
+        "used_tau2_evaluator": True,
+        "reward_info": reward_info,
+    }), encoding="utf-8")
+
+
+def _tau3_reward_info(*, reward=1.0, db_match=True, action_matches=(True, True)):
+    """A tau2 evaluate_simulation reward_info: the real tau3 shape, trimmed."""
+    return {
+        "reward": reward,
+        "db_check": {"db_match": db_match, "db_reward": 1.0 if db_match else 0.0},
+        "env_assertions": [],
+        "action_checks": [
+            {
+                "action": {"action_id": f"a{i}", "requestor": "assistant",
+                           "name": f"tool_{i}", "arguments": {"x": i}},
+                "action_match": m,
+                "action_reward": 1.0 if m else 0.0,
+                "tool_type": "write" if i % 2 else "read",
+            }
+            for i, m in enumerate(action_matches)
+        ],
+        "nl_assertions": [],
+        "communicate_checks": [],
+        "reward_basis": ["DB", "ACTION"],
+        "reward_breakdown": {
+            "DB": 1.0 if db_match else 0.0,
+            "ACTION": 1.0 if all(action_matches) else 0.0,
+        },
+    }
+
+
+def test_tau3_reward_info_becomes_one_aggregate_check_with_evidence(tmp_path):
+    """The breakdown is attached to ONE authoritative check, not fanned out
+    into per-field checks."""
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    _write_tau3(trial, _tau3_reward_info())
+    res = convert(trial, task_id="t")
+    checks = res.doc["verifier"]["checks"]
+    assert [c["check_id"] for c in checks] == ["tau3_task_reward"]
+    check = checks[0]
+    assert check["status"] == "passed"
+    assert check["timing"] == "post_run"
+    assert check["source"] == "native_structured"
+    assert check["source_pointers"] == ["verifier/result.json"]
+    ev = check["diagnostic_evidence"]
+    assert ev["kind"] == "tau3_reward_info"
+    assert ev["db_check"]["db_match"] is True
+    assert len(ev["action_checks"]) == 2
+    assert ev["action_checks"][0]["tool_type"] == "read"
+    assert ev["action_checks"][1]["tool_type"] == "write"
+    assert ev["reward_breakdown"]["DB"] == 1.0
+    assert any("tau3 reward breakdown" in w for w in res.warnings)
+
+
+def test_tau3_mismatch_is_failed_and_keeps_the_failing_evidence(tmp_path):
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=0.0)
+    _write_tau3(trial, _tau3_reward_info(reward=0.0, db_match=False,
+                                         action_matches=(True, False)),
+                status="mismatch", reward=0.0)
+    res = convert(trial, task_id="t")
+    check = res.doc["verifier"]["checks"][0]
+    assert check["status"] == "failed"
+    assert check["diagnostic_evidence"]["db_check"]["db_match"] is False
+    assert check["diagnostic_evidence"]["action_checks"][1]["action_match"] is False
+
+
+@pytest.mark.parametrize("raw_status", [
+    "missing_runtime_log", "invalid_runtime_log", "tau2_runtime_log_error",
+])
+def test_tau3_runtime_log_error_is_an_operational_error_not_a_demonstrated_failure(
+        tmp_path, raw_status):
+    """A crashed/missing/invalid runtime log yields reward 0.0 but a verifier
+    status that is harness-side; it must classify as an operational error (run
+    outcome OPERATIONAL_ERROR), not a failed attempt the agent is blamed for."""
+    from agr.checks import extract_checks, outcome
+    from agr.schema import RunSource
+
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=0.0)
+    _write_tau3(trial, {"reward": 0.0, "info": {"note": "Runtime log was not created."}},
+                status=raw_status, reward=0.0)
+    res = convert(trial, task_id="t")
+    check = res.doc["verifier"]["checks"][0]
+    assert check["check_id"] == "tau3_task_reward"
+    assert check["status"] == "operational_error"
+    source = RunSource(
+        run_id="r", source_capture_id="c", capture_revision=1, source_hash="h",
+        source_type="harbor", source_schema="ATIF-v1.7", capture_completeness="complete",
+        task_id="t",
+    )
+    result = outcome(extract_checks(res.doc, source))
+    assert result["status"] == "OPERATIONAL_ERROR"
+    assert result["operational_error_checks"] == ["tau3_task_reward"]
+
+
+def test_tau3_breakdown_entries_never_change_the_run_outcome(tmp_path):
+    """The acceptance test: a failing db_check and a failing action sit in
+    diagnostic_evidence behind a PASSED aggregate reward. Adding or removing
+    those entries must not change outcome() — they are evidence on the one
+    authoritative check, not checks themselves."""
+    from agr.checks import extract_checks, outcome
+    from agr.schema import RunSource
+
+    def _source():
+        return RunSource(
+            run_id="r", source_capture_id="c", capture_revision=1,
+            source_hash="h", source_type="harbor", source_schema="ATIF-v1.7",
+            capture_completeness="complete", task_id="t",
+        )
+
+    steps = [{"step_id": 1, "source": "user", "message": "do it"}]
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    base = _trial(tmp_path / "a", steps, reward=1.0)
+    _write_tau3(base, _tau3_reward_info(reward=1.0, db_match=False,
+                                        action_matches=(True, False)))
+    checks = extract_checks(convert(base, task_id="t").doc, _source())
+    baseline = outcome(checks)
+    assert baseline["status"] == "PASSED"
+    assert baseline["total"] == 1
+    assert baseline["failed_checks"] == []
+
+    # Same aggregate reward, a DIFFERENT number of breakdown entries.
+    trial2 = _trial(tmp_path / "b", steps, reward=1.0)
+    _write_tau3(trial2, _tau3_reward_info(reward=1.0, db_match=True, action_matches=(True,)))
+    checks2 = extract_checks(convert(trial2, task_id="t").doc, _source())
+    assert outcome(checks2) == baseline
+    # Evidence is still present and inspectable on the check itself.
+    assert checks[0].diagnostic_evidence["db_check"]["db_match"] is False
+    assert checks2[0].diagnostic_evidence["db_check"]["db_match"] is True
+
+
+def test_tau3_non_tau3_verifier_result_falls_back_to_the_aggregate_reward(tmp_path):
+    """A verifier/result.json that is not tau3-shaped must not be mistaken for
+    a tau3 breakdown."""
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=1.0)
+    vdir = Path(trial) / "verifier"
+    vdir.mkdir(exist_ok=True)
+    (vdir / "result.json").write_text(json.dumps({"reward": 1.0, "foo": "bar"}),
+                                      encoding="utf-8")
+    res = convert(trial, task_id="t")
+    assert [c["check_id"] for c in res.doc["verifier"]["checks"]] == ["terminal_bench_reward"]
+
+
+def test_explicit_verifier_overrides_tau3_breakdown(tmp_path):
+    trial = _trial(tmp_path, [{"step_id": 1, "source": "user", "message": "do it"}], reward=0.0)
+    _write_tau3(trial, _tau3_reward_info(reward=0.0, db_match=False),
+                status="mismatch", reward=0.0)
+    explicit = {"checks": [{"check_id": "mine", "name": "mine", "status": "passed"}]}
+    res = convert(trial, task_id="t", verifier=explicit)
+    assert [c["check_id"] for c in res.doc["verifier"]["checks"]] == ["mine"]
+
+
+# --- tau3-bench: synthesised ATIF trajectory from the runtime log --------------
+
+def _tau3_trial(tmp_path, messages, *, instruction=None, reward=1.0,
+                model="gpt-5.2", result_id="uuid-1", task_id="7"):
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "tau3_runtime_state.json").write_text(json.dumps({
+        "domain": "retail", "task_id": task_id, "termination_reason": "agent_stop",
+        "messages": messages,
+    }), encoding="utf-8")
+    if instruction is not None:
+        (agent_dir / "tau3-llm-agent.instruction.md").write_text(instruction, encoding="utf-8")
+    (tmp_path / "result.json").write_text(json.dumps({
+        "id": result_id, "reward": reward,
+        "config": {"agent": {"name": "tau3-llm-agent", "model_name": model}},
+    }), encoding="utf-8")
+    return str(tmp_path)
+
+
+def _tau3_msgs():
+    return [
+        {"role": "assistant", "content": "Hi! How can I help you today?",
+         "tool_calls": None, "timestamp": "t0"},
+        {"role": "user", "content": "I need to return an item.", "tool_calls": [], "timestamp": "t1"},
+        {"role": "assistant", "content": None, "timestamp": "t2",
+         "tool_calls": [{"id": "c1", "name": "find_user_id_by_name_zip",
+                         "arguments": {"zip": "19122"}}]},
+        {"role": "tool", "id": "c1", "content": "u_1", "requestor": "assistant",
+         "error": False, "timestamp": "t3"},
+        {"role": "user", "content": "Yes, order W123.", "tool_calls": [], "timestamp": "t4"},
+        {"role": "assistant", "content": None, "timestamp": "t5",
+         "tool_calls": [{"id": "c2", "name": "get_order_details",
+                         "arguments": {"order_id": "W123"}}]},
+        {"role": "tool", "id": "c2", "content": "Error: order not found",
+         "requestor": "assistant", "error": True, "timestamp": "t6"},
+        {"role": "assistant", "content": "I couldn't find that order.",
+         "tool_calls": None, "timestamp": "t7"},
+    ]
+
+
+def test_tau3_runtime_state_is_synthesised_into_atif_steps(tmp_path):
+    trial = _tau3_trial(tmp_path, _tau3_msgs())
+    res = convert(trial, task_id="tau3-retail-7")
+    assert res.doc["atif_version"] == "1.7"
+    kinds = [s["kind"] for s in res.doc["steps"]]
+    assert kinds.count("tool_call") == 2
+    assert kinds.count("tool_result") == 2
+    assert "model_output" in kinds
+    assert any("synthesised from tau3_runtime_state.json" in w for w in res.warnings)
+    assert res.doc["run"]["agent"] == "tau3-llm-agent"
+    assert res.doc["run"]["model"] == "gpt-5.2"
+
+
+def test_tau3_instruction_becomes_task_received_and_user_turns_stay_user(tmp_path):
+    """The real task instruction is task_received; every recorded simulated-user
+    turn keeps user provenance and is never attributed to the agent."""
+    instruction = "You are a retail agent. Follow the policy."
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), instruction=instruction)
+    res = convert(trial, task_id="tau3-retail-7")
+    steps = res.doc["steps"]
+    task = next(s for s in steps if s["kind"] == "task_received")
+    assert task["content"] == instruction
+    user_turns = [s for s in steps
+                  if s["kind"] == "environment_observation" and s["actor"] == "user"]
+    assert [s["content"] for s in user_turns] == ["I need to return an item.", "Yes, order W123."]
+    assert not any(s["actor"] == "main_agent" and s["content"] in (
+        "I need to return an item.", "Yes, order W123.") for s in steps)
+
+
+def test_tau3_tool_error_maps_to_a_failed_tool_result(tmp_path):
+    trial = _tau3_trial(tmp_path, _tau3_msgs())
+    res = convert(trial, task_id="tau3-retail-7")
+    err = next(s for s in res.doc["steps"]
+               if s["kind"] == "tool_result" and s.get("tool") == "get_order_details")
+    assert err["exit_code"] == 1
+    ok = next(s for s in res.doc["steps"]
+              if s["kind"] == "tool_result" and s.get("tool") == "find_user_id_by_name_zip")
+    assert ok.get("exit_code") is None
+
+
+def test_tau3_runtime_state_without_messages_raises(tmp_path):
+    trial = _tau3_trial(tmp_path, [])
+    with pytest.raises(ValueError, match="no messages"):
+        convert(trial, task_id="t")
+
+
+def test_tau3_real_trajectory_wins_over_runtime_state(tmp_path):
+    """A captured ATIF trajectory.json is always used; the runtime-state
+    fallback never overrides it."""
+    steps = [{"step_id": 1, "source": "user", "message": "do it"}]
+    trial = _trial(tmp_path, steps, reward=1.0)
+    (tmp_path / "agent" / "tau3_runtime_state.json").write_text(json.dumps({
+        "domain": "retail", "task_id": "7",
+        "messages": [{"role": "assistant", "content": "should not be used", "tool_calls": None}],
+    }), encoding="utf-8")
+    res = convert(trial, task_id="t")
+    assert not any("synthesised from tau3_runtime_state.json" in w for w in res.warnings)
+    assert any(s.get("content") == "do it" for s in res.doc["steps"])
+    assert not any(s.get("content") == "should not be used" for s in res.doc["steps"])
+
+
+def test_format_diagnostic_evidence_summarises_breakdown():
+    from agr.cli import _format_diagnostic_evidence
+    lines = _format_diagnostic_evidence({
+        "reward_basis": ["DB", "NL_ASSERTION"],
+        "db_check": {"db_match": False, "db_reward": 0.0},
+        "action_checks": [
+            {"action": {"name": "get_user"}, "action_match": True, "tool_type": "read"},
+            {"action": {"name": "return_items"}, "action_match": False, "tool_type": "write"},
+        ],
+        "nl_assertions": [{"met": False, "justification": "missing confirmation"}],
+        "communicate_checks": [{"met": True}],
+    })
+    joined = "\n".join(lines)
+    assert "reward basis: DB, NL_ASSERTION" in joined
+    assert "database: MISMATCH" in joined
+    assert "actions: 2 checked, 1 failed" in joined
+    assert "return_items (write)" in joined
+    assert "nl assertions: 1 checked, 1 unmet" in joined
+    assert "missing confirmation" in joined
+
+
+def test_cli_show_renders_tau3_breakdown(tmp_path, capsys):
+    """The whole point of the breakdown: `agr show` must say WHY the aggregate
+    check failed, not just that it did."""
+    import re
+    from agr.cli import main
+
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), reward=0.0)
+    _write_tau3(trial, _tau3_reward_info(reward=0.0, db_match=False,
+                                         action_matches=(True, False)),
+                status="mismatch", reward=0.0)
+    store = tmp_path / "store"
+    assert main(["--store", str(store), "ingest-harbor", trial]) == 0
+    run_id = re.search(r"Ingested (\S+)", capsys.readouterr().out).group(1)
+    assert main(["--store", str(store), "show", run_id]) == 0
+    out = capsys.readouterr().out
+    assert "database: MISMATCH" in out
+    assert "actions: 2 checked, 1 failed" in out
+    assert "tool_1 (write)" in out
+
+
+def test_cli_task_view_lists_attempts_with_breakdown(tmp_path, capsys):
+    """The per-task multi-attempt view: every attempt of one task with the
+    breakdown behind it, passing-first, so the failing row's difference is
+    visible next to the passing ones."""
+    from agr.cli import main
+
+    store = tmp_path / "store"
+    ok, bad = tmp_path / "ok", tmp_path / "bad"
+    ok.mkdir(); bad.mkdir()
+    _tau3_trial(ok, _tau3_msgs(), reward=1.0, result_id="uuid-ok")
+    _write_tau3(ok, _tau3_reward_info(reward=1.0), status="passed", reward=1.0)
+    _tau3_trial(bad, _tau3_msgs(), reward=0.0, result_id="uuid-bad")
+    _write_tau3(bad, _tau3_reward_info(reward=0.0, db_match=False, action_matches=(True, False)),
+                status="mismatch", reward=0.0)
+    for d in (ok, bad):
+        assert main(["--store", str(store), "ingest-harbor", str(d),
+                     "--task-id", "tau3-retail-7"]) == 0
+    capsys.readouterr()
+    assert main(["--store", str(store), "task", "tau3-retail-7"]) == 0
+    out = capsys.readouterr().out
+    assert "2 attempts · 1 passed · 1 failed" in out
+    assert "[PASSED 1/1]" in out and "[FAILED 0/1]" in out
+    assert "database: MISMATCH" in out
+    assert "tool_1 (write)" in out
+
+
+def test_tau3_status_reward_disagreement_is_warned_not_silent(tmp_path):
+    """A verifier status that disagrees with the reward resolves to the reward
+    (what Harbor recorded) but is never silent."""
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), reward=1.0)
+    _write_tau3(trial, _tau3_reward_info(reward=1.0), status="mismatch", reward=1.0)
+    res = convert(trial, task_id="t")
+    assert res.doc["verifier"]["checks"][0]["status"] == "passed"
+    assert any("the reward was used" in w for w in res.warnings)
+
+
+def test_tau3_runtime_log_error_does_not_emit_a_false_disagreement_warning(tmp_path):
+    """An operational-error status outranks the reward, so there is no
+    disagreement to report — warning 'the reward was used' would be false."""
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), reward=0.0)
+    _write_tau3(trial, {"reward": 0.0, "info": {"note": "Runtime log was not created."}},
+                status="missing_runtime_log", reward=0.0)
+    res = convert(trial, task_id="t")
+    assert res.doc["verifier"]["checks"][0]["status"] == "operational_error"
+    assert not any("the reward was used" in w for w in res.warnings)
+
+
+def test_run_id_is_stable_without_trajectory_or_session_ids(tmp_path):
+    """A trial with no trajectory_id/session_id and no Harbor UUID must derive
+    a stable logical run id, so a re-ingest is a no-op, not a duplicate."""
+    steps = [{"step_id": 1, "source": "user", "message": "do it"}]
+    trial = Path(_trial(tmp_path, steps, reward=1.0))
+    traj_path = trial / "agent" / "trajectory.json"
+    traj = json.loads(traj_path.read_text(encoding="utf-8"))
+    traj.pop("trajectory_id", None)
+    traj.pop("session_id", None)
+    traj_path.write_text(json.dumps(traj), encoding="utf-8")
+    (trial / "result.json").write_text(json.dumps({"reward": 1.0}), encoding="utf-8")
+    first = convert(str(trial), task_id="t")
+    second = convert(str(trial), task_id="t")
+    assert first.doc["run"]["logical_run_id"] == second.doc["run"]["logical_run_id"]
+    # falls back to the trial directory name, not the literal "trajectory"
+    assert "trajectory" not in first.doc["run"]["source_session_id"]
+
+
+def test_model_packet_never_includes_diagnostic_evidence():
+    """diagnostic_evidence carries each task's expected actions and assertions;
+    it is for the reviewer's evidence surface, never the model's input packet."""
+    from agr.model_packet import build_packet
+    from agr.reviewer import ReviewerContext
+    from agr.schema import VerifierCheck
+
+    check = VerifierCheck(
+        check_id="c", run_id="r", source_capture_id="cap", name="c",
+        status="failed", source="native_structured",
+        diagnostic_evidence={"kind": "tau3_reward_info", "db_check": {"db_match": False},
+                             "action_checks": [{"action": {"name": "x"}}]},
+    )
+    ctx = ReviewerContext(run_id="r", source_capture_id="cap", candidates=[], slices=[],
+                          checks=[check], events=[], task_instruction="do it")
+    packet, _red = build_packet(ctx)
+    blob = json.dumps(packet)
+    assert "diagnostic_evidence" not in blob
+    assert "tau3_reward_info" not in blob
+    assert "action_checks" not in blob
+
+
+def test_cli_task_counts_undetermined_separately_from_failed(tmp_path, capsys):
+    """An attempt with no usable verdict is 'undetermined', never lumped into
+    'failed' (the outcome buckets the rest of AGR uses)."""
+    from agr.cli import main
+
+    store = tmp_path / "store"
+    d = tmp_path / "t"; d.mkdir()
+    _tau3_trial(d, _tau3_msgs(), reward=1.0, result_id="uuid-u")
+    # tau3-shaped but with no usable reward/status -> check 'unknown' -> UNDETERMINED
+    _write_tau3(d, {"info": {}}, status="weird", reward=None)
+    assert main(["--store", str(store), "ingest-harbor", str(d), "--task-id", "tau3-retail-7"]) == 0
+    capsys.readouterr()
+    assert main(["--store", str(store), "task", "tau3-retail-7"]) == 0
+    out = capsys.readouterr().out
+    assert "undetermined" in out
+    assert "failed" not in out
+
+
+def test_cli_task_counts_operational_errors_separately_from_failed(tmp_path, capsys):
+    """A tau3 attempt whose runtime log is missing is an operational error — its
+    own bucket in ``agr task``, never lumped into 'failed'."""
+    from agr.cli import main
+
+    store = tmp_path / "store"
+    d = tmp_path / "t"; d.mkdir()
+    _tau3_trial(d, _tau3_msgs(), reward=0.0, result_id="uuid-o")
+    _write_tau3(d, {"reward": 0.0, "info": {"note": "Runtime log was not created."}},
+                status="missing_runtime_log", reward=0.0)
+    assert main(["--store", str(store), "ingest-harbor", str(d), "--task-id", "tau3-retail-7"]) == 0
+    capsys.readouterr()
+    assert main(["--store", str(store), "task", "tau3-retail-7"]) == 0
+    out = capsys.readouterr().out
+    assert "1 operational errors" in out
+    assert "failed" not in out
+    assert "OPERATIONAL_ERROR" in out
+
+
+def test_tau3_instruction_step_carries_the_policy_the_agent_was_given(tmp_path):
+    """The prepended task_received step is the tau3 instruction file, which holds
+    the policy block the agent was given — not its system prompt, and not a
+    simulated-user turn."""
+    policy = "<policy>\n# Retail agent policy\nBe helpful.\n</policy>"
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), instruction=policy)
+    res = convert(trial, task_id="t")
+    task = next(s for s in res.doc["steps"] if s["kind"] == "task_received")
+    assert task["content"] == policy
+    assert any(s["kind"] == "environment_observation" and s["actor"] == "user"
+               for s in res.doc["steps"])
+
+
+def test_tau3_runtime_state_makes_a_trial_discoverable(tmp_path):
+    """A tau3 job has no trajectory.json; batch discovery must still find its
+    trials (and still exclude a bare errored trial)."""
+    from agr.ingest_harbor import iter_trials
+
+    job = tmp_path / "job"
+    trial = job / "tau3-retail-2__abc"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "agent" / "tau3_runtime_state.json").write_text(json.dumps({
+        "domain": "retail", "task_id": "2",
+        "messages": [{"role": "assistant", "content": "hi", "tool_calls": None}],
+    }), encoding="utf-8")
+    (trial / "result.json").write_text(json.dumps({"reward": 1.0}), encoding="utf-8")
+    err = job / "errored__x"
+    err.mkdir()
+    (err / "result.json").write_text("{}", encoding="utf-8")
+    assert [t.name for t in iter_trials(job)] == ["tau3-retail-2__abc"]
+
+
+def test_tau3_run_ingests_end_to_end_with_breakdown(tmp_path):
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), reward=0.0)
+    _write_tau3(trial, _tau3_reward_info(reward=0.0, db_match=False,
+                                         action_matches=(True, False)),
+                status="mismatch", reward=0.0)
+    from agr.checks import extract_checks, outcome
+    from agr.schema import RunSource
+
+    doc = convert(trial, task_id="tau3-retail-7").doc
+    assert [c["check_id"] for c in doc["verifier"]["checks"]] == ["tau3_task_reward"]
+    src = RunSource(run_id=doc["run"]["logical_run_id"], source_capture_id="c",
+                    capture_revision=1, source_hash="h", source_type="harbor",
+                    source_schema="ATIF-v1.7", capture_completeness="complete",
+                    task_id="tau3-retail-7")
+    checks = extract_checks(doc, src)
+    assert outcome(checks)["status"] == "FAILED"
+    assert checks[0].diagnostic_evidence["db_check"]["db_match"] is False
+
+
+def test_tau3_attempts_without_result_json_get_distinct_stable_run_ids(tmp_path):
+    """With no result.json there is no trial UUID. Every attempt of a task
+    shares the runtime state's task_id, so the run id must come from the trial
+    directory name, or attempts 2..N would ingest as duplicates of attempt 1."""
+    trials = []
+    for name in ("tau3-retail-7__aaa", "tau3-retail-7__bbb"):
+        d = tmp_path / name
+        _tau3_trial(d, _tau3_msgs(), task_id="7")
+        (d / "result.json").unlink()
+        trials.append(str(d))
+    a, b = (convert(t, task_id="tau3-retail-7").doc["run"]["logical_run_id"] for t in trials)
+    assert a != b
+    # stable: the same trial converted twice yields the same id
+    assert convert(trials[0], task_id="tau3-retail-7").doc["run"]["logical_run_id"] == a
+
+
+def _tau3_bare_trial(parent, name, *, task_id="7", domain="retail"):
+    """A tau3 trial with no result.json (so no trial UUID and no task name)."""
+    d = parent / name
+    _tau3_trial(d, _tau3_msgs(), task_id=task_id)
+    state = d / "agent" / "tau3_runtime_state.json"
+    data = json.loads(state.read_text(encoding="utf-8"))
+    if domain is None:
+        data.pop("domain")
+    else:
+        data["domain"] = domain
+    state.write_text(json.dumps(data), encoding="utf-8")
+    (d / "result.json").unlink()
+    return str(d)
+
+
+def test_tau3_attempts_without_result_json_share_a_task_id_from_the_trial_dir(tmp_path):
+    """Attempts of one task must group under one task id (cmd_task groups by
+    it) while keeping distinct run ids: the task segment of Harbor's
+    ``<task>__<suffix>`` trial directory is source-supplied, per-task structure."""
+    a, b = (convert(_tau3_bare_trial(tmp_path, f"tau3-retail-7__{s}"))
+            for s in ("aaa", "bbb"))
+    assert a.doc["run"]["task_id"] == b.doc["run"]["task_id"] == "tau3-retail-7"
+    assert a.doc["run"]["logical_run_id"] != b.doc["run"]["logical_run_id"]
+    assert any("task_id taken from the trial directory name" in w
+               and "tau3-retail-7__aaa" in w for w in a.warnings)
+    # stable across re-ingest
+    again = convert(str(tmp_path / "tau3-retail-7__aaa"))
+    assert again.doc["run"]["logical_run_id"] == a.doc["run"]["logical_run_id"]
+
+
+def test_tau3_task_id_falls_back_to_runtime_state_domain_and_task_id(tmp_path):
+    """No ``__`` in the trial dir name: the tau3 adapter's own task naming,
+    ``tau3-<domain>-<task_id>``, is rebuilt from the runtime state."""
+    res = convert(_tau3_bare_trial(tmp_path, "attempt1", task_id=7))
+    assert res.doc["run"]["task_id"] == "tau3-retail-7"
+    assert any("task_id taken from the tau3 runtime state" in w for w in res.warnings)
+    # a state missing either half is not guessed at
+    for kwargs in ({"domain": None}, {"task_id": ""}, {"task_id": None}):
+        res = convert(_tau3_bare_trial(tmp_path, "attempt2", **kwargs))
+        assert res.doc["run"]["task_id"].startswith("harbor-trial-")
+
+
+def test_tau3_task_id_keeps_the_per_trial_fallback_when_nothing_names_the_task(tmp_path):
+    a, b = (convert(_tau3_bare_trial(tmp_path, name, task_id=None, domain=None))
+            for name in ("attempt-a", "attempt-b"))
+    assert a.doc["run"]["task_id"].startswith("harbor-trial-")
+    assert a.doc["run"]["task_id"] != b.doc["run"]["task_id"]
+    assert a.doc["run"]["logical_run_id"] != b.doc["run"]["logical_run_id"]
+    assert not any("task_id taken from" in w for w in a.warnings)
+
+
+def test_tau3_task_id_from_result_json_wins_over_trial_dir_and_state(tmp_path):
+    d = tmp_path / "tau3-retail-7__aaa"
+    _tau3_trial(d, _tau3_msgs(), task_id="7")
+    data = json.loads((d / "result.json").read_text(encoding="utf-8"))
+    data["task_name"] = "from-result"
+    (d / "result.json").write_text(json.dumps(data), encoding="utf-8")
+    res = convert(str(d))
+    assert res.doc["run"]["task_id"] == "from-result"
+    assert any("task_id taken from result.json" in w for w in res.warnings)
+    assert not any("trial directory name" in w for w in res.warnings)
+
+
+def test_tau3_flat_layout_trial_is_discovered_and_converts(tmp_path):
+    """_trial_markers accepts <trial>/tau3_runtime_state.json; the trial must
+    then actually convert, with its instruction file and verifier sidecar found
+    beside / under the flat trial directory."""
+    from agr.ingest_harbor import iter_trials
+
+    job = tmp_path / "job"
+    trial = job / "tau3-retail-3__flat"
+    trial.mkdir(parents=True)
+    (trial / "tau3_runtime_state.json").write_text(json.dumps({
+        "domain": "retail", "task_id": "3", "messages": _tau3_msgs(),
+    }), encoding="utf-8")
+    (trial / "tau3-llm-agent.instruction.md").write_text("flat policy", encoding="utf-8")
+    (trial / "result.json").write_text(json.dumps({"id": "uuid-flat", "reward": 1.0}),
+                                       encoding="utf-8")
+    _write_tau3(trial, _tau3_reward_info())
+    assert [t.name for t in iter_trials(job)] == ["tau3-retail-3__flat"]
+    res = convert(str(trial), task_id="tau3-retail-3")
+    task = next(s for s in res.doc["steps"] if s["kind"] == "task_received")
+    assert task["content"] == "flat policy"
+    assert [c["check_id"] for c in res.doc["verifier"]["checks"]] == ["tau3_task_reward"]
+    assert res.doc["run"]["logical_run_id"].endswith("uuid-flat")
+
+
+def test_tau3_unmapped_status_warning_is_truthful_when_reward_decides(tmp_path):
+    """An unknown status string with a numeric reward resolves to the reward's
+    pass/fail; the warning must not claim the status was kept as 'unknown'."""
+    trial = _tau3_trial(tmp_path, _tau3_msgs(), reward=0.0)
+    _write_tau3(trial, _tau3_reward_info(reward=0.0), status="agent_error", reward=0.0)
+    res = convert(trial, task_id="t")
+    assert res.doc["verifier"]["checks"][0]["status"] == "failed"
+    warning = next(w for w in res.warnings if "unmapped tau3 verifier status" in w)
+    assert "'agent_error'" in warning
+    assert "status taken from reward (failed)" in warning
+    assert "unknown" not in warning
+
+
+def test_tau3_unmapped_status_without_reward_is_preserved_as_unknown(tmp_path):
+    trial = _tau3_trial(tmp_path, _tau3_msgs())
+    _write_tau3(trial, {"info": {}}, status="weird", reward=None)
+    res = convert(trial, task_id="t")
+    assert res.doc["verifier"]["checks"][0]["status"] == "unknown"
+    assert any("unmapped tau3 verifier status 'weird'; preserved as 'unknown'" in w
+               for w in res.warnings)
+
+
+def test_tau3_tool_message_with_unmatched_id_is_kept_but_warned(tmp_path):
+    """Results are the consecutive tool messages after a turn. One whose id is
+    not among the turn's tool_calls is still attached (never dropped), but the
+    mismatch is surfaced."""
+    msgs = _tau3_msgs()
+    msgs[3]["id"] = "stray"
+    res = convert(_tau3_trial(tmp_path, msgs), task_id="t")
+    assert [s["kind"] for s in res.doc["steps"]].count("tool_result") == 2
+    mismatches = [w for w in res.warnings if "matches no tool call" in w]
+    assert len(mismatches) == 1 and "'stray'" in mismatches[0]
+
+
+def test_tau3_matched_tool_messages_emit_no_id_warning(tmp_path):
+    res = convert(_tau3_trial(tmp_path, _tau3_msgs()), task_id="t")
+    assert not any("matches no tool call" in w for w in res.warnings)

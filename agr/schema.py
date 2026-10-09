@@ -41,7 +41,19 @@ CAPABILITY_LEVELS = ("unavailable", "final_only", "checkpoint_only", "partial", 
 CAPABILITY_RANK = {level: i for i, level in enumerate(CAPABILITY_LEVELS)}
 
 # Verifier check status and source (spec §6.6).
-CHECK_STATUSES = {"passed", "failed", "skipped", "error", "unknown"}
+#
+# ``operational_error`` is NOT an agent failure and NOT "no verdict": the
+# attempt did not produce a valid result because the harness around the agent
+# broke (rate limit, simulated-user or judge crash, runner or tool-server
+# failure). It rolls the run up to ``OPERATIONAL_ERROR`` and is excluded from
+# per-attempt success denominators (agr.versions). Agent timeouts and
+# step-limit hits are agent failures and must be ingested as ``failed``.
+CHECK_STATUSES = {"passed", "failed", "skipped", "error", "unknown", "operational_error"}
+
+# Every run-outcome status ``agr.checks.outcome`` can emit. Consumers that
+# branch on the status string (queue, versions, UI) must classify every member
+# explicitly; tests/test_outcome_status_coverage.py fails when one is missed.
+OUTCOME_STATUSES = ("PASSED", "FAILED", "UNDETERMINED", "UNVERIFIED", "OPERATIONAL_ERROR")
 CHECK_SOURCES = {
     "native_structured",
     "instrumented_assertion",
@@ -300,6 +312,19 @@ class VerifierCheck:
     observed: Optional[list] = None
     source_pointers: list[str] = field(default_factory=list)
     derivation_version: str = ""
+    # Diagnostic evidence carried ALONGSIDE an authoritative check without
+    # becoming a check itself. The tau3-bench verifier returns a full tau2
+    # reward breakdown (db_check, action_checks, nl_assertions,
+    # env_assertions, communicate_checks, reward_basis, reward_breakdown)
+    # behind one aggregate pass/fail. Attaching it here keeps that evidence
+    # available for diagnosis while leaving outcome(), the detectors and the
+    # failure-mode counts to the single aggregate check — emitting each
+    # breakdown entry as its own check would inflate every failed-check count
+    # and could flip a run's outcome. This is diagnostic, never a verdict.
+    # Its optional ``state_diff`` key is a list of ``diagnostic_entry`` dicts —
+    # one per database-diff path from an environment verifier, with writer
+    # provenance; every other key is adapter-defined and passed through.
+    diagnostic_evidence: Optional[dict] = None
     # AGR-04 (pre-AGR-01 numbering): when the evidence was collected —
     # post-run verifier output is labelled so it is never presented as
     # information the agent had.
@@ -346,6 +371,44 @@ class VerifierCheck:
         d = _clean(asdict(self))
         d["effective_status"] = self.effective_status
         return d
+
+
+WRITER_STATUSES = {"written", "no_writer", "unknown"}
+
+
+def diagnostic_entry(path: str, change_type: str, *, observed=None, expected=None,
+                     last_writer_event_id: Optional[str] = None,
+                     writer_status: Optional[str] = None,
+                     provenance_version: str = "") -> dict:
+    """One ``diagnostic_evidence["state_diff"]`` entry (a diff path) with provenance.
+
+    ``writer_status`` is ``written`` (``last_writer_event_id`` names the tool
+    call that last wrote ``path``), ``no_writer`` (the field differs because an
+    action was omitted — nothing wrote it), or ``unknown`` (provenance was not
+    derivable). A tool call that last wrote a field can hide an earlier
+    decision, so this is dependency evidence, never a cause.
+    """
+    if writer_status is None:
+        writer_status = "written" if last_writer_event_id else "unknown"
+    if writer_status not in WRITER_STATUSES:
+        raise ValueError(f"invalid writer_status {writer_status!r}")
+    if writer_status == "written" and not last_writer_event_id:
+        raise ValueError("writer_status 'written' requires last_writer_event_id")
+    if writer_status != "written" and last_writer_event_id:
+        raise ValueError(f"writer_status {writer_status!r} cannot carry a writer event id")
+    # ``observed``/``expected`` keep an explicit null: "the field is null" and
+    # "the field is absent" are different diff facts, so they are not _clean'd.
+    entry = {
+        "path": path,
+        "change_type": change_type,
+        "observed": observed,
+        "expected": expected,
+        "writer_status": writer_status,
+        "provenance_version": provenance_version,
+    }
+    if last_writer_event_id:
+        entry["last_writer_event_id"] = last_writer_event_id
+    return entry
 
 
 @dataclass

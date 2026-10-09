@@ -294,6 +294,50 @@ def _print_contract(analysis) -> None:
     print()
 
 
+def _format_diagnostic_evidence(ev) -> list[str]:
+    """Human-readable lines for a check's ``diagnostic_evidence``.
+
+    Diagnostic, never a verdict: this is why an aggregate check reached its
+    status. tau3-bench attaches the tau2 reward breakdown here — which DB
+    field mismatched, which actions failed — behind the one pass/fail check.
+    """
+    if not isinstance(ev, dict):
+        return []
+    lines: list[str] = []
+    basis = ev.get("reward_basis")
+    if basis:
+        lines.append("reward basis: " + ", ".join(str(b) for b in basis))
+    db = ev.get("db_check")
+    if isinstance(db, dict) and "db_match" in db:
+        lines.append("database: " + ("match" if db.get("db_match") else "MISMATCH"))
+    actions = ev.get("action_checks")
+    if isinstance(actions, list) and actions:
+        failed = [a for a in actions if isinstance(a, dict) and a.get("action_match") is False]
+        lines.append(f"actions: {len(actions)} checked, {len(failed)} failed")
+        for a in failed[:5]:
+            act = a.get("action") if isinstance(a.get("action"), dict) else {}
+            name = act.get("name") or "action"
+            kind = a.get("tool_type")
+            lines.append("  - " + name + (f" ({kind})" if kind else ""))
+    nls = ev.get("nl_assertions")
+    if isinstance(nls, list) and nls:
+        unmet = [x for x in nls if isinstance(x, dict) and x.get("met") is False]
+        lines.append(f"nl assertions: {len(nls)} checked, {len(unmet)} unmet")
+        for x in unmet[:3]:
+            lines.append("  - " + str(x.get("justification") or x.get("assertion") or "unmet"))
+    comms = ev.get("communicate_checks")
+    if isinstance(comms, list) and comms:
+        unmet = [x for x in comms if isinstance(x, dict) and x.get("met") is False]
+        lines.append(f"communicate checks: {len(comms)} checked, {len(unmet)} unmet")
+    diff = ev.get("state_diff")
+    if isinstance(diff, list) and diff:
+        lines.append(f"state diff: {len(diff)} path(s)")
+        for d in [d for d in diff if isinstance(d, dict)][:5]:
+            lines.append(f"  - {d.get('path')} ({d.get('change_type') or 'changed'}; "
+                         f"writer: {d.get('writer_status') or 'unknown'})")
+    return lines
+
+
 def _print_show(analysis) -> None:
     rs = analysis.run_source
     o = analysis.outcome
@@ -314,6 +358,8 @@ def _print_show(analysis) -> None:
         if c.status == "failed" and c.expected is not None:
             line += f"  expected={c.expected} observed={c.observed}"
         print(line)
+        for detail in _format_diagnostic_evidence(c.diagnostic_evidence):
+            print(f"      {detail}")
     print()
 
     if analysis.evidence_slices:
@@ -509,6 +555,62 @@ def cmd_runs(args) -> int:
         passed, total = o.get("passed"), o.get("total")
         counts = f"{passed}/{total}" if passed is not None else "?/?"
         print(f"{s['run_id']}  [{status} {counts}]  {s.get('task_id') or ''}{wm}")
+    return 0
+
+
+def cmd_task(args) -> int:
+    """Per-task, multi-attempt view: every attempt of one task side by side.
+
+    Answers "where do failing attempts split from passing ones" at a glance:
+    each attempt's outcome plus the verifier breakdown behind it (DB match,
+    failed actions with their read/write type, unmet assertions). Attempts are
+    ordered passing-first so a failing row's breakdown sits next to the passing
+    rows it differs from. Attempts are bucketed with the same outcome buckets
+    the rest of AGR uses (pass / fail / undetermined / unverified /
+    operational_error): an operational error or an undetermined run is never
+    counted as a plain failure.
+    """
+    from . import read
+    from .queue import outcome_bucket
+
+    store = Store(args.store)
+    summaries = [s for s in read.list_runs(store) if s.get("task_id") == args.task_id]
+    if not summaries:
+        print(f"no runs for task {args.task_id!r} in store {args.store!r}", file=sys.stderr)
+        return 1
+
+    # pass first, then the softer non-passes, failures last, so a failing row's
+    # breakdown sits next to the passing rows it differs from.
+    _order = {"pass": 0, "operational_error": 1, "undetermined": 2,
+              "unverified": 3, "fail": 4}
+
+    def _bucket(s) -> str:
+        return outcome_bucket((s["outcome"] or {}).get("status"))
+
+    summaries.sort(key=lambda s: (_order.get(_bucket(s), 9), s["run_id"]))
+    buckets: dict[str, int] = {}
+    for s in summaries:
+        buckets[_bucket(s)] = buckets.get(_bucket(s), 0) + 1
+    labels = {"pass": "passed", "fail": "failed", "undetermined": "undetermined",
+              "unverified": "unverified", "operational_error": "operational errors"}
+    # Every bucket present is shown, in a fixed order; an unknown bucket prints
+    # its raw name rather than being silently dropped from the header.
+    shown = [k for k in _order if buckets.get(k)]
+    shown += [k for k in buckets if k not in _order]
+    parts = [f"{buckets[k]} {labels.get(k, k)}" for k in shown]
+    print(f"{args.task_id}  ·  {len(summaries)} attempts · " + " · ".join(parts))
+    print()
+    for s in summaries:
+        o = s["outcome"] or {}
+        rid = s["run_id"]
+        short = rid.rsplit("__", 1)[-1][:12]
+        status = o.get("status") or "?"
+        counts = f"{o.get('passed')}/{o.get('total')}" if o.get("passed") is not None else "?/?"
+        print(f"  [{status} {counts}]  {short}")
+        review = read.get_review(store, rid)
+        for c in review.get("checks", []):
+            for detail in _format_diagnostic_evidence(c.get("diagnostic_evidence")):
+                print(f"        {detail}")
     return 0
 
 
@@ -1133,6 +1235,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("runs", help="list every run in the store")
     pr.set_defaults(func=cmd_runs)
+
+    pt = sub.add_parser("task",
+                        help="per-task attempts view: every attempt of one task with its verifier breakdown")
+    pt.add_argument("task_id")
+    pt.set_defaults(func=cmd_task)
 
     pe = sub.add_parser("episodes",
                         help="fleet view: group recovery episodes across every run")

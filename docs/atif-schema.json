@@ -285,7 +285,8 @@
                   "failed",
                   "skipped",
                   "error",
-                  "unknown"
+                  "unknown",
+                  "operational_error"
                 ]
               },
               "source": {
@@ -307,6 +308,33 @@
                 "type": "array",
                 "items": {
                   "type": "string"
+                }
+              },
+              "diagnostic_evidence": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Diagnostic evidence that explains this check, never counted as a check and never changes the run outcome. Adapter-defined keys (e.g. tau3's reward breakdown) pass through verbatim.",
+                "properties": {
+                  "state_diff": {
+                    "type": "array",
+                    "description": "One entry per state-diff path, with writer provenance.",
+                    "items": {
+                      "type": "object",
+                      "required": ["path"],
+                      "properties": {
+                        "path": {"type": "string"},
+                        "change_type": {"type": "string"},
+                        "observed": {},
+                        "expected": {},
+                        "last_writer_event_id": {"type": "string"},
+                        "writer_status": {
+                          "type": "string",
+                          "enum": ["written", "no_writer", "unknown"]
+                        },
+                        "provenance_version": {"type": "string"}
+                      }
+                    }
+                  }
                 }
               }
             }

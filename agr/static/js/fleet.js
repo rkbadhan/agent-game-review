@@ -276,6 +276,7 @@ const EQ_OUTCOMES = [
   ["fail", "Failing runs"],
   ["undetermined", "Undetermined runs (verifier ran, no clean verdict)"],
   ["unverified", "Unverified runs (no verifier evidence)"],
+  ["operational_error", "Operational-error runs (harness broke; not an agent failure)"],
 ];
 
 function eqRunRow(runId, eventIds, note, violations) {
@@ -433,7 +434,7 @@ function renderFleetExecutionQuality(matrix) {
   const mostlyUnevaluated = unevaluatedDims * 2 >= dimKeys.length;
   const t = el("table", "vs-table eq-table");
   t.append(rowEls("tr", ["", "Dimension", "Coverage", "PASS", "FAIL",
-                          "UNDETERMINED", "UNVERIFIED"], "th"));
+                          "UNDETERMINED", "UNVERIFIED", "OP. ERROR"], "th"));
   const labels = {
     context_bloat: "Context bloat", latency: "Slow generation", redundant_work: "Redundant work",
   };
@@ -467,7 +468,7 @@ function renderFleetExecutionQuality(matrix) {
       tr.append(eqCell(metric));
     }
     t.append(tr);
-    const detailCell = el("td"); detailCell.colSpan = 8;
+    const detailCell = el("td"); detailCell.colSpan = 9;
     detail.append(el("summary", null, "Runs behind " + label));
     detail.append(eqDetail(byOutcome, key));
     detailCell.append(detail);

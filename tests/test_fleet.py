@@ -173,7 +173,8 @@ def test_group_outcome_split_reads_each_affected_runs_outcome(tmp_path):
     d = g.to_dict()
     # Every bucket is present in the payload, even at zero.
     assert d["outcome_split"] == {"pass": 1, "fail": 1,
-                                 "undetermined": 0, "unverified": 1}
+                                 "undetermined": 0, "unverified": 1,
+                                 "operational_error": 0}
     assert d["outcome_mixed"] is True
 
 

@@ -25,6 +25,15 @@ This adapter converts one such trial into the minimal ATIF-shaped document
   exception), so a Harbor trial ingests with real verifier evidence out of the
   box. An explicit sidecar always wins; a trial with neither ingests honestly as
   UNVERIFIED, never a vacuous pass.
+* **tau3-bench** — its verifier writes ``verifier/result.json`` with a full tau2
+  ``reward_info`` breakdown (``db_check``, ``action_checks``, ``nl_assertions``,
+  ``env_assertions``, ``communicate_checks``, ``reward_basis``,
+  ``reward_breakdown``) behind one aggregate reward. Harbor's own ``result.json``
+  keeps only the reward, so this adapter reads the sidecar and attaches the
+  breakdown as ``diagnostic_evidence`` on the ONE aggregate check — never as
+  separate checks, which would inflate every failed-check count. The tau3 agent
+  also writes no ATIF ``agent/trajectory.json``, so the adapter synthesises one
+  from ``agent/tau3_runtime_state.json`` (see ``_tau3_trajectory``).
 
 This is a pure format mapping: no analysis, no model calls, nothing invented
 that the source did not capture. Every conservative choice is recorded as a
@@ -90,7 +99,24 @@ from .schema import CHECK_STATUSES
 #      code or message. Downstream (agr/_util.py:is_tool_failure) excludes it
 #      from failure/recovery classification, the same way permission_denied
 #      already is.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.10"
+# 0.12: a tau3 trial without a Harbor result.json UUID now takes its synthesised
+#      trajectory id from the trial directory name instead of the runtime
+#      state's task_id (shared by every attempt of a task) or a constant, so
+#      attempts no longer hash to one run id. Likewise its task id, absent a
+#      caller/result.json name, now comes from the trial directory's task
+#      segment, else the state's domain + task_id (``tau3-<domain>-<id>``), so
+#      attempts of one task group under one task id instead of each getting a
+#      ``harbor-trial-<dir>`` id. Bump requires re-ingest: task and run ids
+#      change for such tau3 trials.
+# 0.13: a tau3 verifier status of missing_runtime_log, invalid_runtime_log or
+#      tau2_runtime_log_error now ingests as ``operational_error`` instead of
+#      ``error``. All three are verifier/harness-side (the runtime log was never
+#      written, was not valid JSON, or the tau2 evaluator raised), so the run
+#      rolls up to OPERATIONAL_ERROR and leaves success denominators rather
+#      than landing in UNDETERMINED. ``agent_error`` is unchanged: it is the
+#      agent's failure and stays reward-decided. Bump requires re-ingest: the
+#      check status and run outcome change for such tau3 trials.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.13"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -275,10 +301,16 @@ def _trial_markers(p: Path) -> bool:
     Requires a trajectory — a bare ``result.json`` proves nothing is reviewable
     (an errored trial, or a job directory's roll-up result, which also carries a
     top-level ``result.json`` and must not be mistaken for a trial).
+
+    tau3-bench writes no ATIF ``trajectory.json``; its conversation lives in
+    ``agent/tau3_runtime_state.json``, which the adapter synthesises a
+    trajectory from. Accepting it here is what lets a tau3 job be batch-ingested.
     """
     return (
         (p / "agent" / "trajectory.json").exists()
         or (p / "trajectory.json").exists()
+        or (p / "agent" / "tau3_runtime_state.json").exists()
+        or (p / "tau3_runtime_state.json").exists()
     )
 
 
@@ -305,8 +337,9 @@ def iter_trials_detailed(source: str | Path) -> list[tuple[Path, str | None]]:
             if _trial_markers(child):
                 accounted.append((child, None))
             else:
-                accounted.append((child, "no reviewable trajectory (agent/trajectory.json missing "
-                                          "— errored trial or job roll-up)"))
+                accounted.append((child, "no reviewable trajectory (agent/trajectory.json or "
+                                          "agent/tau3_runtime_state.json missing — errored trial "
+                                          "or job roll-up)"))
         if any(reason is None for _, reason in accounted):
             return accounted
         # A directory *of* job directories (e.g. a committed corpus root):
@@ -325,8 +358,9 @@ def iter_trials_detailed(source: str | Path) -> list[tuple[Path, str | None]]:
                 if _trial_markers(trial):
                     nested.append((trial, None))
                 else:
-                    nested.append((trial, "no reviewable trajectory (agent/trajectory.json missing "
-                                              "— errored trial or job roll-up)"))
+                    nested.append((trial, "no reviewable trajectory (agent/trajectory.json or "
+                                              "agent/tau3_runtime_state.json missing — errored "
+                                              "trial or job roll-up)"))
         if any(reason is None for _, reason in nested):
             # A job whose trials were collected is not itself an exclusion —
             # drop level-1 reasons for directories that turned out to be jobs.
@@ -339,7 +373,8 @@ def iter_trials_detailed(source: str | Path) -> list[tuple[Path, str | None]]:
         raise ValueError(
             f"no Harbor trial with a reviewable trajectory found under {p}: "
             f"expected trial directories containing agent/trajectory.json (or "
-            f"trajectory.json). Note: oracle runs record no trajectory."
+            f"agent/tau3_runtime_state.json for tau3-bench). Note: oracle runs "
+            f"record no trajectory."
         )
     raise ValueError(f"no such Harbor source: {p}")
 
@@ -356,20 +391,28 @@ def iter_trials(source: str | Path) -> list[Path]:
     return [path for path, reason in iter_trials_detailed(source) if reason is None]
 
 
-def _resolve_paths(source: str | Path) -> tuple[Path, Path | None, list[str]]:
-    """Resolve one Harbor trial to (trajectory.json, result.json | None).
+def _resolve_paths(
+    source: str | Path,
+) -> tuple[Path | None, Path | None, list[str], Path | None]:
+    """Resolve one Harbor trial to its trajectory, result and tau3 state.
 
-    ``source`` may be a trial directory or a path straight to a
-    ``trajectory.json``. The result sidecar is looked for only in the layout
-    implied by what was given — ``<trial>/agent/trajectory.json`` implies
-    ``<trial>/result.json``, and a flat ``<trial>/trajectory.json`` implies its
-    own directory — never by reaching upward past the trial boundary, so a flat
-    layout cannot pick up some other trial's result. Absences are reported,
-    not guessed.
+    Returns ``(trajectory.json | None, result.json | None, warnings,
+    tau3_runtime_state.json | None)``. ``source`` may be a trial directory or a
+    path straight to a ``trajectory.json``. The result sidecar is looked for
+    only in the layout implied by what was given — ``<trial>/agent/
+    trajectory.json`` implies ``<trial>/result.json``, and a flat
+    ``<trial>/trajectory.json`` implies its own directory — never by reaching
+    upward past the trial boundary, so a flat layout cannot pick up some other
+    trial's result. Absences are reported, not guessed.
+
+    When no ``trajectory.json`` exists but a tau3 ``tau3_runtime_state.json``
+    does, the trajectory is ``None`` and the tau3 state is returned so the
+    caller can synthesise one (the tau3 agent never writes ATIF).
     """
     warnings: list[str] = []
     p = Path(source)
     if p.is_dir():
+        trial_dir = p
         traj = p / "agent" / "trajectory.json"
         if not traj.exists():
             traj = p / "trajectory.json"  # flatter layouts
@@ -378,18 +421,29 @@ def _resolve_paths(source: str | Path) -> tuple[Path, Path | None, list[str]]:
         traj = p
         if traj.parent.name == "agent":
             # <trial>/agent/trajectory.json -> <trial>/result.json
-            result = traj.parent.parent / "result.json"
+            trial_dir = traj.parent.parent
         else:
             # flat layout: the trajectory's own directory is the trial dir
-            result = traj.parent / "result.json"
+            trial_dir = traj.parent
+        result = trial_dir / "result.json"
+
+    # tau3-bench writes no ATIF trajectory.json: its recorded conversation is
+    # the runtime server's log. Offer that as a fallback so the trial still
+    # ingests, rather than failing on a file the tau3 agent never produces.
+    tau3_state = trial_dir / "agent" / "tau3_runtime_state.json"
+    if not tau3_state.is_file():
+        tau3_state = trial_dir / "tau3_runtime_state.json"  # flatter layouts
     if not traj.exists():
-        raise ValueError(f"no Harbor trajectory found at {traj}")
+        if tau3_state.is_file():
+            traj = None
+        else:
+            raise ValueError(f"no Harbor trajectory found at {traj}")
     if result is not None and not result.exists():
         warnings.append(
             f"no result.json beside {Path(source).name}: reward-based verifier not synthesised"
         )
         result = None
-    return traj, result, warnings
+    return traj, result, warnings, (tau3_state if traj is None else None)
 
 
 def _execution_run_id(task_id: str, session_id: str, result_data: dict,
@@ -598,6 +652,368 @@ def _verifier_from_ctrf(trial_dir: Path, result_data: dict) -> tuple[dict | None
     return verifier, warnings
 
 
+# --- tau3-bench: full tau2 reward breakdown behind one aggregate reward -------
+#
+# The tau3 verifier (``tests/evaluate.py``) writes ``verifier/result.json``:
+#
+#     {"status": "passed"|"mismatch"|"missing_runtime_log"|...,
+#      "reward": 1.0,
+#      "used_tau2_evaluator": true,
+#      "reward_info": {"reward": ..., "db_check": {...},
+#                      "action_checks": [...], "nl_assertions": [...],
+#                      "env_assertions": [...], "communicate_checks": [...],
+#                      "reward_basis": [...], "reward_breakdown": {...}}}
+#
+# Harbor's own ``result.json`` carries only ``verifier_result.rewards.reward``;
+# the breakdown is dropped there. Reading the sidecar lets a review see WHY an
+# attempt failed (which DB field, which action, which assertion) rather than
+# only that it did.
+#
+# The breakdown is attached as ``diagnostic_evidence`` on the single aggregate
+# check, never as separate checks: outcome(), the detectors and the failure-mode
+# counts all count every failed check, so per-db-field or per-action checks
+# would inflate those counts and could flip a run's outcome. A test pins that
+# adding or removing breakdown entries never changes the outcome.
+
+_TAU3_VERIFIER_STATUS = {
+    "passed": "passed",
+    "mismatch": "failed",
+    # Verifier/harness-side: the runtime log was never written, was not valid
+    # JSON, or the tau2 evaluator raised. No valid verdict on the agent, so
+    # these are operational errors, not agent failures and not "unknown".
+    "missing_runtime_log": "operational_error",
+    "invalid_runtime_log": "operational_error",
+    "tau2_runtime_log_error": "operational_error",
+}
+
+# Mapped statuses that mean "the verifier itself did not produce a verdict".
+# They outrank the reward (a 0.0 reward beside a broken verifier is not a
+# demonstrated agent failure) and leave no status/reward disagreement to report.
+_TAU3_NO_VERDICT_STATUSES = ("error", "operational_error")
+
+_TAU3_REWARD_INFO_KEYS = (
+    "db_check",
+    "action_checks",
+    "nl_assertions",
+    "env_assertions",
+    "communicate_checks",
+    "reward_basis",
+    "reward_breakdown",
+)
+
+
+def _verifier_from_tau3(trial_dir: Path, result_data: dict) -> tuple[dict | None, list[str]]:
+    """Read a tau3 ``verifier/result.json`` into ONE aggregate check.
+
+    Returns ``None`` when the trial has no such sidecar or it does not carry the
+    tau3 shape, so the caller falls through to the Terminal-Bench reward.
+    """
+    path = trial_dir / "verifier" / "result.json"
+    if not path.is_file():
+        return None, []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        return None, [
+            f"verifier/result.json unreadable ({exc}); falling back to the aggregate reward"
+        ]
+    if not isinstance(payload, dict):
+        return None, []
+
+    reward_info = payload.get("reward_info")
+    # ``used_tau2_evaluator`` is present even on the error paths
+    # (missing/invalid runtime log), where reward_info carries no tau2 keys.
+    tau3_shaped = isinstance(reward_info, dict) and (
+        "used_tau2_evaluator" in payload
+        or any(key in reward_info for key in _TAU3_REWARD_INFO_KEYS)
+    )
+    if not tau3_shaped:
+        return None, []
+
+    warnings: list[str] = []
+    reward = reward_info.get("reward")
+    raw_status = payload.get("status")
+    mapped = _TAU3_VERIFIER_STATUS.get(raw_status) if isinstance(raw_status, str) else None
+
+    # An explicit error status outranks a 0.0 reward: a crashed/missing runtime
+    # log is an operational error, not a demonstrated agent failure.
+    if mapped in _TAU3_NO_VERDICT_STATUSES:
+        status = mapped
+    elif isinstance(reward, bool):
+        status = "passed" if reward else "failed"
+    elif isinstance(reward, (int, float)):
+        status = "passed" if reward >= 1.0 else "failed"
+        if 0.0 < reward < 1.0:
+            warnings.append(
+                f"partial tau3 reward {reward} recorded as failed (tau3 pass is reward==1.0)"
+            )
+    elif mapped is not None:
+        status = mapped
+    else:
+        status = "unknown"
+        warnings.append(
+            f"verifier/result.json has no usable reward/status "
+            f"(reward={reward!r}, status={raw_status!r}); verifier status is 'unknown'"
+        )
+    if mapped is None and isinstance(raw_status, str):
+        # Say where the status really came from: a numeric/bool reward decides
+        # it even when the status string is unknown to us.
+        detail = (
+            f"status taken from reward ({status})"
+            if status != "unknown"
+            else "preserved as 'unknown'"
+        )
+        warnings.append(f"unmapped tau3 verifier status {raw_status!r}; {detail}")
+    # A verifier status that disagrees with the reward (e.g. status "mismatch"
+    # with reward 1.0) resolves to the reward — it is what Harbor recorded — but
+    # never silently: the disagreement is surfaced so a reviewer can judge it.
+    # Only when the reward actually decided the status: an explicit error or
+    # operational_error status outranks the reward (see above), so there is no
+    # disagreement to report and warning "the reward was used" would be false.
+    reward_status = None
+    if isinstance(reward, bool):
+        reward_status = "passed" if reward else "failed"
+    elif isinstance(reward, (int, float)):
+        reward_status = "passed" if reward >= 1.0 else "failed"
+    if (mapped not in (None, *_TAU3_NO_VERDICT_STATUSES)
+            and reward_status is not None and mapped != reward_status):
+        warnings.append(
+            f"tau3 verifier status {raw_status!r} maps to {mapped!r} but reward "
+            f"{reward!r} implies {reward_status!r}; the reward was used"
+        )
+
+    evidence: dict[str, Any] = {"kind": "tau3_reward_info"}
+    if raw_status is not None:
+        evidence["verifier_status"] = raw_status
+    if reward is not None:
+        evidence["reward"] = reward
+    for key in _TAU3_REWARD_INFO_KEYS:
+        if key in reward_info:
+            evidence[key] = reward_info[key]
+
+    check = {
+        "check_id": "tau3_task_reward",
+        "name": "tau3 task reward (aggregate; tau2 evaluate_simulation)",
+        "status": status,
+        "source": "native_structured",
+        "timing": "post_run",
+        "source_pointers": ["verifier/result.json"],
+        "diagnostic_evidence": evidence,
+    }
+    raw = {
+        "status": raw_status,
+        "reward": reward,
+        "reward_basis": reward_info.get("reward_basis"),
+        "reward_breakdown": reward_info.get("reward_breakdown"),
+    }
+    return {"raw_output": json.dumps(raw, ensure_ascii=False), "checks": [check]}, warnings
+
+
+# --- tau3-bench: synthesise the ATIF trajectory it never captures -------------
+#
+# The tau3 agent writes no Harbor ``agent/trajectory.json``. The recorded
+# conversation lives in ``agent/tau3_runtime_state.json`` (the runtime server's
+# log of tau2 messages). Without this the adapter raises "no Harbor trajectory
+# found" and the run cannot be ingested at all. This synthesises an ATIF-v1.7
+# trajectory from that state so the existing fan-out and every detector run
+# unchanged.
+#
+# Nothing is invented: each ATIF step is one recorded message, its tool_calls
+# are that message's own, and its observation results are the consecutive tool
+# messages that follow it (a tool message whose id matches none of the turn's
+# call ids is kept and warned about). A warning records that the
+# trajectory was DERIVED from the runtime log, not captured as ATIF.
+
+
+def _tau3_trial_dir(state_path: Path) -> Path:
+    """The trial directory for a ``tau3_runtime_state.json``.
+
+    Harbor writes it as ``<trial>/agent/tau3_runtime_state.json``; a flatter
+    ``<trial>/tau3_runtime_state.json`` is accepted too (see ``_trial_markers``).
+    """
+    parent = state_path.parent
+    return parent.parent if parent.name == "agent" else parent
+
+
+def _tau3_task_hint(state: Any, trial_dir: Path) -> tuple[str, str] | None:
+    """A task id for a tau3 trial that neither the caller nor result.json named.
+
+    Both candidates are source-supplied structure shared by every attempt of a
+    task: the task segment of Harbor's ``<task>__<suffix>`` trial directory name
+    (the same split ``_task_name`` applies to ``trial_name``), else the runtime
+    state's ``domain`` + ``task_id`` in the tau3 adapter's naming,
+    ``tau3-<domain>-<task_id>``. Returns ``(task_id, where it came from)``, or
+    None when neither is present — never a constant shared across trials.
+    """
+    dir_name = trial_dir.resolve().name
+    name = _task_name({"trial_name": dir_name})
+    if name:
+        return name, f"the trial directory name {dir_name}"
+    if isinstance(state, dict):
+        domain, number = state.get("domain"), state.get("task_id")
+        if (isinstance(domain, str) and domain
+                and (isinstance(number, int) and not isinstance(number, bool)
+                     or isinstance(number, str) and number)):
+            return f"tau3-{domain}-{number}", "the tau3 runtime state (domain + task_id)"
+    return None
+
+
+def _tau3_metrics(msg: dict) -> dict | None:
+    """Map a tau2 message's usage/cost onto ATIF metrics, when present.
+
+    tau2 records ``usage`` as ``None`` on many runs and ``cost`` as 0.0; only
+    what the source actually carries is surfaced, never a fabricated 0.
+    """
+    metrics: dict[str, Any] = {}
+    usage = msg.get("usage")
+    if isinstance(usage, dict):
+        for src, dst in (
+            ("prompt_tokens", "prompt_tokens"),
+            ("input_tokens", "prompt_tokens"),
+            ("completion_tokens", "completion_tokens"),
+            ("output_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ):
+            value = usage.get(src)
+            if isinstance(value, (int, float)) and dst not in metrics:
+                metrics[dst] = value
+    cost = msg.get("cost")
+    if isinstance(cost, (int, float)):
+        metrics["cost_usd"] = cost
+    return metrics or None
+
+
+def _tau3_trajectory(
+    state_path: Path,
+    result_data: dict,
+    warnings: list[str],
+    instruction: str | None = None,
+) -> dict:
+    """Build an ATIF-v1.7 trajectory from a tau3 ``tau3_runtime_state.json``."""
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{state_path.name}: unreadable tau3 runtime state ({exc})") from exc
+    raw_messages = state.get("messages") if isinstance(state, dict) else None
+    if not isinstance(raw_messages, list) or not raw_messages:
+        raise ValueError(f"{state_path.name}: tau3 runtime state has no messages")
+
+    agent_cfg = (result_data.get("config") or {}).get("agent") or {}
+    model_name = agent_cfg.get("model_name")
+    agent_name = agent_cfg.get("name") or "tau3-llm-agent"
+
+    steps: list[dict] = []
+    # A real task instruction beats treating the simulated user's first line as
+    # the task. The tau3 runner writes `tau3-llm-agent.instruction.md` beside
+    # the runtime state; the caller may also supply one. That file is the
+    # instruction the AGENT was given (the task's <policy> block — what
+    # _make_parity_instruction emits), not the agent's system prompt and not a
+    # simulated-user turn. Prepending it as the first "user" step makes the
+    # fan-out mark it task_received and keeps EVERY recorded user turn a user
+    # turn (provenance "user"), never agent-authored.
+    instruction_text = instruction
+    if not instruction_text:
+        instr_path = state_path.parent / "tau3-llm-agent.instruction.md"
+        if instr_path.is_file():
+            try:
+                instruction_text = instr_path.read_text(encoding="utf-8-sig").strip()
+            except OSError as exc:
+                warnings.append(f"{instr_path.name} unreadable ({exc})")
+    if instruction_text:
+        steps.append({"step_id": 1, "source": "user", "message": instruction_text})
+
+    i = 0
+    n = len(raw_messages)
+    while i < n:
+        msg = raw_messages[i]
+        if not isinstance(msg, dict):
+            warnings.append("tau3 runtime message is not an object; skipped, not dropped silently")
+            i += 1
+            continue
+        role = msg.get("role")
+        # tau2 names the agent role "assistant"; ATIF calls it "agent".
+        source = {"assistant": "agent", "user": "user", "system": "system"}.get(role)
+        if source is None:
+            # tool results are consumed by the turn that called them; an orphan
+            # here means the source is malformed, so say so rather than guess.
+            if role == "tool":
+                warnings.append("tau3 tool message has no preceding assistant/user turn; skipped")
+            else:
+                warnings.append(f"tau3 message role {role!r} is not mapped; skipped")
+            i += 1
+            continue
+
+        atif_calls: list[dict] = []
+        for call in msg.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            atif_calls.append({
+                "tool_call_id": call.get("id"),
+                "function_name": call.get("name") or "tool",
+                "arguments": call.get("arguments") or {},
+            })
+
+        results: list[dict] = []
+        call_ids = {c["tool_call_id"] for c in atif_calls if c["tool_call_id"] is not None}
+        j = i + 1
+        while j < n and isinstance(raw_messages[j], dict) and raw_messages[j].get("role") == "tool":
+            tool_msg = raw_messages[j]
+            # Results are the consecutive tool messages after the turn, not
+            # looked up by id; keep a mismatched one but never silently.
+            if tool_msg.get("id") not in call_ids:
+                warnings.append(
+                    f"tau3 tool message id {tool_msg.get('id')!r} matches no tool call of the "
+                    f"preceding {role} turn (step {len(steps) + 1}); attached to it anyway"
+                )
+            result: dict[str, Any] = {
+                "source_call_id": tool_msg.get("id"),
+                "content": tool_msg.get("content"),
+            }
+            # tau2 records an explicit boolean; map it so the fan-out labels the
+            # result as a failure without guessing from the text.
+            if tool_msg.get("error"):
+                result["extra"] = {"is_error": True}
+            results.append(result)
+            j += 1
+
+        step: dict[str, Any] = {"step_id": len(steps) + 1, "source": source}
+        if msg.get("timestamp"):
+            step["timestamp"] = msg["timestamp"]
+        if source == "agent" and model_name:
+            step["model_name"] = model_name
+        content = msg.get("content")
+        if content is not None:
+            step["message"] = _text_of(content)
+        if atif_calls:
+            step["tool_calls"] = atif_calls
+        if results:
+            step["observation"] = {"results": results}
+        metrics = _tau3_metrics(msg)
+        if metrics:
+            step["metrics"] = metrics
+        steps.append(step)
+        i = j
+
+    if not steps:
+        raise ValueError(f"{state_path.name}: tau3 runtime state produced no steps")
+    warnings.append(
+        "trajectory synthesised from tau3_runtime_state.json (the tau3 agent writes no "
+        "agent/trajectory.json); each step is one recorded tau2 message, not a captured ATIF turn"
+    )
+    return {
+        "schema_version": "ATIF-v1.7",
+        # Without a Harbor trial UUID the id seeds the run identity, so it must
+        # be unique per trial: the state's task_id is shared by every attempt of
+        # a task and would collapse them into one run. The trial directory name
+        # is per-attempt and stable across re-ingests.
+        "trajectory_id": str(result_data.get("id") or _tau3_trial_dir(state_path).resolve().name),
+        "agent": {"name": agent_name, "model_name": model_name},
+        "steps": steps,
+        # Private: consumed (and removed) by convert(); never part of the ATIF.
+        "_task_hint": _tau3_task_hint(state, _tau3_trial_dir(state_path)),
+    }
+
+
 def convert(
     source: str | Path,
     *,
@@ -613,9 +1029,15 @@ def convert(
     Pure function: reads the trial's ``trajectory.json`` (and, when no explicit
     verifier is supplied, its ``result.json``) and returns the document.
     """
-    traj_path, result_path, warnings = _resolve_paths(source)
-    traj = json.loads(traj_path.read_text(encoding="utf-8-sig"))
+    traj_path, result_path, warnings, tau3_state_path = _resolve_paths(source)
     result_data: dict = _read_result(result_path) if result_path is not None else {}
+    tau3_task_hint: tuple[str, str] | None = None
+    if traj_path is not None:
+        traj = json.loads(traj_path.read_text(encoding="utf-8-sig"))
+    else:
+        # tau3: no captured ATIF trajectory — synthesise one from the runtime log.
+        traj = _tau3_trajectory(tau3_state_path, result_data, warnings, instruction)
+        tau3_task_hint = traj.pop("_task_hint", None)
 
     schema_version = str(traj.get("schema_version") or traj.get("atif_version") or "ATIF-unknown")
     if schema_version == "ATIF-unknown":
@@ -631,7 +1053,7 @@ def convert(
     agent = traj.get("agent") or {}
     harbor_steps = traj.get("steps") or []
     if not isinstance(harbor_steps, list) or not harbor_steps:
-        raise ValueError(f"{traj_path.name}: trajectory has no steps")
+        raise ValueError(f"{Path(source).name}: trajectory has no steps")
 
     steps: list[dict] = []
     seq = 0
@@ -840,10 +1262,20 @@ def convert(
     # Task identity comes from the caller, else from what Harbor recorded on
     # the trial (result.json task_name), else the trajectory id — in that
     # honesty order. The fallbacks are source-supplied, never invented.
-    traj_id = str(traj.get("trajectory_id") or traj.get("session_id") or traj_path.stem)
-    derived_task_id = task_id or _task_name(result_data) or f"harbor-trial-{traj_id[:12]}"
-    if task_id is None and _task_name(result_data):
+    traj_id = str(traj.get("trajectory_id") or traj.get("session_id") or Path(source).stem)
+    # A synthesised tau3 trajectory has a per-trial id, so without a task name
+    # its task id comes from the source's own per-task structure (trial
+    # directory name, else runtime-state domain + task_id) before the per-trial
+    # fallback — otherwise every attempt of one task would get its own task id.
+    derived_task_id = task_id or _task_name(result_data)
+    if task_id is None and derived_task_id:
         warnings.append(f"task_id taken from result.json ({derived_task_id}); confirm the contract")
+    elif not derived_task_id and tau3_task_hint:
+        derived_task_id = tau3_task_hint[0]
+        warnings.append(
+            f"task_id taken from {tau3_task_hint[1]} ({derived_task_id}); confirm the contract"
+        )
+    derived_task_id = derived_task_id or f"harbor-trial-{traj_id[:12]}"
     resolved_run_id = run_id or _execution_run_id(derived_task_id, traj_id, result_data, warnings)
     run: dict[str, Any] = {
         "logical_run_id": resolved_run_id,
@@ -909,11 +1341,18 @@ def convert(
 
     # --- verifier: CTRF atomic tests first; else explicit sidecar; else the
     # aggregate reward from result.json (AGR-04 priority) ---------------------
-    trial_dir = traj_path.parent.parent if traj_path.parent.name == "agent" else traj_path.parent
+    if traj_path is not None:
+        trial_dir = traj_path.parent.parent if traj_path.parent.name == "agent" else traj_path.parent
+    else:
+        # <trial>/agent/tau3_runtime_state.json (or flat <trial>/...) -> <trial>
+        trial_dir = _tau3_trial_dir(tau3_state_path)
     synth_warnings: list[str] = []
     if verifier is None:
         verifier, ctrf_warnings = _verifier_from_ctrf(trial_dir, result_data)
         synth_warnings.extend(ctrf_warnings)
+    if verifier is None:
+        verifier, tau3_warnings = _verifier_from_tau3(trial_dir, result_data)
+        synth_warnings.extend(tau3_warnings)
     if verifier is None and result_path is not None:
         verifier, reward_warnings = _verifier_from_result(result_data, result_path.name)
         synth_warnings.extend(reward_warnings)
@@ -927,6 +1366,7 @@ def convert(
         capabilities["verifier_results"] = "complete"
         warnings.append(
             "verifier results captured (aggregate reward"
+            + (" + tau3 reward breakdown" if any(c.get("diagnostic_evidence") for c in verifier.get("checks", [])) else "")
             + (" + ctrf.json" if any(c.get("check_id") != "terminal_bench_reward" and "::" in str(c.get("check_id", "")) for c in verifier.get("checks", [])) else "")
             + "); the verifier's own code is not in the trial bundle — verifier_code is 'partial', not 'complete'"
         )
