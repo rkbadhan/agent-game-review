@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T15:51:03Z",
- "source_hash": "sha256:c9fb281f28ce27bdd8e422389336b7a3ea94ae0aa445f8f0c1f7749278c8f345",
+ "source_hash": "sha256:333928d933f7d07bf082e0052e7b1503f1e52fc0b8392c0d927c49173323aecb",
  "moment_count": 2,
  "selected_count": 2,
  "moments": [
   {
    "moment_id": "mom_sem_1",
    "run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
-   "source_capture_id": "capture_c9fb281f28ce",
+   "source_capture_id": "capture_333928d933f7",
    "candidate_id": "sem_1",
    "detector": "model",
    "kind": "behaviour",
@@ -84,42 +84,92 @@
      "check_id": "terminal_bench_reward",
      "status_at_submission": "failed",
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed",
+     "expected": null,
+     "observed": null
     }
    ],
    "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established."
+   ],
    "rendered_statement": "Grounded in quoted run evidence (evt_116, evt_117, evt_120, evt_123), a likely explanation for the outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
     "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "interpretation_only",
+    "quote_authenticity": "authentic",
+    "prose_references": "resolved",
+    "explanation_attribution": "within_ceiling"
    },
    "sequence": 116,
    "phase_id": "ph_04",
    "selected": true,
    "selection_rank": 0,
    "superseded_by": null,
-   "taxonomy_verdict": "over-refinement past a working state, ending in timeout with no consolidated final artifact",
+   "taxonomy_verdict": "Guest initialization was observed, but the run timed out before a working VM was verified",
    "behaviour_tags": [],
    "phase": null,
    "consequence": null,
    "micro_abilities": [],
    "root_cause_candidates": [],
-   "better_action": "At evt_116, when 'DoomGeneric initialized' appeared, immediately snapshot vm.js, run one clean bounded verification (e.g. timeout 60 node vm.js), and stop editing \u2014 defer any further stats/tracing work only if time remains after the artifact is confirmed good.",
-   "instructional_value": "Teaches the time-boxing norm: once the required deliverable demonstrably works, the marginal value of extra instrumentation is negative if it consumes the remaining budget and risks leaving the artifact in a broken state at the deadline.",
-   "eval_lesson_recommended": true,
+   "better_action": "Treat the initialization banner as progress. Run bounded VM and frame-output checks before declaring the deliverable working.",
+   "alternatives": [],
+   "instructional_value": "An initialization banner alone does not establish a working emulator or a generated frame. The final verifier failed all three VM and frame tests.",
+   "eval_lesson_recommended": false,
+   "raw_enrichment": {
+    "taxonomy_verdict": "Guest initialization was observed, but the run timed out before a working VM was verified",
+    "behaviour_tags": [],
+    "phase": null,
+    "consequence": null,
+    "micro_abilities": [],
+    "root_cause_candidates": [],
+    "better_action": "Treat the initialization banner as progress. Run bounded VM and frame-output checks before declaring the deliverable working.",
+    "alternatives": [],
+    "instructional_value": "An initialization banner alone does not establish a working emulator or a generated frame. The final verifier failed all three VM and frame tests.",
+    "eval_lesson_recommended": false,
+    "quotes": [
+     {
+      "event_id": "evt_116",
+      "quote": "DoomGeneric initialized. Frames will be saved to /tmp/frame.bmp"
+     },
+     {
+      "event_id": "evt_117",
+      "quote": "VM_STATS=1 timeout 90 node --max-old-space-size=6000 vm.js --max-seconds=25 --quiet"
+     },
+     {
+      "event_id": "evt_120",
+      "quote": "Aborted"
+     },
+     {
+      "event_id": "evt_123",
+      "quote": "[Harbor trial hit its deadline: AgentTimeoutError]"
+     }
+    ],
+    "source": "model:accounts/fireworks/models/kimi-k3"
+   },
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   },
   {
    "moment_id": "mom_sem_2",
    "run_id": "harbor__terminal-bench/make-mips-interpreter__make-mips-in",
-   "source_capture_id": "capture_c9fb281f28ce",
+   "source_capture_id": "capture_333928d933f7",
    "candidate_id": "sem_2",
    "detector": "model",
    "kind": "recovery",
@@ -176,18 +226,39 @@
      "check_id": "terminal_bench_reward",
      "status_at_submission": "failed",
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed",
+     "expected": null,
+     "observed": null
     }
    ],
    "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
    "rendered_statement": "Grounded in quoted run evidence (evt_110, evt_115, evt_116), a likely explanation for the outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
-    "validation_attempts": 2,
+    "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 110,
    "phase_id": "ph_04",
@@ -201,12 +272,18 @@
    "micro_abilities": [],
    "root_cause_candidates": [],
    "better_action": "No correction needed; this loop (hot-pc profiling -> disassembly lookup -> minimal decode patch -> re-run) is the behavior to repeat.",
+   "alternatives": [],
    "instructional_value": "Exemplary template for emulator debugging: use the guest's own hotspot profile to find the failing region, verify encodings against ground-truth disassembly, and patch narrowly rather than rewriting the decoder.",
    "eval_lesson_recommended": false,
+   "raw_enrichment": null,
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
- ]
+ ],
+ "curation": {
+  "date": "2026-10-10",
+  "reason": "Removed the unsupported working-state claim; initialization does not verify the required VM and frame outputs."
+ }
 }

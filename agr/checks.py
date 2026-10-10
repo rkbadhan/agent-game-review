@@ -269,7 +269,7 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
                     status = "UNDETERMINED"
     else:
         status = "UNDETERMINED"
-    return {
+    result = {
         "status": status,
         "passed": passed,
         "total": total,
@@ -282,3 +282,11 @@ def outcome(checks: list[VerifierCheck], contract: Optional["TaskContract"] = No
         "coverage_gaps": coverage_gaps,
         "coverage_unknown": coverage_unknown,
     }
+    # The task reward remains authoritative. Its aggregate is not another test.
+    tests = [(c, s) for c, s in current if "verifier/ctrf.json" in c.source_pointers]
+    if tests:
+        result["test_results"] = {
+            "passed": sum(s == "passed" for _, s in tests),
+            "total": len(tests),
+        }
+    return result

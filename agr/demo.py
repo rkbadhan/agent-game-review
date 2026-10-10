@@ -374,6 +374,7 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
         meta = _read_review_meta(store, run_id, capture_id)
         meta[key] = {"model": review.get("model"), "reviewed_at": review.get("reviewed_at"),
                      "origin": "precomputed",
+                     "curation": review.get("curation"),
                      "revalidated_by": version.REVIEWER_VERSION}
         store.write_derived(run_id, capture_id, "review_meta.json", meta)
         installed.append(run_id)
@@ -427,8 +428,8 @@ def _revalidate_baked_review(review: dict, ctx) -> list[dict]:
 
 
 def _choose_landing_run(store: Store, run_ids: Iterable[str]) -> Optional[str]:
-    """The run ``agr demo`` opens on: a real FAILED run whose model review found
-    moments, then any other non-passing run with moments, then any reviewed run.
+    """Open on polyglot's regression story when present, then another failed
+    run with moments, then any other reviewed run.
 
     Deterministic (sorted) so the demo lands on the same run every build.
     """
@@ -444,7 +445,10 @@ def _choose_landing_run(store: Store, run_ids: Iterable[str]) -> Optional[str]:
         if not review.get("moments"):
             continue
         status = (review.get("outcome") or {}).get("status")
-        ranked.append((0 if status == "FAILED" else 1, run_id))
+        # The demo leads with the regression story; other datasets retain
+        # the deterministic failed-run fallback below.
+        is_demo_story = run_id == "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991"
+        ranked.append((0 if is_demo_story and status == "FAILED" else 1 if status == "FAILED" else 2, run_id))
     if ranked:
         ranked.sort()
         return ranked[0][1]
@@ -538,6 +542,8 @@ def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> 
                 "reviewed_at": (_read_review_meta(store, run_id, capture_id).get(key) or {}).get(
                     "reviewed_at") or _iso_mtime(store.review_slot_path(run_id, capture_id, key)),
                 "source_hash": source.get("source_hash"),
+                **({"curation": _read_review_meta(store, run_id, capture_id)[key]["curation"]}
+                   if (_read_review_meta(store, run_id, capture_id).get(key) or {}).get("curation") else {}),
                 "moment_count": len(moments),
                 "selected_count": sum(1 for m in moments if m.get("selected")),
                 "moments": moments,

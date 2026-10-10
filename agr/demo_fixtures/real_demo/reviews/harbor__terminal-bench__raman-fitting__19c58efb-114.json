@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T15:47:19Z",
- "source_hash": "sha256:1f0cfef86f9bd640e506bfe55aff7a28210fd4c4e73e5eae65906569ef243707",
+ "source_hash": "sha256:f2a039ca328571522605ea0da84415c2c766d2cc7ccf75bc65dedae1e9d4d738",
  "moment_count": 2,
- "selected_count": 1,
+ "selected_count": 2,
  "moments": [
   {
    "moment_id": "mom_sem_1",
    "run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
-   "source_capture_id": "capture_1f0cfef86f9b",
+   "source_capture_id": "capture_f2a039ca3285",
    "candidate_id": "sem_1",
    "detector": "model",
    "kind": "omission",
@@ -94,18 +94,39 @@
      "check_id": "terminal_bench_reward",
      "status_at_submission": "failed",
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed",
+     "expected": null,
+     "observed": null
     }
    ],
    "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
    "rendered_statement": "Grounded in quoted run evidence (evt_028, evt_033, evt_058, evt_078, evt_083), a likely explanation for the outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
     "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 28,
    "phase_id": "ph_03",
@@ -126,17 +147,19 @@
     }
    ],
    "better_action": "Once the decimal-comma two-column format was confirmed (~evt_024), time-box exploration: commit to the best current axis hypothesis, hand-code a simple Lorentzian grid/least-squares fit over the two candidate G/2D windows, and write out the four parameters as a best-effort answer before any further diagnosis.",
+   "alternatives": [],
    "instructional_value": "Canonical case of investigation consuming the entire run budget while the required deliverable is never produced \u2014 the agent correctly identified irrelevant features (evt_033) yet kept exploring for ~50 more events and timed out with nothing. Teaches deliver-first discipline and time-boxing under a hard deadline.",
    "eval_lesson_recommended": true,
+   "raw_enrichment": null,
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   },
   {
    "moment_id": "mom_sem_2",
    "run_id": "harbor__terminal-bench/raman-fitting__19c58efb-114",
-   "source_capture_id": "capture_1f0cfef86f9b",
+   "source_capture_id": "capture_f2a039ca3285",
    "candidate_id": "sem_2",
    "detector": "model",
    "kind": "behaviour",
@@ -193,24 +216,45 @@
      "check_id": "terminal_bench_reward",
      "status_at_submission": "failed",
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed",
+     "expected": null,
+     "observed": null
     }
    ],
    "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
    "rendered_statement": "Grounded in quoted run evidence (evt_048, evt_063, evt_073), a likely explanation for the outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
     "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 48,
    "phase_id": "ph_03",
-   "selected": false,
-   "selection_rank": null,
-   "superseded_by": "mom_sem_1",
+   "selected": true,
+   "selection_rank": 1,
+   "superseded_by": null,
    "taxonomy_verdict": "hypothesis churn without commitment (analysis paralysis)",
    "behaviour_tags": [],
    "phase": null,
@@ -218,12 +262,14 @@
    "micro_abilities": [],
    "root_cause_candidates": [],
    "better_action": "At evt_063, freeze 'wavelength axis with a 632.8 nm reference line' as the working hypothesis and immediately attempt the G/2D Lorentzian fit near the predicted band positions; only reopen the calibration question if that concrete fit fails.",
+   "alternatives": [],
    "instructional_value": "Shows how repeatedly re-litigating one interpretive decision blocks all downstream deliverables; teaches the commit-and-test loop (hypothesize, fit, falsify) over open-ended diagnose-and-reopen.",
    "eval_lesson_recommended": true,
+   "raw_enrichment": null,
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
  ]
 }

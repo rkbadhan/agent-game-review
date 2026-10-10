@@ -132,6 +132,8 @@ function momentTagClass(m) { return m.polarity === "positive" ? "strength" : "co
 // resort. Evidence ids still render underneath wherever this is used.
 function momentHeadline(m, rv) {
   const kind = momentTypeLabel(m);
+  // Curated headlines are complete statements; their phase is shown separately.
+  if (rv && rv.review_curation) return kind;
   const phase = ((rv && rv.phases) || []).find(p => p.phase_id === m.phase_id);
   if (phase && phase.label) return kind + " during " + phase.label;
   if (m._stepIdx != null) return kind + " at step " + (m._stepIdx + 1);
@@ -167,7 +169,8 @@ function renderMomentsChapter(main) {
     const idx = currentMoments().indexOf(positives[0]);
     const teaser = el("div", "strongest-teaser");
     teaser.append(el("span", "tag strength", "Strongest behaviour"));
-    teaser.append(el("span", "strongest-teaser-text", positives[0].summary));
+    teaser.append(el("span", "strongest-teaser-text", groundedBoilerplateIds(positives[0].summary)
+      ? momentHeadline(positives[0], rv) : positives[0].summary));
     const view = el("button", "button subtle", "View");
     view.addEventListener("click", () => { if (idx >= 0) selectMoment(idx); });
     teaser.append(view);
@@ -216,10 +219,11 @@ function renderOverviewChapter(main) {
     tone: "warn", headline: "Task success unverified —",
     detail: "no atomic check evidence was captured, so nothing here should be read as a pass; supported execution findings still appear below.",
   };
-  const mf = mainFinding();
+  const mf = mainFinding(), context = rv.outcome_context;
+  const contextLeads = context && (!mf || context.leads_overview);
 
   const card = el("div", "card card-pad finding-card");
-  if (mf) {
+  if (mf && !contextLeads) {
     // U4/U5: the single most prominent element on the page (.main-finding-title)
     // — a reader's eye should land on the specific, evidence-backed finding,
     // not the task identifier in the header or a generic pass/fail sentence.
@@ -257,22 +261,32 @@ function renderOverviewChapter(main) {
   } else {
     const tone = narrative.tone === "pass" ? "pass" : narrative.tone === "fail" ? "fail" : "warn";
     card.classList.add(tone);
-    card.append(el("h2", "main-finding-title", narrative.headline.replace(/\s*—$/, "")));
-    card.append(el("p", "finding-sub", rv.review_mode === "not_reviewable"
+    card.append(el("h2", "main-finding-title", context ? context.headline : narrative.headline.replace(/\s*—$/, "")));
+    card.append(el("p", "finding-sub", context ? context.detail : rv.review_mode === "not_reviewable"
       ? "No finding is available — the captured evidence is insufficient for a trustworthy review."
       : "No decisive finding was selected for this run."));
+    if (context) {
+      const evidence = el("div", "moment-anchors");
+      evidence.append(el("span", "moment-anchors-label", "Conversation ending"), evidenceCell(context.event_ids, f));
+      card.append(evidence);
+    }
+    if (mf) card.append(el("p", "finding-earlier", "Earlier finding: "
+      + (groundedBoilerplateIds(mf.summary) ? momentHeadline(mf, rv) : leadFinding(mf.summary, 220))));
   }
   // Task outcome, stated once here (never repeated as its own card below it) —
   // the requirement tally folded inline rather than a competing colour block.
   const outLine = el("p", "finding-line finding-outcome");
   outLine.append(el("strong", null, "Task outcome: "));
   outLine.append(el("span", "run-verdict-key " + narrative.tone, narrative.headline.replace(/\s*—$/, "")));
-  outLine.append(document.createTextNode(" (" + (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks) — " + narrative.detail));
+  outLine.append(document.createTextNode(" (" + outcomeCounts(o) + ") — " + narrative.detail));
   card.append(outLine);
 
   const vm = vocab("review_mode", rv.review_mode);
   const modeNote = el("p", "finding-line finding-mode" + (rv.review_mode === "not_reviewable" ? " not-reviewable" : ""));
-  if (rv.review_mode === "not_reviewable") {
+  if (rv.review_curation) {
+    modeNote.append(el("span", "shell-chip mode-curated", curatedReviewLabel(rv.review_curation)));
+    modeNote.append(document.createTextNode(" — " + rv.review_curation.reason));
+  } else if (rv.review_mode === "not_reviewable") {
     const missing = rv.missing_capabilities || [];
     modeNote.append(vm.label + " — the captured evidence is insufficient for a trustworthy review"
       + (missing.length ? ". Missing capabilities: " + missing.join(", ") + "."
@@ -289,7 +303,7 @@ function renderOverviewChapter(main) {
     // and an obvious action rather than a second, easy-to-miss button.
     const actions = el("div", "chapter-foot finding-actions");
     const idx = currentMoments().indexOf(mf);
-    const viewEvidence = el("button", "button primary", evidenceActionLabel(mf));
+    const viewEvidence = el("button", "button primary", contextLeads ? "Inspect earlier finding" : evidenceActionLabel(mf));
     viewEvidence.addEventListener("click", () => {
       if (idx >= 0) state.momentIdx = idx;
       state.view = "review"; state.chapter = "moments"; state.viewed.add("moments");

@@ -316,9 +316,9 @@ def test_baked_earlier_actions_need_no_omission_window(rebuilt_demo, task, candi
     assert all(by_id[eid]["sequence"] < stop_seq for eid in moment["anchor_event_ids"])
 
 
-def test_demo_keeps_its_earlier_action_findings_on_the_opening_run(rebuilt_demo):
+def test_demo_opens_on_the_polyglot_regression_story(rebuilt_demo):
     _, definition = rebuilt_demo
-    assert "tau3-retail-104__" in definition["landing_run"]
+    assert definition["landing_run"] == "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991"
 
 
 @pytest.mark.parametrize("kind", ["behaviour", "external", "recovery", None])

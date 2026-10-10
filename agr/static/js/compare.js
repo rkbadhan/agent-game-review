@@ -9,6 +9,8 @@
 //   Compare control stays disabled with an honest tooltip.
 const REVIEW_LABELS = { deterministic: "Deterministic baseline" };
 function reviewerLabel(key) {
+  const curation = ((((state.review || {}).review_meta || {})[key]) || {}).curation;
+  if (curation) return curatedReviewLabel(curation);
   if (REVIEW_LABELS[key]) return REVIEW_LABELS[key];
   if (!key || !key.startsWith("model:")) return key;
   const model = key.slice(6).replace(/#[a-f0-9]{12}$/, "");

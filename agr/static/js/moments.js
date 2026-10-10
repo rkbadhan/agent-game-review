@@ -19,6 +19,8 @@ function renderMomentCard(rv, f, moment) {
   const top = el("div", "moment-topline");
   const kind = el("span", "moment-kind " + momentTagClass(moment), momentTypeLabel(moment));
   top.append(kind);
+  if (rv.review_curation)
+    top.append(el("span", "shell-chip mode-curated", curatedReviewLabel(rv.review_curation)));
   const phase = (rv.phases.find(p => p.phase_id === moment.phase_id) || {}).label;
   top.append(el("span", "moment-pos", "Moment " + (state.momentIdx + 1) + " of " + currentMoments().length + (phase ? " · " + phase : "")));
   const nav = el("div", "moment-nav");
@@ -68,7 +70,7 @@ function renderMomentCard(rv, f, moment) {
       for (const c of catDetails) {
         const chip = el("span", "moment-category-chip");
         chip.append(el("span", "moment-category-name", c.label));
-        if (c.basis) chip.append(el("span", "moment-category-basis", c.basis + " basis"));
+        if (c.basis) chip.append(el("span", "moment-category-basis", (rv.review_curation && c.basis === "model" ? "curated" : c.basis) + " basis"));
         row.append(chip);
       }
       if (moment.label) row.append(el("span", "moment-category-label", moment.label));

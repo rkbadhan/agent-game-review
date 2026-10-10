@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T14:32:22Z",
- "source_hash": "sha256:8e14ba40f8a0b85792742cea3e116fb09af059c79bf8158c911ba0355c76b8f3",
+ "source_hash": "sha256:79d59e046a68e57a30b209bcdbde9fff9567e08a08b2a0129ba801aeb5d0a54f",
  "moment_count": 1,
  "selected_count": 1,
  "moments": [
   {
    "moment_id": "mom_sem_1",
    "run_id": "harbor__terminal-bench/raman-fitting__raman-fittin",
-   "source_capture_id": "capture_8e14ba40f8a0",
+   "source_capture_id": "capture_79d59e046a68",
    "candidate_id": "sem_1",
    "detector": "model",
    "kind": "behaviour",
@@ -84,18 +84,39 @@
      "check_id": "terminal_bench_reward",
      "status_at_submission": "failed",
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed",
+     "expected": null,
+     "observed": null
     }
    ],
    "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
    "rendered_statement": "Grounded in quoted run evidence (evt_052, evt_062, evt_064, evt_065), a likely explanation for the outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
     "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 52,
    "phase_id": "ph_04",
@@ -109,12 +130,14 @@
    "micro_abilities": [],
    "root_cause_candidates": [],
    "better_action": "Immediately after the successful exploratory fits at evt_052, write the best-effort x0/gamma/amplitude/offset values for the G and 2D peaks to the required output location, then continue refining only if time remains.",
+   "alternatives": [],
    "instructional_value": "Canonical example of analysis-paralysis under a deadline: a viable answer existed mid-run but was never externalized. Teaches the checkpoint-first pattern \u2014 always bank a submittable deliverable before optional refinement.",
    "eval_lesson_recommended": true,
+   "raw_enrichment": null,
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
  ]
 }

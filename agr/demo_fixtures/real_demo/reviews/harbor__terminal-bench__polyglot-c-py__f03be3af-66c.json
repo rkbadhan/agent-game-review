@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-24T16:42:34Z",
- "source_hash": "sha256:cc6cef2fa030f0d6deb335e58e8cb1658501a1eddacf6f15bcc6ff5b9bfebc3c",
+ "source_hash": "sha256:79f9be5409edc31d705306f4c87ac722a926ca39b0f73125ceba4b9a14b561ef",
  "moment_count": 1,
- "selected_count": 1,
+ "selected_count": 0,
  "moments": [
   {
    "moment_id": "mom_cand_repeated_action_no_new_info_evt_018",
    "run_id": "harbor__terminal-bench/polyglot-c-py__f03be3af-66c",
-   "source_capture_id": "capture_cc6cef2fa030",
+   "source_capture_id": "capture_79f9be5409ed",
    "candidate_id": "cand_repeated_action_no_new_info_evt_018",
    "detector": "model",
    "kind": "behaviour",
@@ -29,51 +29,62 @@
       "mark_task_complete",
       "{}"
      ],
-     "events": [
-      "evt_014",
-      "evt_018"
-     ],
-     "validation": "passed",
-     "recomputed": [
+     "events": [],
+     "validation": "failed",
+     "recomputed": [],
+     "excluded_confirmation_pairs": [
       [
-       "mark_task_complete",
-       "{}"
-      ],
-      [
-       "mark_task_complete",
-       "{}"
+       "evt_014",
+       "evt_018"
       ]
      ]
     }
    ],
-   "attribution_ceiling": "dependency_linked",
-   "rendered_statement": "The same action was repeated with no new information in between (evt_014, evt_018).",
+   "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
+   "rendered_statement": "No deterministic evidence supports this finding.",
    "gate_results": {
-    "fact_validation": "passed",
+    "protocol": "passed",
+    "fact_validation": "failed",
     "validation_attempts": 1,
-    "contract_link": "present",
+    "references": {
+     "status": "resolved"
+    },
+    "contract_link": "absent",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 14,
    "phase_id": "ph_03",
-   "selected": true,
-   "selection_rank": 0,
+   "selected": false,
+   "selection_rank": null,
    "superseded_by": null,
-   "taxonomy_verdict": "repeated_no_op_action",
+   "taxonomy_verdict": null,
    "behaviour_tags": [],
    "phase": null,
    "consequence": null,
    "micro_abilities": [],
    "root_cause_candidates": [],
-   "better_action": "After the first mark_task_complete call, record that completion was signalled and proceed to final submission instead of re-invoking the same no-argument tool.",
-   "instructional_value": "Teaches the agent to treat idempotent completion signals as one-shot actions and to verify prior tool effects before repeating them, reducing wasted steps.",
+   "better_action": null,
+   "alternatives": [],
+   "instructional_value": null,
    "eval_lesson_recommended": false,
-   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
-   "taxonomy_version": "0.1",
+   "raw_enrichment": null,
+   "enrichment_source": null,
+   "taxonomy_version": null,
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
  ]
 }
