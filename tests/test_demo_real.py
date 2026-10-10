@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from agr import demo, read
 from agr.model_reviewer import ScriptedReviewer
 from agr.pipeline import analyze
@@ -64,7 +66,7 @@ def test_build_real_demo_store_serves_a_precomputed_model_review(tmp_path):
     assert landing
 
     review = read.get_review(store, landing)
-    # No model was called: the served review is the baked snapshot.
+    # No model was called: the baked proposals passed current offline validation.
     assert review["review_mode"] == "model_enriched"
     assert review["review_status"] in ("moments_found", "no_decisive_moment")
     assert review["served_reviewer_key"].startswith("model:")
@@ -77,8 +79,8 @@ def test_build_real_demo_store_serves_a_precomputed_model_review(tmp_path):
 def test_every_installed_review_resolves_against_its_freshly_ingested_run(tmp_path):
     """A baked moment's anchors and quotes must name real events in the store the
     demo builds — and a quote must actually appear in that event's text. The
-    review is installed, not re-validated, so this is the guard that the derivation
-    identity (and the source text) still lines up."""
+    review is revalidated offline, including references and quote authenticity,
+    so its derivation identity and source text must still line up."""
     from agr.reviewer import _norm_text, _quotable_text
     from agr.schema import DerivedEvent
 
@@ -308,3 +310,103 @@ def test_bake_selects_full_configuration_key_and_keeps_plain_model_name(tmp_path
     assert review["reviewer_key"] == keys[1]
     assert review["model"] == model
     assert demo.bake_reviews(store, str(tmp_path / "partial-model"), model="gpt-4")["runs"] == 0
+
+
+def test_matching_source_hash_does_not_preserve_obsolete_validation_or_selection(tmp_path):
+    """A snapshot's old 'passed' flags cannot authenticate fabricated evidence."""
+    source = Store(str(tmp_path / "source"))
+    analyze(_fixture("chess_best_move.atif.json"), source,
+            reviewer=ScriptedReviewer({"moments": []}, source="model:offline"))
+    out = str(tmp_path / "baked")
+    demo.bake_reviews(source, out, model="offline")
+    (path,) = [os.path.join(out, "reviews", n)
+               for n in os.listdir(os.path.join(out, "reviews"))]
+    with open(path, encoding="utf-8") as fh:
+        snapshot = json.load(fh)
+    (row,) = read.list_runs(source)
+    (anchor, *_) = source.read_derived(row["run_id"], row["capture_id"], "events.json")
+    snapshot["moments"] = [{
+        "candidate_id": "sem_fabricated", "kind": "behaviour", "polarity": "positive",
+        "anchor_event_ids": [anchor["event_id"]], "selected": True,
+        "rendered_statement": "This old rendering must not be served",
+        "gate_results": {"fact_validation": "passed"},
+        "taxonomy_verdict": "Excellent move",
+        "validated_facts": [{"type": "event_support", "validation": "passed",
+                             "quotes": [{"event_id": anchor["event_id"],
+                                         "quote": "A fabricated quote absent from the capture"}]}],
+    }]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(snapshot, fh)
+    rebuilt = Store(str(tmp_path / "rebuilt"))
+    definition = demo.build_real_demo_store(rebuilt, real_dir=out, include_comparison=False)
+    assert definition["stale_reviews"] == 0 and definition["model_reviews"] == 1
+    served = read.get_review(rebuilt, row["run_id"])
+    assert served["moments"] == [] and served["review_status"] == "all_proposals_rejected"
+    (rejected,) = served["review_moments"]
+    assert rejected["gate_results"]["fact_validation"] == "failed"
+    assert rejected["taxonomy_verdict"] is None
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_failed_replay_never_saves_fallback_under_model_name(tmp_path, monkeypatch, incomplete):
+    from agr.reviewer import ReviewBudgetExceededError
+    source = Store(str(tmp_path / "source"))
+    analyze(_fixture("chess_best_move.atif.json"), source,
+            reviewer=ScriptedReviewer({"moments": []}, source="model:offline"))
+    baked = str(tmp_path / "baked")
+    demo.bake_reviews(source, baked, model="offline")
+    store = Store(str(tmp_path / "rebuilt"))
+    demo.build_real_demo_store(store, real_dir=baked, include_comparison=False)
+    (row,) = read.list_runs(store)
+    assert "model:offline" in store.list_reviews(row["run_id"], row["capture_id"])
+
+    def fail(self, ctx):
+        if incomplete:
+            raise ReviewBudgetExceededError("missing_chunks", "Incomplete baked review")
+        raise ValueError("Broken baked review")
+    monkeypatch.setattr(ScriptedReviewer, "propose", fail)
+    result = demo.build_real_demo_store(store, real_dir=baked, include_comparison=False)
+    assert result["model_reviews"] == 0 and result["failed_reviews"] == 1
+    assert "model:offline" not in store.list_reviews(row["run_id"], row["capture_id"])
+    errors = store.read_derived(row["run_id"], row["capture_id"], "review_errors.json")
+    assert errors[0]["reviewer_key"] == "model:offline"
+    assert errors[0]["origin"] == "precomputed_revalidation"
+    assert bool(errors[0].get("incomplete")) is incomplete
+
+
+def test_replay_reuses_analysis_writes_model_once_and_adds_no_fake_attempts(tmp_path, monkeypatch):
+    source = Store(str(tmp_path / "source"))
+    analyze(_fixture("chess_best_move.atif.json"), source,
+            reviewer=ScriptedReviewer({"moments": []}, source="model:offline"))
+    baked = str(tmp_path / "baked")
+    demo.bake_reviews(source, baked, model="offline")
+    store = Store(str(tmp_path / "rebuilt"))
+    calls, writes = [], []
+    original_analyze, original_write = demo.analyze, store.write_review
+    def tracked_analyze(*args, **kwargs):
+        calls.append(kwargs.get("reviewer"))
+        return original_analyze(*args, **kwargs)
+    def tracked_write(run_id, capture_id, key, moments):
+        writes.append(key)
+        return original_write(run_id, capture_id, key, moments)
+    monkeypatch.setattr(demo, "analyze", tracked_analyze)
+    monkeypatch.setattr(store, "write_review", tracked_write)
+    for _ in range(2):
+        calls.clear()
+        writes.clear()
+        result = demo.build_real_demo_store(store, real_dir=baked, include_comparison=False)
+        assert result["model_reviews"] == 1
+        assert calls == [None, None]
+        assert writes.count("model:offline") == 1
+    (row,) = read.list_runs(store)
+    attempts = store.read_derived(row["run_id"], row["capture_id"], "review_attempts.json")
+    assert len(attempts) == 4
+    assert all(attempt["reviewer_key"] == "deterministic" for attempt in attempts)
+
+    # A replayed snapshot can be baked again without inventing a model call.
+    rebaked = str(tmp_path / "rebaked")
+    exported = demo.bake_reviews(store, rebaked, model="offline")
+    assert exported["runs"] == 1
+    original_review = demo._load_json_dir(os.path.join(baked, "reviews"))[0]
+    new_review = demo._load_json_dir(os.path.join(rebaked, "reviews"))[0]
+    assert new_review["reviewed_at"] == original_review["reviewed_at"]

@@ -24,6 +24,7 @@ from .execution_quality import (
     normalized_generation_usage,
 )
 from .recovery import GOOD_RECOVERY, UNRECOVERED, episode_limits
+from .review_protocol import completion_confirmation_pairs
 from .schema import (
     Candidate,
     CapabilityProfile,
@@ -394,6 +395,8 @@ class RepeatedActionNoNewInfo(ExecutionQualityDetector):
                               "result": None, "strategy_epoch": strategy_epoch})
         for c in calls:
             c["result"] = paired_result(ctx.events, c["idx"])
+        confirmations = {(p["request_event_id"], p["confirmation_event_id"])
+                         for p in completion_confirmation_pairs(ctx.events)}
         repetitions: list[dict] = []
         anchors: list[str] = []
         for current_index, b in enumerate(calls):
@@ -415,6 +418,8 @@ class RepeatedActionNoNewInfo(ExecutionQualityDetector):
             if previous is None:
                 continue
             previous_index, a = previous
+            if (a["call"].event_id, b["call"].event_id) in confirmations:
+                continue  # the second signal answers a captured harness gate
             ra, rb = a["result"], b["result"]
             if ra is None or rb is None:
                 continue  # outputs not captured — the claim is unsupported

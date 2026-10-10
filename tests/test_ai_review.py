@@ -18,6 +18,10 @@ from agr.storage_io import atomic_json
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "session-test-key-never-persist"
+# Allow worker scheduling/filesystem delays on CI. The provider remains blocked
+# longer than the import deadline, so holding its capture lock still fails.
+_ASYNC_TIMEOUT_SECONDS = 15
+_PROVIDER_RELEASE_TIMEOUT_SECONDS = 30
 
 
 @pytest.fixture
@@ -40,7 +44,7 @@ def offline(monkeypatch):
             control["calls"].append((self.model, json.loads(user_json)))
             control["started"].set()
             if control["block"]:
-                assert control["block"].wait(8), "test provider was not released"
+                assert control["block"].wait(_PROVIDER_RELEASE_TIMEOUT_SECONDS), "test provider was not released"
             if control["fail"] or len(control["calls"]) in control.get("fail_on_calls", set()):
                 raise ConnectionError("SDK error echoed " + KEY)
             return control["response"]
@@ -95,14 +99,15 @@ def submit(client, run_ids, project="existing", key="first", force=False):
 
 
 def finish(client, job, project="existing"):
-    for _ in range(400):
+    deadline = time.monotonic() + _ASYNC_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
         response = client.get(f"/projects/{project}/ai-reviews/{job['id']}")
         assert response.status_code == 200, response.text
         job = response.json()
         if job["status"] not in ("queued", "running", "cancelling"):
             return job
         time.sleep(0.01)
-    pytest.fail("review did not finish")
+    pytest.fail(f"review did not finish: {job}")
 
 
 def test_provider_switch_and_one_off_override_discard_dependent_fields(environment):
@@ -243,7 +248,7 @@ def test_cancel_between_runs_and_retry_unfinished_only(client, offline):
     selected = runs(client)
     offline["block"] = threading.Event()
     job, _ = submit(client, selected)
-    assert offline["started"].wait(3)
+    assert offline["started"].wait(_ASYNC_TIMEOUT_SECONDS)
     response = client.post(f"/projects/existing/ai-reviews/{job['id']}/cancel")
     assert response.json()["status"] == "cancelling"
     offline["block"].set()
@@ -439,9 +444,9 @@ def test_review_does_not_block_import_or_overwrite_a_new_capture(client, offline
     doc["task"]["instruction"] += " Updated while the reviewer is waiting."
     offline["block"] = threading.Event()
     job, _ = submit(client, selected)
-    assert offline["started"].wait(3)
     try:
-        imported = workspace.executor.submit(analyze, doc, store).result(timeout=3)
+        assert offline["started"].wait(_ASYNC_TIMEOUT_SECONDS)
+        imported = workspace.executor.submit(analyze, doc, store).result(timeout=_ASYNC_TIMEOUT_SECONDS)
         assert imported.run_source.source_capture_id != original_capture
         assert store.latest_capture_id(selected[0]) == imported.run_source.source_capture_id
     finally:
@@ -465,13 +470,13 @@ def test_cli_review_does_not_hold_capture_lock_during_provider_call(client, offl
     offline["block"] = threading.Event()
     reviewer = models.make_reviewer(**{k: effective_review_config()[k] for k in ("provider", "model", "base_url")})
     future = workspace.review_executor.submit(_review_one, store, selected[0], reviewer)
-    assert offline["started"].wait(3)
     try:
-        workspace.executor.submit(analyze, doc, store).result(timeout=3)
+        assert offline["started"].wait(_ASYNC_TIMEOUT_SECONDS)
+        workspace.executor.submit(analyze, doc, store).result(timeout=_ASYNC_TIMEOUT_SECONDS)
     finally:
         offline["block"].set()
     with pytest.raises(CaptureChangedError):
-        future.result(timeout=3)
+        future.result(timeout=_ASYNC_TIMEOUT_SECONDS)
 
 
 @pytest.mark.parametrize("provider,model", [("openai", "gpt-4o"), ("anthropic", "claude-opus-4-8")])

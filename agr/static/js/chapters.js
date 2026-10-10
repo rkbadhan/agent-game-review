@@ -312,6 +312,17 @@ function renderOverviewChapter(main) {
   const lsec = el("div", "card card-pad");
   lsec.append(el("p", "eyebrow", "What limits the review"));
   const limits = el("div");
+  for (const eventId of (rv.harness_protocol || {}).user_termination_event_ids || []) {
+    const r = el("div", "limit-item");
+    r.append(el("span", "chip", "Conversation ended by simulated user"));
+    r.append(document.createTextNode("No agent turn was recorded after this message. This does not establish whether earlier actions were correct. "));
+    const inspect = el("button", "button subtle", "Inspect ending message");
+    const { step } = stepForEvent(f || { steps: [] }, eventId);
+    inspect.disabled = !step;
+    if (step) inspect.addEventListener("click", () => openTrace(step.step_id));
+    else inspect.title = "Ending message is unavailable in the captured trace.";
+    r.append(inspect); limits.append(r);
+  }
   const cap = rv.capture || {}, comp = cap.capture_completeness;
   if (comp && comp !== "complete") {
     const r = el("div", "limit-item"); r.append(el("span", "chip", comp));

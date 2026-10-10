@@ -34,13 +34,18 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
+from itertools import combinations
 from typing import Optional, Protocol
 
 from . import version
 from ._util import action_signature, is_mutation, is_tool_failure, paired_result, structured_input
 from .execution_quality import generation_token_counts, generation_wall_ms
 from .recovery import GOOD_RECOVERY, UNRECOVERED, raw_failure_lead
+from .review_protocol import (
+    action_opportunity, completion_confirmation_pairs, negative_finding_protocol_gate,
+    terminal_confirmation_event_ids,
+)
 from .schema import (
     ATTRIBUTION_LEVELS,
     Alternative,
@@ -110,6 +115,14 @@ class ReviewerContext:
     # explicitly post-run diagnostic evidence — labelled as such so the reviewer
     # never mistakes assertion output for something the agent observed.
     verifier_logs: list[dict] = field(default_factory=list)
+    protocol: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        if "completion_confirmations" not in self.protocol:
+            self.protocol["completion_confirmations"] = completion_confirmation_pairs(self.events)
+        if "terminal_confirmation_event_ids" not in self.protocol:
+            self.protocol["terminal_confirmation_event_ids"] = terminal_confirmation_event_ids(
+                self.events, self.protocol.get("user_termination_event_ids", []))
 
 
 @dataclass
@@ -273,6 +286,31 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
             annotated["observation_scope"] = recomputed
         elif ftype == "repetition":
             evs = fact.get("events", [])
+            protected = {frozenset((p["request_event_id"], p["confirmation_event_id"]))
+                         for p in ctx.protocol["completion_confirmations"]}
+            # Narrow a group containing a harness confirmation to independently
+            # supported repetitions. The protected edge alone is never evidence.
+            if any(pair <= set(evs) for pair in protected):
+                def repeated_pair(a, b):
+                    a, b = sorted((a, b), key=lambda eid: events_by_id[eid].sequence
+                                  if eid in events_by_id else -1)
+                    return (frozenset((a, b)) not in protected
+                            and sig_by_event.get(a) is not None
+                            and sig_by_event.get(a) == sig_by_event.get(b)
+                            and not strat_after.get((a, b), False)
+                            and _outputs_equivalent(ctx.events, [a, b]))
+                subset = []
+                for a, b in combinations(evs, 2):
+                    if repeated_pair(a, b):
+                        subset = [a, b]
+                        break
+                for eid in evs:
+                    if subset and eid not in subset and all(repeated_pair(x, eid) for x in subset):
+                        subset.append(eid)
+                annotated["excluded_confirmation_pairs"] = [sorted(pair) for pair in protected
+                                                            if pair <= set(evs)]
+                evs = subset
+                annotated["events"] = evs
             sigs = [sig_by_event.get(e) for e in evs]
             recomputed = [list(s) if s else None for s in sigs]
             # Shared semantics with the detector (AGR follow-up F1): identical
@@ -296,6 +334,9 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
                 and not any_mutation
                 and _outputs_equivalent(ctx.events, evs)
             )
+        elif ftype == "action_opportunity":
+            recomputed = action_opportunity(fact, ctx)
+            passed = bool(recomputed)
         elif ftype == "token_usage":
             ev = events_by_id.get(fact.get("event_id"))
             recorded = generation_token_counts(ev.cost)[0] if ev is not None else None
@@ -565,7 +606,7 @@ def observability_for(candidate: Candidate, ctx: ReviewerContext) -> str:
             required[("messages", "complete")] = None
         elif ftype == "absence":
             required[("filesystem", "checkpoint_only")] = None
-        elif ftype == "termination":
+        elif ftype in ("termination", "action_opportunity"):
             required[("messages", "complete")] = None
         elif ftype == "token_usage":
             required[("generation_usage", "complete")] = None
@@ -672,7 +713,8 @@ def _facts_valid(validated: list[dict]) -> bool:
     """
     if any(f.get("validation") == "failed" for f in validated):
         return False
-    return any(f.get("validation") == "passed" for f in validated)
+    return any(f.get("validation") == "passed" and f.get("type") != "action_opportunity"
+               for f in validated)
 
 
 def _quote_only_failure(m: "ReviewMoment") -> bool:
@@ -773,6 +815,8 @@ def render(fact: dict, ceiling: str, polarity: str, observation_scope: bool = Fa
     """
     ftype = fact.get("type")
     link = _LINK_CLAUSE.get(ceiling, _LINK_CLAUSE["hypothesized"])
+    if ftype == "action_opportunity":
+        return "An agent action opportunity was recorded within the cited window."
     if ftype == "requirement_status":
         # Canonical fields only: status/expected/observed were sourced from the
         # check record during validation (F1), and a fact that survives carries
@@ -1094,7 +1138,8 @@ def select_moments(moments: list[ReviewMoment]) -> list[ReviewMoment]:
                and m.gate_results.get("references", {}).get("status") == "resolved"
                and m.gate_results.get("observability") == "supported"
                and _passes_link(m)
-               and m.gate_results.get("attribution") == "within_ceiling"]
+               and m.gate_results.get("attribution") == "within_ceiling"
+               and m.gate_results.get("protocol", "passed") == "passed"]
 
     # Union-find over "same moment": transitively group facets so a card that links
     # to two others (by check and by anchor) pulls them into one group.
@@ -1392,6 +1437,10 @@ def _build_suggested_alternatives(
         if decision_seq is None:
             _drop("decision_unknown")
             continue
+        if any(seq_of.get(eid, float("inf")) <= decision_seq
+               for eid in ctx.protocol.get("user_termination_event_ids", [])):
+            _drop("no_action_opportunity")
+            continue
         info_out: list[dict] = []
         cutoff_ok = True
         for ref in (raw.get("information_available") or []):
@@ -1528,7 +1577,8 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         # Render from the fact(s) that actually PASSED validation — never
         # from a failed or unrecomputable fact, whose "recomputed" basis does
         # not exist (AGR-03: unknown fact types must not become validated prose).
-        passed_facts = [f for f in validated if f.get("validation") == "passed"]
+        passed_facts = [f for f in validated if f.get("validation") == "passed"
+                        and f.get("type") != "action_opportunity"]
         requirement_status_facts = [f for f in passed_facts if f.get("type") == "requirement_status"]
         if len(requirement_status_facts) > 1:
             # AGR-08: an aggregate terminal-failure candidate carries one
@@ -1545,7 +1595,9 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
         better_action = (
             "model_provided" if (enr and enr.better_action) else "not_available_deterministic"
         )
+        protocol_status = negative_finding_protocol_gate(cand, ctx)
         gate_results = {
+            "protocol": protocol_status,
             "fact_validation": "passed" if _facts_valid(validated) else "failed",
             "validation_attempts": attempts,
             "references": refs,  # resolved | dangling (+ dangling detail)
@@ -1595,6 +1647,10 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             # when it licenses no more than a hypothesis, so a published card
             # always states what it does not establish.
             limits=list(cand.limits) + (
+                ["The only cited agent action is a recognized final confirmation request; "
+                 "no action turn was recorded after the user's ending response."]
+                if protocol_status == "terminal_confirmation_has_no_action_opportunity" else []
+            ) + (
                 ["Causal attribution is hypothesized, not established."]
                 if ceiling == "hypothesized" else []),
             rendered_statement=statement,
@@ -1603,12 +1659,13 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             phase_id=phase_of.get(anchor),
             review_mode=reviewer.review_mode,
             reviewer_version=version.REVIEWER_VERSION,
+            raw_enrichment=asdict(enr) if enr is not None else None,
         )
         # Enrichment only survives on a moment whose facts validated — a card the
         # envelope will not publish never carries a model verdict.
         if enr is not None:
             alternatives_proposed += len(enr.alternatives or [])
-            if _facts_valid(validated):
+            if _facts_valid(validated) and protocol_status == "passed":
                 _apply_enrichment(moment, enr)
                 suggested, alt_drops = _build_suggested_alternatives(
                     enr, cand, ctx, ceiling, seq_of)
@@ -1616,8 +1673,8 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
                 for reason, count in alt_drops.items():
                     alternative_drops[reason] = alternative_drops.get(reason, 0) + count
             elif enr.alternatives:
-                alternative_drops["moment_unvalidated"] = (
-                    alternative_drops.get("moment_unvalidated", 0) + len(enr.alternatives))
+                reason = "protocol" if protocol_status != "passed" else "moment_unvalidated"
+                alternative_drops[reason] = alternative_drops.get(reason, 0) + len(enr.alternatives)
         moments.append(moment)
 
     select_moments(moments)
@@ -1634,6 +1691,9 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
                 continue
             if m.superseded_by:
                 rejections["deduplicated"] = rejections.get("deduplicated", 0) + 1
+                continue
+            if m.gate_results.get("protocol", "passed") != "passed":
+                rejections["protocol"] = rejections.get("protocol", 0) + 1
                 continue
             for gate in _REJECTION_GATES:
                 result = m.gate_results.get(gate)
