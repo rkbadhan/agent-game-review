@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T15:54:34Z",
- "source_hash": "sha256:2e5caf712a06b4136b8a3b256fdc759677e4ee5c118c587b024e71a0e5b58209",
+ "source_hash": "sha256:df5118ec1ea4e2506ee552dfcd1097f4e337e4254c527fa85a6acd3e428adc4a",
  "moment_count": 2,
- "selected_count": 2,
+ "selected_count": 1,
  "moments": [
   {
    "moment_id": "mom_cand_unresolved_requirement_at_submission_terminal_bench_reward",
    "run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
-   "source_capture_id": "capture_2e5caf712a06",
+   "source_capture_id": "capture_df5118ec1ea4",
    "candidate_id": "cand_unresolved_requirement_at_submission_terminal_bench_reward",
    "detector": "model",
    "kind": "behaviour",
@@ -36,7 +36,11 @@
      "expected": null,
      "observed": null,
      "validation": "passed",
-     "recomputed": "failed"
+     "recomputed": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "status": "failed"
     },
     {
      "type": "event_support",
@@ -75,14 +79,29 @@
     }
    ],
    "attribution_ceiling": "hypothesized",
-   "rendered_statement": "Requirement check terminal_bench_reward was still failing at submission.",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
+   "rendered_statement": "Requirement check terminal_bench_reward failed the run's final verifier; the agent's trace records no observation of this check.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
     "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 13,
    "phase_id": "ph_03",
@@ -96,17 +115,19 @@
    "micro_abilities": [],
    "root_cause_candidates": [],
    "better_action": "Before the confirming mark_task_complete at evt_016, run one small read-only verification batch (nginx -t; curl -sI localhost:8080; curl the missing-path 404; grep the log_format and limit_req_zone lines; tail the access log) and only confirm once its output is in hand.",
+   "alternatives": [],
    "instructional_value": "The agent's own reasoning at evt_014 explicitly flagged 'potential hidden grading issues', yet it converted the confirmation prompt into a formality and confirmed without gathering any fresh evidence. This is the canonical premature-completion pattern: a recognized risk, a free re-verification opportunity, and a decision to skip it.",
    "eval_lesson_recommended": true,
+   "raw_enrichment": null,
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   },
   {
    "moment_id": "mom_cand_repeated_action_no_new_info_evt_016",
    "run_id": "harbor__terminal-bench/nginx-request-logging__4e941d41-a66",
-   "source_capture_id": "capture_2e5caf712a06",
+   "source_capture_id": "capture_df5118ec1ea4",
    "candidate_id": "cand_repeated_action_no_new_info_evt_016",
    "detector": "model",
    "kind": "behaviour",
@@ -124,19 +145,13 @@
       "mark_task_complete",
       "{}"
      ],
-     "events": [
-      "evt_012",
-      "evt_016"
-     ],
-     "validation": "passed",
-     "recomputed": [
+     "events": [],
+     "validation": "failed",
+     "recomputed": [],
+     "excluded_confirmation_pairs": [
       [
-       "mark_task_complete",
-       "{}"
-      ],
-      [
-       "mark_task_complete",
-       "{}"
+       "evt_012",
+       "evt_016"
       ]
      ]
     },
@@ -167,34 +182,51 @@
      ]
     }
    ],
-   "attribution_ceiling": "dependency_linked",
-   "rendered_statement": "The same action was repeated with no new information in between (evt_012, evt_016).",
+   "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established.",
+    "Original model quotes and explanation prose were not saved; explanation diagnostics could not be revalidated."
+   ],
+   "rendered_statement": "Grounded in quoted run evidence (evt_013, evt_016), a likely explanation for the outcome.",
    "gate_results": {
-    "fact_validation": "passed",
+    "protocol": "passed",
+    "fact_validation": "failed",
     "validation_attempts": 1,
-    "contract_link": "present",
+    "references": {
+     "status": "resolved"
+    },
+    "contract_link": "absent",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "model_provided",
+    "explanation_support": "not_revalidated",
+    "quote_authenticity": "not_revalidated",
+    "prose_references": "not_revalidated",
+    "explanation_attribution": "not_revalidated",
+    "historical_explanation_diagnostics": {},
+    "explanation_revalidation": "unavailable_legacy_inputs"
    },
    "sequence": 12,
    "phase_id": "ph_03",
-   "selected": true,
-   "selection_rank": 1,
+   "selected": false,
+   "selection_rank": null,
    "superseded_by": null,
-   "taxonomy_verdict": "benign_confirmation_flow_not_a_stall",
+   "taxonomy_verdict": null,
    "behaviour_tags": [],
    "phase": null,
    "consequence": null,
    "micro_abilities": [],
    "root_cause_candidates": [],
-   "better_action": "No alternative action needed for the repeat itself; the genuine improvement (re-verify before confirming) is captured in the primary moment.",
-   "instructional_value": "Low instructional value: illustrates that a repeated completion call immediately following an explicit confirmation prompt is expected flow, not a stall. Detector false positive in this context.",
+   "better_action": null,
+   "alternatives": [],
+   "instructional_value": null,
    "eval_lesson_recommended": false,
-   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
-   "taxonomy_version": "0.1",
+   "raw_enrichment": null,
+   "enrichment_source": null,
+   "taxonomy_version": null,
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
  ]
 }

@@ -310,12 +310,12 @@ function renderRunList() {
     const line = el("div", "run-line");
     line.append(el("span", "status-dot " + sc));
     line.append(el("span", "run-name", r.task_id || r.run_id));
-    line.append(el("span", "run-checks " + sc, (o.passed??"?") + "/" + (o.total??"?")));
+    line.append(el("span", "run-checks " + sc, outcomeCounts(o, true)));
     // The status WORD ("PASSED"/"FAILED"/…) is now conveyed by color (the dot,
     // .run-checks) rather than spelled out next to the ratio — kept as text
     // too (clipped, not hidden) so a reader querying the row's own text for
     // it, sighted or not, still finds it.
-    line.append(el("span", "run-status sr-only " + sc, (o.status||"?").toUpperCase() + " · " + (o.passed??"?") + "/" + (o.total??"?")));
+    line.append(el("span", "run-status sr-only " + sc, (o.status||"?").toUpperCase() + " · " + outcomeCounts(o, true)));
     const wf = r.workflow || {};
     const handled = wf.review_progress === "handled";
     const stCls = handled ? "handled" : wf.review_progress === "in_progress" ? "progress" : "";
@@ -337,7 +337,7 @@ function renderRunList() {
     const cost = fmtCost(r.cost); if (cost) bits.push(cost);
     if (r.contract && r.contract.watermarked) bits.push("provisional");
     bits.push(vocab("review_mode", r.review_mode).label.replace(" review", ""));
-    btn.title = (o.status||"?").toUpperCase() + " · " + (o.passed??"?") + "/" + (o.total??"?") + " — " + bits.join(" · ");
+    btn.title = (o.status||"?").toUpperCase() + " · " + outcomeCounts(o, true) + " — " + bits.join(" · ");
     btn.append(el("span", "sr-only run-meta", bits.join(" · ")));
 
     btn.addEventListener("click", () => selectRun(r.run_id));

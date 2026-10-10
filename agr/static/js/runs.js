@@ -28,7 +28,7 @@ function runsMatchesSearch(r, q) {
 // row does not carry.
 function runRowFindingText(r) {
   const finding = r.main_finding;
-  return groundedBoilerplateIds(finding) ? null : finding;
+  return groundedBoilerplateIds(finding) ? (r.main_finding_title ? humanizeToken(r.main_finding_title) : null) : finding;
 }
 
 // The page used to go straight from the eyebrow to the
@@ -160,7 +160,11 @@ function runsIdentityCell(r) {
     meta.append(copyButton(r.run_id, "Copy full session id"));
   }
   if (r.cwd) meta.append(el("span", "runs-id-repo", r.cwd));
-  if (r.model) meta.append(el("span", "runs-id-model", r.model));
+  if (r.model) {
+    const model = el("span", "runs-id-model", runModelLabel(r.model));
+    model.title = "Recorded model ID: " + r.model;
+    meta.append(model);
+  }
   const when = relTime(r.finished_at || r.started_at);
   if (when) meta.append(el("span", "runs-id-time", when));
   if (meta.childNodes.length) cell.append(meta);
@@ -265,7 +269,7 @@ function renderRunsTable(host) {
     const o = r.outcome || {};
     const outTd = el("td");
     outTd.append(el("span", "badge " + runsOutcomeBadgeClass(o.status), (o.status || "?").toUpperCase()));
-    outTd.append(el("div", "vs-counts", (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks"));
+    outTd.append(el("div", "vs-counts", outcomeCounts(o)));
     // P1: no verifier evidence means no task verdict is possible — the badge
     // above is then a coverage statement, not a judgement. Say so where the
     // verdict would otherwise read as one.
@@ -277,7 +281,8 @@ function renderRunsTable(host) {
     const text = runRowFindingText(r);
     if (text) {
       const finding = el("span",
-        "runs-finding-text " + (r.main_finding_polarity === "positive" ? "runs-finding-pos" : "runs-finding-neg"),
+        "runs-finding-text " + (r.main_finding_polarity === "positive" ? "runs-finding-pos"
+          : r.main_finding_polarity === "neutral" ? "runs-finding-none" : "runs-finding-neg"),
         leadFinding(text, 112));
       finding.title = r.main_finding;
       mfTd.append(finding);

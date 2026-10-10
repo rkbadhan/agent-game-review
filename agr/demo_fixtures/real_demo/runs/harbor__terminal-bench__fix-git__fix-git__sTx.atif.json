@@ -697,14 +697,47 @@
   "requirements": []
  },
  "verifier": {
+  "raw_output": "{\"ctrf_summary\": {\"tests\": 2, \"passed\": 2, \"failed\": 0, \"skipped\": 0, \"pending\": 0, \"other\": 0, \"start\": 1787506452.6706393, \"stop\": 1787506452.7016358}}",
   "checks": [
    {
-    "check_id": "terminal_bench_reward",
-    "name": "Terminal-Bench task reward",
+    "check_id": "test_outputs.py::test_about_file",
+    "name": "test_outputs.py::test_about_file",
+    "status": "passed",
     "source": "native_structured",
-    "status": "passed"
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_layout_file",
+    "name": "test_outputs.py::test_layout_file",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "terminal_bench_reward",
+    "name": "Terminal-Bench task reward (aggregate)",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "result.json"
+    ]
    }
   ],
-  "raw_output": "{\"reward\": 1.0}"
+  "log_excerpts": [
+   {
+    "source": "verifier/test-stdout.txt",
+    "content": "Hit:1 http://deb.debian.org/debian bookworm InRelease\nHit:2 http://deb.debian.org/debian bookworm-updates InRelease\nGet:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]\nFetched 34.8 kB in 0s (115 kB/s)\nReading package lists...\nReading package lists...\nBuilding dependency tree...\nReading state information...\ncurl is already the newest version (7.88.1-10+deb12u15).\n0 upgraded, 0 newly installed, 0 to remove and 18 not upgraded.\ndownloading uv 0.9.5 x86_64-unknown-linux-gnu\nno checksums to verify\ninstalling to /root/.local/bin\n  uv\n  uvx\neverything's installed!\nDownloading pygments (1.2MiB)\n Downloading pygments\nInstalled 6 packages in 22ms\n============================= test session starts ==============================\nplatform linux -- Python 3.13.12, pytest-8.4.1, pluggy-1.6.0\nrootdir: /tests\nplugins: json-ctrf-0.3.5\ncollected 2 items\n\n../../tests/test_outputs.py ..                                           [100%]\n\n==================================== PASSES ====================================\n=========================== short test summary info ============================\nPASSED ../../tests/test_outputs.py::test_about_file\nPASSED ../../tests/test_outputs.py::test_layout_file\n============================== 2 passed in 0.04s ===============================\n",
+    "timing": "post_run"
+   }
+  ]
  }
 }

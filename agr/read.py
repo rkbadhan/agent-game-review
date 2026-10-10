@@ -229,6 +229,23 @@ def _review_moment_view(m: dict) -> dict:
     }
 
 
+def _outcome_context(outcome: dict, protocol: dict) -> Optional[dict]:
+    """Explain a recorded action-window closure without inventing a finding."""
+    stops = protocol.get("user_termination_event_ids") or []
+    if outcome.get("status") != "FAILED" or not stops:
+        return None
+    requests = protocol.get("terminal_confirmation_event_ids") or []
+    return {
+        "headline": ("Simulated customer ended the conversation before the agent could act"
+                     if requests else "Simulated customer ended the conversation"),
+        "detail": ("The customer's final message closed the action window. No agent turn followed, "
+                   "so the missing action after that message is not an agent omission. "
+                   "This does not establish whether earlier actions were correct."),
+        "event_ids": list(dict.fromkeys([*requests, *stops])),
+        "leads_overview": bool(requests),
+    }
+
+
 def _selected_moments(review_moments: list[dict]) -> list[dict]:
     """The reviewer envelope's selected cards, in selection order (§8.10)."""
     selected = [m for m in review_moments if m.get("selected")]
@@ -963,8 +980,14 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
         # its strongestMoments()[0] is `moments.filter(positive)[0]`, i.e. the
         # first positive moment in the same selection-ordered list — the two
         # implementations are the same computation, not an approximation of it.
+        outcome_context = _outcome_context(
+            outcome, _read(store, run_id, capture_id, "review_protocol.json", {}))
         main_finding_moment = next((m for m in moments if m.get("polarity") != "positive"), None) or next(
             (m for m in moments if m.get("polarity") == "positive"), None)
+        # A terminal confirmation followed by the customer's stop explains the
+        # closed action window even when earlier strengths were selected.
+        if outcome_context and outcome_context["leads_overview"]:
+            main_finding_moment = None
         summaries.append({
             "run_id": run_id,
             "task_id": rs.get("task_id"),
@@ -1001,14 +1024,19 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
                 "status": outcome.get("status"),
                 "passed": outcome.get("passed"),
                 "total": outcome.get("total"),
+                **({"test_results": outcome["test_results"]} if outcome.get("test_results") else {}),
             },
             # Whether a task verdict is even possible for this capture, kept
             # separate from the outcome itself (§6.2). A caller can filter or
             # annotate on this without re-deriving it from the status string.
             "verification": _verification_summary(capabilities, outcome),
             "review_mode": _review_mode(review_moments, entry.get("capture_completeness")),
-            "main_finding": (main_finding_moment or {}).get("summary"),
-            "main_finding_polarity": (main_finding_moment or {}).get("polarity"),
+            "outcome_context": outcome_context,
+            "main_finding_title": (main_finding_moment or {}).get("taxonomy_verdict"),
+            "main_finding": ((main_finding_moment or {}).get("summary")
+                             or (outcome_context or {}).get("headline")),
+            "main_finding_polarity": ((main_finding_moment or {}).get("polarity")
+                                      or ("neutral" if outcome_context else None)),
             "counts": {
                 "concern": concern,
                 "strength": strength,
@@ -1386,6 +1414,7 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "review_meta": review_meta,
         "review_model": served_meta.get("model"),
         "reviewed_at": served_meta.get("reviewed_at"),
+        "review_curation": served_meta.get("curation"),
         "read_model_version": version.READ_MODEL_VERSION,
         "run": _read(store, run_id, capture_id, "run_source.json", {}),
         "capture": {
@@ -1447,6 +1476,9 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         "review_status_success": review_status in SUCCESSFUL_REVIEW_STATUSES,
         "review_counts": review_counts,
         "harness_protocol": _read(store, run_id, capture_id, "review_protocol.json", {}),
+        "outcome_context": _outcome_context(
+            _read(store, run_id, capture_id, "outcome.json", {}),
+            _read(store, run_id, capture_id, "review_protocol.json", {})),
         "moments": moments,
         "review_moments": review_moments if review_moments is not None else [],
         "evidence_slices": _read(store, run_id, capture_id, "evidence_slices.json", []),

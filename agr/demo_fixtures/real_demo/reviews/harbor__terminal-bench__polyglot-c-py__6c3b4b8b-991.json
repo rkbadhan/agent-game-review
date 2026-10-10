@@ -4,97 +4,226 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T15:56:42Z",
- "source_hash": "sha256:742d09baa518b7d45dc35d32be26026a49916a588af9f33945a54aa69304e129",
- "moment_count": 1,
- "selected_count": 1,
+ "source_hash": "sha256:b5d090e9892cd672c92475651ac12f5b840542222254c6551c142c68b738ac87",
+ "moment_count": 2,
+ "selected_count": 2,
  "moments": [
   {
    "moment_id": "mom_sem_1",
    "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
-   "source_capture_id": "capture_742d09baa518",
+   "source_capture_id": "capture_b5d090e9892c",
    "candidate_id": "sem_1",
    "detector": "model",
-   "kind": "omission",
+   "kind": "behaviour",
    "polarity": "negative",
    "anchor_event_ids": [
-    "evt_028",
-    "evt_029"
+    "evt_025"
    ],
    "affected_checks": [
-    "terminal_bench_reward"
+    "test_outputs.py::test_fibonacci_polyglot"
    ],
    "affected_contract_items": [
-    "V-terminal_bench_reward"
+    "V-test_outputs.py::test_fibonacci_polyglot"
    ],
    "validated_facts": [
-    {
-     "type": "requirement_status",
-     "check_id": "terminal_bench_reward",
-     "status_at_submission": "failed",
-     "validation": "passed",
-     "recomputed": "failed"
-    },
-    {
-     "type": "termination",
-     "expected": "run_completed",
-     "validation": "passed",
-     "recomputed": "run_completed"
-    },
     {
      "type": "event_support",
      "quotes": [
       {
-       "event_id": "evt_029",
-       "quote": "[Harbor trial closed normally \u2014 no observed submission signal]"
+       "event_id": "evt_022",
+       "quote": "root@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738\nroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain\n \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738"
       },
       {
-       "event_id": "evt_028",
-       "quote": "no server running on /tmp/tmux-0/default"
+       "event_id": "evt_025",
+       "quote": "a = next;\n        next = b;\n        b = temporary_pointer;"
       }
      ],
      "validation": "passed",
      "recomputed": [
       {
-       "event_id": "evt_029",
+       "event_id": "evt_022",
        "matched": true,
        "event_present": true
       },
       {
-       "event_id": "evt_028",
+       "event_id": "evt_025",
+       "matched": true,
+       "event_present": true
+      }
+     ]
+    },
+    {
+     "type": "requirement_status",
+     "check_id": "test_outputs.py::test_fibonacci_polyglot",
+     "status": "failed",
+     "status_basis": "final_verifier",
+     "agent_observed_failure": false,
+     "agent_observed_status": null,
+     "expected": null,
+     "observed": null,
+     "validation": "passed",
+     "recomputed": "failed"
+    }
+   ],
+   "attribution_ceiling": "hypothesized",
+   "limits": [
+    "Causal attribution is hypothesized, not established."
+   ],
+   "rendered_statement": "Grounded in quoted run evidence (evt_022, evt_025), a likely explanation for the outcome.",
+   "gate_results": {
+    "protocol": "passed",
+    "fact_validation": "passed",
+    "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
+    "contract_link": "present",
+    "observation_basis": "n/a",
+    "observability": "supported",
+    "attribution": "within_ceiling",
+    "better_action": "model_provided",
+    "explanation_support": "interpretation_only",
+    "quote_authenticity": "authentic",
+    "prose_references": "resolved",
+    "explanation_attribution": "within_ceiling"
+   },
+   "sequence": 25,
+   "phase_id": "ph_03",
+   "selected": true,
+   "selection_rank": 0,
+   "superseded_by": null,
+   "taxonomy_verdict": "Broke it here: replaced matching Fibonacci code with an incorrect rewrite",
+   "behaviour_tags": [],
+   "phase": null,
+   "consequence": null,
+   "micro_abilities": [],
+   "root_cause_candidates": [],
+   "better_action": "Keep the version whose C and Python outputs matched through F(93). If extending it, preserve a copy and rerun the same cases after the rewrite before replacing it.",
+   "alternatives": [],
+   "instructional_value": "The outputs matched at step 22. The agent rewrote the C implementation at step 25; the final verifier then found F(42) returned 6 in C instead of 267914296.",
+   "eval_lesson_recommended": true,
+   "raw_enrichment": {
+    "taxonomy_verdict": "Broke it here: replaced matching Fibonacci code with an incorrect rewrite",
+    "behaviour_tags": [],
+    "phase": null,
+    "consequence": null,
+    "micro_abilities": [],
+    "root_cause_candidates": [],
+    "better_action": "Keep the version whose C and Python outputs matched through F(93). If extending it, preserve a copy and rerun the same cases after the rewrite before replacing it.",
+    "alternatives": [],
+    "instructional_value": "The outputs matched at step 22. The agent rewrote the C implementation at step 25; the final verifier then found F(42) returned 6 in C instead of 267914296.",
+    "eval_lesson_recommended": true,
+    "quotes": [
+     {
+      "event_id": "evt_022",
+      "quote": "root@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738\nroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain\n \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738"
+     },
+     {
+      "event_id": "evt_025",
+      "quote": "a = next;\n        next = b;\n        b = temporary_pointer;"
+     }
+    ],
+    "source": "model:accounts/fireworks/models/kimi-k3"
+   },
+   "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
+   "taxonomy_version": "0.1",
+   "review_mode": "model_enriched",
+   "reviewer_version": "reviewer-det-0.7"
+  },
+  {
+   "moment_id": "mom_sem_2",
+   "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
+   "source_capture_id": "capture_b5d090e9892c",
+   "candidate_id": "sem_2",
+   "detector": "model",
+   "kind": "behaviour",
+   "polarity": "positive",
+   "anchor_event_ids": [
+    "evt_022"
+   ],
+   "affected_checks": [],
+   "affected_contract_items": [],
+   "validated_facts": [
+    {
+     "type": "event_support",
+     "quotes": [
+      {
+       "event_id": "evt_022",
+       "quote": "root@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738\nroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain\n \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738"
+      }
+     ],
+     "validation": "passed",
+     "recomputed": [
+      {
+       "event_id": "evt_022",
        "matched": true,
        "event_present": true
       }
      ]
     }
    ],
-   "attribution_ceiling": "hypothesized",
-   "rendered_statement": "Requirement check terminal_bench_reward was still failing at submission.",
+   "attribution_ceiling": "dependency_linked",
+   "limits": [],
+   "rendered_statement": "Grounded in quoted run evidence (evt_022), and is linked to the failed outcome.",
    "gate_results": {
+    "protocol": "passed",
     "fact_validation": "passed",
-    "validation_attempts": 2,
+    "validation_attempts": 1,
+    "references": {
+     "status": "resolved"
+    },
     "contract_link": "present",
+    "observation_basis": "n/a",
     "observability": "supported",
     "attribution": "within_ceiling",
-    "better_action": "model_provided"
+    "better_action": "not_available_deterministic",
+    "explanation_support": "interpretation_only",
+    "quote_authenticity": "authentic",
+    "prose_references": "resolved",
+    "explanation_attribution": "within_ceiling"
    },
-   "sequence": 28,
+   "sequence": 22,
    "phase_id": "ph_03",
    "selected": true,
-   "selection_rank": 0,
+   "selection_rank": 1,
    "superseded_by": null,
-   "taxonomy_verdict": "prolonged off-task hardening without submission",
+   "taxonomy_verdict": "Working here: C and Python matched the tested Fibonacci values",
    "behaviour_tags": [],
    "phase": null,
    "consequence": null,
    "micro_abilities": [],
    "root_cause_candidates": [],
-   "better_action": "once both runtimes printed correct Fibonacci values (evt_008), do one final confirmation run of the exact acceptance surface (python3 main.py.c N and gcc build + run for the tested Ns) and stop, submitting the existing file rather than chasing warning-free -Werror compilation and 64-bit overflow parity",
-   "instructional_value": "teaches satisficing against the actual task contract: a correct deliverable existed early, and unbounded hardening plus heavyweight self-verification consumed the run; learners should time-box polish and submit the working artifact first",
-   "eval_lesson_recommended": true,
+   "better_action": null,
+   "alternatives": [],
+   "instructional_value": "The recorded self-check shows both runtimes producing the same expected values through F(93). It does not establish correctness beyond those tested inputs.",
+   "eval_lesson_recommended": false,
+   "raw_enrichment": {
+    "taxonomy_verdict": "Working here: C and Python matched the tested Fibonacci values",
+    "behaviour_tags": [],
+    "phase": null,
+    "consequence": null,
+    "micro_abilities": [],
+    "root_cause_candidates": [],
+    "better_action": null,
+    "alternatives": [],
+    "instructional_value": "The recorded self-check shows both runtimes producing the same expected values through F(93). It does not establish correctness beyond those tested inputs.",
+    "eval_lesson_recommended": false,
+    "quotes": [
+     {
+      "event_id": "evt_022",
+      "quote": "root@086ad6ffcb84:/app# for i in 0 1 2 3 10 20 93; do python3 /app/polyglot/main.py.c \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738\nroot@086ad6ffcb84:/app# gcc -Wall -Wextra -Wpedantic -Werror /app/polyglot/main.py.c -o /app/polyglot/cmain && for i in 0 1 2 3 10 20 93; do /app/polyglot/cmain\n \"$i\"; done\n0\n1\n1\n2\n55\n6765\n12200160415121876738"
+     }
+    ],
+    "source": "model:accounts/fireworks/models/kimi-k3"
+   },
    "enrichment_source": "model:accounts/fireworks/models/kimi-k3",
    "taxonomy_version": "0.1",
    "review_mode": "model_enriched",
-   "reviewer_version": "reviewer-det-0.1"
+   "reviewer_version": "reviewer-det-0.7"
   }
- ]
+ ],
+ "curation": {
+  "date": "2026-10-10",
+  "reason": "Corrected anchors and interpretation from the original trajectory and verifier; the original model provenance is retained separately."
+ }
 }

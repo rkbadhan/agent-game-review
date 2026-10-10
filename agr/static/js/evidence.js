@@ -77,7 +77,8 @@ function renderEvidencePanel() {
 // to look at neighbouring steps or open the full trace at that exact point.
 function renderSourceGroup(rv, f, moment) {
   const g = evGroup("What the agent did");
-  const anchors = (moment.anchor_event_ids || []).filter(Boolean);
+  const anchors = [...new Set([...(moment.anchor_event_ids || []),
+    ...(moment.facts || []).flatMap(f => (f.quotes || []).map(q => q.event_id))])].filter(Boolean);
   // The anchored-source display (tabs, captured content, neighbours, "open
   // full trace") only applies when there is an anchor to focus. The facts
   // this moment cites are independent of that — an omission/absence moment
@@ -110,6 +111,13 @@ function renderSourceGroup(rv, f, moment) {
     l.append(el("span", "evidence-type", step ? (step.kind || "event").replace(/_/g, " ") : "event"));
     l.append(el("span", null, state.evidenceFocus + (step ? " · trace step " + (idx + 1) : "")));
     item.append(l);
+    const quoted = [...new Set((moment.facts || []).flatMap(f => f.quotes || [])
+      .filter(q => q.event_id === state.evidenceFocus && stepContentHasTerm(step, q.quote))
+      .map(q => q.quote))];
+    if (quoted.length) {
+      item.append(el("div", "evidence-label", "Supporting excerpt"));
+      for (const quote of quoted) item.append(el("pre", "evidence-quote", quote));
+    }
     item.append(renderStepContent(step, { highlightTerms: terms }));
     // Same eligibility test `highlightSpan` uses (§ trace.js): a term too
     // short to highlight must not count as "found" here either, or this note
@@ -133,6 +141,12 @@ function renderSourceGroup(rv, f, moment) {
   // as a bare list — the expected/observed values a reader should be able to
   // check against the source content above. Rendered regardless of anchors.
   for (const fct of moment.facts || []) {
+    if (fct.type === "event_support") {
+      const item = evItem("Quoted run evidence", "");
+      item.append(evidenceCell((fct.quotes || []).map(q => q.event_id), f));
+      g.append(item);
+      continue;
+    }
     const parts = [fct.type]; if (fct.check_id) parts.push("check " + fct.check_id);
     g.append(evItem(parts.join(" · "), "expected " + fmtVal(fct.expected) + " · observed " + fmtVal(fct.observed)));
   }

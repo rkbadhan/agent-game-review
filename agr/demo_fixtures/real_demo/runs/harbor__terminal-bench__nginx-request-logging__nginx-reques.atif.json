@@ -497,14 +497,113 @@
   "requirements": []
  },
  "verifier": {
+  "raw_output": "{\"ctrf_summary\": {\"tests\": 8, \"passed\": 8, \"failed\": 0, \"skipped\": 0, \"pending\": 0, \"other\": 0, \"start\": 1787581738.440324, \"stop\": 1787581740.9742317}}",
   "checks": [
    {
-    "check_id": "terminal_bench_reward",
-    "name": "Terminal-Bench task reward",
+    "check_id": "test_outputs.py::test_nginx_installed",
+    "name": "test_outputs.py::test_nginx_installed",
+    "status": "passed",
     "source": "native_structured",
-    "status": "passed"
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_running",
+    "name": "test_outputs.py::test_nginx_running",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_index_page_content",
+    "name": "test_outputs.py::test_index_page_content",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_custom_404_page",
+    "name": "test_outputs.py::test_custom_404_page",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_config_syntax",
+    "name": "test_outputs.py::test_nginx_config_syntax",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_config_settings",
+    "name": "test_outputs.py::test_nginx_config_settings",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_log_file_creation",
+    "name": "test_outputs.py::test_log_file_creation",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_log_file_format",
+    "name": "test_outputs.py::test_log_file_format",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "terminal_bench_reward",
+    "name": "Terminal-Bench task reward (aggregate)",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "result.json"
+    ]
    }
   ],
-  "raw_output": "{\"reward\": 1.0}"
+  "log_excerpts": [
+   {
+    "source": "verifier/test-stdout.txt",
+    "content": "Hit:1 http://deb.debian.org/debian bookworm InRelease\nHit:2 http://deb.debian.org/debian bookworm-updates InRelease\nHit:3 http://deb.debian.org/debian-security bookworm-security InRelease\nReading package lists...\nReading package lists...\nBuilding dependency tree...\nReading state information...\ncurl is already the newest version (7.88.1-10+deb12u15).\n0 upgraded, 0 newly installed, 0 to remove and 27 not upgraded.\ndownloading uv 0.9.5 x86_64-unknown-linux-gnu\nno checksums to verify\ninstalling to /root/.local/bin\n  uv\n  uvx\neverything's installed!\nDownloading pygments (1.2MiB)\n Downloading pygments\nInstalled 11 packages in 44ms\n============================= test session starts ==============================\nplatform linux -- Python 3.13.7, pytest-8.4.1, pluggy-1.6.0 -- /root/.cache/uv/archive-v0/O7pIecE9PEBRZWO3W1vli/bin/python\ncachedir: .pytest_cache\nrootdir: /tests\nplugins: json-ctrf-0.3.5\ncollecting ... collected 8 items\n\n../tests/test_outputs.py::test_nginx_installed PASSED                    [ 12%]\n../tests/test_outputs.py::test_nginx_running PASSED                      [ 25%]\n../tests/test_outputs.py::test_index_page_content PASSED                 [ 37%]\n../tests/test_outputs.py::test_custom_404_page PASSED                    [ 50%]\n../tests/test_outputs.py::test_nginx_config_syntax PASSED                [ 62%]\n../tests/test_outputs.py::test_nginx_config_settings PASSED              [ 75%]\n../tests/test_outputs.py::test_log_file_creation PASSED                  [ 87%]\n../tests/test_outputs.py::test_log_file_format PASSED                    [100%]\n\n==================================== PASSES ====================================\n=========================== short test summary info ============================\nPASSED ../tests/test_outputs.py::test_nginx_installed\nPASSED ../tests/test_outputs.py::test_nginx_running\nPASSED ../tests/test_outputs.py::test_index_page_content\nPASSED ../tests/test_outputs.py::test_custom_404_page\nPASSED ../tests/test_outputs.py::test_nginx_config_syntax\nPASSED ../tests/test_outputs.py::test_nginx_config_settings\nPASSED ../tests/test_outputs.py::test_log_file_creation\nPASSED ../tests/test_outputs.py::test_log_file_format\n============================== 8 passed in 2.54s ===============================\n",
+    "timing": "post_run"
+   }
+  ]
  }
 }

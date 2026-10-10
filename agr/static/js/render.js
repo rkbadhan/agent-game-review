@@ -106,14 +106,15 @@ function render() {
   titleRow.append(el("h1", null, run.task_id || state.runId));
   const o = rv.outcome || {}, sc = statusClass(o.status);
   const hs = el("span", "header-status " + sc);
-  hs.append(el("span", "status-dot " + sc), el("span", null, (o.status||"?") + " · " + (o.passed??"?") + "/" + (o.total??"?") + " checks"));
+  hs.append(el("span", "status-dot " + sc), el("span", null, (o.status||"?") + " · " + outcomeCounts(o)));
   titleRow.append(hs);
   left.append(titleRow);
   const steps = (state.forensic && state.forensic.steps) ? state.forensic.steps.length : null;
-  const subBits = [run.model, run.harness_version ? "harness " + run.harness_version : null,
+  const subBits = [runModelLabel(run.model), run.harness_version ? "harness " + run.harness_version : null,
     steps != null ? steps + " steps" : null, fmtDuration(durationOf(run)),
     fmtCost(costOf(run))].filter(Boolean).join(" · ");
   const sub = el("div", "run-subtitle");
+  if (run.model) sub.title = "Recorded model ID: " + run.model;
   if (subBits) sub.append(document.createTextNode(subBits + " · "));
   const shortId = shortRunId(state.runId, 10) || state.runId;
   const idSpan = el("span", "mono run-id-short", shortId);
@@ -273,8 +274,10 @@ function costOf(run) { return typeof (run && run.cost) === "number" ? run.cost :
 function renderShellMeta(rv) {
   const wrap = el("div", "shell-meta");
   const mode = rv.review_mode || "deterministic_only";
-  const mv = vocab("review_mode", mode);
-  const modeCls = mode === "not_reviewable" ? "warn" : mode === "model_enriched" ? "enriched" : "det";
+  const curation = rv.review_curation;
+  const mv = curation ? { label: curatedReviewLabel(curation), tip: curation.reason }
+    : vocab("review_mode", mode);
+  const modeCls = curation ? "curated" : mode === "not_reviewable" ? "warn" : mode === "model_enriched" ? "enriched" : "det";
   const modeChip = el("span", "shell-chip mode-" + modeCls, mv.label);
   modeChip.title = mv.tip;
   // GR-1: the review's single status, stated up front. Only moments_found and
@@ -290,6 +293,9 @@ function renderShellMeta(rv) {
     const sv = vocab("review_status", rv.review_status);
     if (rv.review_status_success) {
       modeChip.title = mv.tip + " · " + sv.label + (sv.tip ? ": " + sv.tip : "");
+    } else if (rv.outcome_context && rv.review_status === "all_proposals_rejected") {
+      // Validation details remain available without competing with the ending.
+      modeChip.title += " · " + sv.label + (sv.tip ? ": " + sv.tip : "");
     } else {
       const statusChip = el("span", "shell-chip warn", sv.label);
       statusChip.title = sv.tip;
@@ -297,7 +303,7 @@ function renderShellMeta(rv) {
     }
   }
   const configured = (rv.available_review_configurations || {})[rv.reviewer_key];
-  if (configured) {
+  if (configured && !curation) {
     const provenance = el("span", "shell-chip mode-det", "Reviewer: " + configured.model);
     provenance.title = configured.provider + " · " + configured.base_url;
     wrap.append(provenance);
@@ -305,7 +311,7 @@ function renderShellMeta(rv) {
   // GR-4: a pre-computed demo review names its reviewer model and date, so a
   // reader sees the provenance of an offline review (and it is not mistaken for
   // a live model call, which the demo never makes).
-  if (rv.review_model) {
+  if (rv.review_model && !curation) {
     const when = rv.reviewed_at ? " · " + rv.reviewed_at.slice(0, 10) : "";
     const provenance = el("span", "shell-chip mode-det", "AI " + rv.review_model + when);
     provenance.title = "Reviewer model and date of this pre-computed review";
@@ -336,12 +342,14 @@ function renderShellMeta(rv) {
       let destination = config && config.provider;
       try { if (config && config.base_url) destination = new URL(config.base_url).host; } catch (_) {}
       const suffix = matching && config ? " · " + destination + " " + String(config.configuration_id || "").slice(0, 4) : "";
-      const label = key === "deterministic" ? "Deterministic"
+      const tabCuration = ((rv.review_meta || {})[key] || {}).curation;
+      const label = tabCuration ? curatedReviewLabel(tabCuration) : key === "deterministic" ? "Deterministic"
         : fullModel ? "AI · " + shortModelName(fullModel) + suffix : key;
       const tab = el("button", "seg flip-tab" + (key === active ? " active" : ""), label);
       tab.title = fullModel ? "Serve this reviewer's snapshot of the run (" + fullModel + ")"
         : "Serve this reviewer's snapshot of the run";
       if (config) tab.title = config.provider + " · " + config.model + " · " + (config.base_url || "provider default");
+      if (tabCuration) tab.title = tabCuration.reason;
       tab.addEventListener("click", async () => {
         if (key === state.reviewerKey || (key === active && state.reviewerKey == null)) return;
         state.reviewerKey = key === "deterministic" && avail.includes(active) ? key : (key === active ? null : key);

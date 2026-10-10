@@ -1,5 +1,22 @@
 "use strict";
 
+function outcomeCounts(outcome, compact = false) {
+  const o = outcome || {}, tests = o.test_results;
+  if (compact) { const tally = tests || o; return (tally.passed ?? "?") + "/" + (tally.total ?? "?"); }
+  return tests ? tests.passed + " of " + tests.total + " tests passed"
+    : (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks";
+}
+
+// Display alias only; the captured model ID remains unchanged in source data.
+function runModelLabel(model) {
+  return /^(?:(?:openai|openrouter)\/)?stealth\/ox-alpha$/.test(model || "")
+    ? "GLM-5.3 Flash" : model;
+}
+
+function curatedReviewLabel(curation) {
+  return "Curated review" + (curation.date ? " · " + curation.date : "");
+}
+
 // --- icons ---------------------------------------------------------------
 // One inline SVG sprite (agr/static/icons.svg, Lucide icons) referenced by
 // <use>, so every icon in the app shares one set of strokes instead of
@@ -88,6 +105,14 @@ function outcomeNarrative(rv) {
         + "), so this attempt has no valid verdict. It is not an agent failure and is excluded from success rates." };
   }
   if (o.status === "FAILED") {
+    if (o.test_results) {
+      const failedTests = checks.filter(c => (c.source_pointers || []).includes("verifier/ctrf.json")
+        && (c.effective_status !== undefined ? c.effective_status : c.status) === "failed");
+      return { tone: "fail", headline: "Failed —",
+        detail: failedTests.length ? failedTests.length + " of " + o.test_results.total + " tests failed: "
+          + failedTests.map(c => c.name).join("; ") + "."
+          : outcomeCounts(o) + "; the task's aggregate verifier still failed." };
+    }
     const failed = o.failed_checks || [];
     return { tone: "fail", headline: "Failed —",
       detail: failed.length + " of " + (o.total ?? checks.length) + " current checks failed: "

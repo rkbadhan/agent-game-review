@@ -148,14 +148,113 @@
   "requirements": []
  },
  "verifier": {
+  "raw_output": "{\"ctrf_summary\": {\"tests\": 8, \"passed\": 7, \"failed\": 1, \"skipped\": 0, \"pending\": 0, \"other\": 0, \"start\": 1787581138.8349068, \"stop\": 1787581141.3872192}}",
   "checks": [
    {
-    "check_id": "terminal_bench_reward",
-    "name": "Terminal-Bench task reward",
+    "check_id": "test_outputs.py::test_nginx_installed",
+    "name": "test_outputs.py::test_nginx_installed",
+    "status": "passed",
     "source": "native_structured",
-    "status": "failed"
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_running",
+    "name": "test_outputs.py::test_nginx_running",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_index_page_content",
+    "name": "test_outputs.py::test_index_page_content",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_custom_404_page",
+    "name": "test_outputs.py::test_custom_404_page",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_config_syntax",
+    "name": "test_outputs.py::test_nginx_config_syntax",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_nginx_config_settings",
+    "name": "test_outputs.py::test_nginx_config_settings",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_log_file_creation",
+    "name": "test_outputs.py::test_log_file_creation",
+    "status": "passed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "test_outputs.py::test_log_file_format",
+    "name": "test_outputs.py::test_log_file_format",
+    "status": "failed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "verifier/ctrf.json",
+     "verifier/test_outputs.py"
+    ]
+   },
+   {
+    "check_id": "terminal_bench_reward",
+    "name": "Terminal-Bench task reward (aggregate)",
+    "status": "failed",
+    "source": "native_structured",
+    "timing": "post_run",
+    "source_pointers": [
+     "result.json"
+    ]
    }
   ],
-  "raw_output": "{\"reward\": 0.0}"
+  "log_excerpts": [
+   {
+    "source": "verifier/test-stdout.txt",
+    "content": "Hit:1 http://deb.debian.org/debian bookworm InRelease\nHit:2 http://deb.debian.org/debian bookworm-updates InRelease\nHit:3 http://deb.debian.org/debian-security bookworm-security InRelease\nReading package lists...\nReading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  libcurl4\nThe following packages will be upgraded:\n  curl libcurl4\n2 upgraded, 0 newly installed, 0 to remove and 36 not upgraded.\nNeed to get 708 kB of archives.\nAfter this operation, 0 B of additional disk space will be used.\nGet:1 http://deb.debian.org/debian bookworm/main amd64 curl amd64 7.88.1-10+deb12u15 [316 kB]\nGet:2 http://deb.debian.org/debian bookworm/main amd64 libcurl4 amd64 7.88.1-10+deb12u15 [392 kB]\ndebconf: delaying package configuration, since apt-utils is not installed\nFetched 708 kB in 0s (5588 kB/s)\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database ... 65%\n(Reading database ... 70%\n(Reading database ... 75%\n(Reading database ... 80%\n(Reading database ... 85%\n(Reading database ... 90%\n(Reading database ... 95%\n(Reading database ... 100%\n(Reading database ... 8031 files and directories currently installed.)\nPreparing to unpack .../curl_7.88.1-10+deb12u15_amd64.deb ...\nUnpacking curl (7.88.1-10+deb12u15) over (7.88.1-10+deb12u12) ...\nPreparing to unpack .../libcurl4_7.88.1-10+deb12u15_amd64.deb ...\nUnpacking libcurl4:amd64 (7.88.1-10+deb12u15) over (7.88.1-10+deb12u12) ...\nSetting up libcurl4:amd64 (7.88.1-10+deb12u15) ...\nSetting up curl (7.88.1-10+deb12u15) ...\nProcessing triggers for libc-bin (2.36-9+deb12u10) ...\ndownloading uv 0.9.5 x86_64-unknown-linux-gnu\nno checksums to verify\ninstalling to /root/.local/bin\n  uv\n  uvx\neverything's installed!\n\nTo add $HOME/.local/bin to your PATH, either restart your shell or run:\n\n    source $HOME/.local/bin/env (sh, bash, zsh)\n    source $HOME/.local/bin/env.fish (fish)\nDownloading pygments (1.2MiB)\n Downloading pygments\nInstalled 11 packages in 31ms\n============================= test session starts ==============================\nplatform linux -- Python 3.13.7, pytest-8.4.1, pluggy-1.6.0 -- /root/.cache/uv/archive-v0/DbtL7gJLcH7eADhBDGggi/bin/python\ncachedir: .pytest_cache\nrootdir: /tests\nplugins: json-ctrf-0.3.5\ncollecting ... collected 8 items\n\n../tests/test_outputs.py::test_nginx_installed PASSED                    [ 12%]\n../tests/test_outputs.py::test_nginx_running PASSED                      [ 25%]\n../tests/test_outputs.py::test_index_page_content PASSED                 [ 37%]\n../tests/test_outputs.py::test_custom_404_page PASSED                    [ 50%]\n../tests/test_outputs.py::test_nginx_config_syntax PASSED                [ 62%]\n../tests/test_outputs.py::test_nginx_config_settings PASSED              [ 75%]\n../tests/test_outputs.py::test_log_file_creation PASSED                  [ 87%]\n../tests/test_outputs.py::test_log_file_format FAILED                    [100%]\n\n=================================== FAILURES ===================================\n_____________________________ test_log_file_format _____________________________\n\n    def test_log_file_format():\n        \"\"\"Test that the log files have the correct format with all required fields.\"\"\"\n        # Make a unique request to identify in logs\n        unique_path = f\"/test-{int(time.time())}\"\n        requests.get(f\"http://localhost:8080{unique_path}\")\n    \n        # Wait a moment for logs to be written\n        time.sleep(1)\n    \n        log_files = [\n            \"/var/log/nginx/benchmark-access.log\",\n        ]\n    \n        log_content = \"\"\n        for log_file in log_files:\n            if Path(log_file).exists():\n                log_content = Path(log_file).read_text()\n                if unique_path in log_content:\n                    break\n    \n        # Check for timestamp format [DD/MMM/YYYY:HH:MM:SS +ZZZZ]\n        timestamp_pattern = r\"\\d{2}/\\w{3}/\\d{4}:\\d{2}:\\d{2}:\\d{2}\\s[+-]\\d{4}\"\n        assert re.search(timestamp_pattern, log_content), \"Timestamp format missing in logs\"\n    \n        # Check for request method (GET, POST, etc.)\n        method_pattern = r\"(GET|POST|PUT|DELETE|HEAD)\"\n        assert re.search(method_pattern, log_content), \"Request method missing in logs\"\n    \n        # Check for status code (e.g., 200, 404, etc.)\n        status_pattern = r\"\\s(\\d{3})\\s\"\n        assert re.search(status_pattern, log_content), \"Status code missing in logs\"\n    \n        # Check for user agent\n        user_agent_pattern = r'\"[^\"]*\"$'  # Last quoted string in the log line\n>       assert re.search(user_agent_pattern, log_content), \"User agent missing in logs\"\nE       AssertionError: User agent missing in logs\nE       assert None\nE        +  where None = <function search at 0x7818e17e5800>('\"[^\"]*\"$', '24/Aug/2026:14:17:59 +0000 GET 200 curl/7.88.1\\n24/Aug/2026:14:17:59 +0000 GET 404 curl/7.88.1\\n24/Aug/2026:14:18:59 +0000 GET 200 python-requests/2.32.4\\n24/Aug/2026:14:18:59 +0000 GET 200 python-requests/2.32.4\\n24/Aug/2026:14:18:59 +0000 GET 404 python-requests/2.32.4\\n24/Aug/2026:14:18:59 +0000 GET 200 python-requests/2.32.4\\n24/Aug/2026:14:19:00 +0000 GET 404 python-requests/2.32.4\\n')\nE        +    where <function search at 0x7818e17e5800> = re.search\n\n/tests/test_outputs.py:178: AssertionError\n==================================== PASSES ====================================\n=========================== short test summary info ============================\nPASSED ../tests/test_outputs.py::test_nginx_installed\nPASSED ../tests/test_outputs.py::test_nginx_running\nPASSED ../tests/test_outputs.py::test_index_page_content\nPASSED ../tests/test_outputs.py::test_custom_404_page\nPASSED ../tests/test_outputs.py::test_nginx_config_syntax\nPASSED ../tests/test_outputs.py::test_nginx_config_settings\nPASSED ../tests/test_outputs.py::test_log_file_creation\nFAILED ../tests/test_outputs.py::test_log_file_format - AssertionError: User ...\n========================= 1 failed, 7 passed in 2.56s ==========================\n",
+    "timing": "post_run"
+   }
+  ]
  }
 }
