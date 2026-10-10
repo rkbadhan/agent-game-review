@@ -49,15 +49,17 @@ Sources: [CLI review commands](../agr/cli.py),
 
 ### Supported adapters
 
-| Adapter | Request format | Default model in this checkout | Credentials | Endpoint |
-| --- | --- | --- | --- | --- |
-| `anthropic` | Anthropic messages; `max_tokens=8000` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` via SDK | Explicit/saved URL, otherwise SDK environment/default |
-| `openai` | Chat completions with JSON-object response format | `gpt-4o` | `OPENAI_API_KEY` via SDK | Explicit/saved URL, otherwise `OPENAI_BASE_URL` or SDK default |
+| Adapter | Request format | Credentials | Endpoint |
+| --- | --- | --- | --- |
+| `anthropic` | Anthropic messages; `max_tokens=8000` | `ANTHROPIC_API_KEY` via SDK | Explicit/saved URL, otherwise SDK environment/default |
+| `openai` | Chat completions with JSON-object response format | `OPENAI_API_KEY` via SDK | Explicit/saved URL, otherwise `OPENAI_BASE_URL` or SDK default |
 
-These are code defaults, not verified statements about current availability or
-recommended model quality. A compatible endpoint must support the actual request
-format and return usable structured output. There is no model catalog, automatic
-model selection, provider fallback, or model-quality benchmark in the setup flow.
+Neither adapter has a built-in model: the model is always chosen in Settings,
+`agr config`, `--model`, or `AGR_REVIEW_MODEL`. **Load models** in Settings and
+`agr config --list-models` read the endpoint's own model list (a metadata
+request; no completion, no trace). A compatible endpoint must support the actual
+request format and return usable structured output. There is no automatic model
+selection, provider fallback, or model-quality benchmark in the setup flow.
 Provider SDKs are optional extras and are checked before review.
 
 Sources: [`AnthropicReviewer`, `OpenAIReviewer`, `make_reviewer`](../agr/model_reviewer.py)

@@ -30,7 +30,7 @@ import time
 from typing import Optional
 
 from . import taxonomy, version
-from .userconfig import configuration_id
+from .userconfig import NO_MODEL_MESSAGE, ConfigError, configuration_id
 from .model_packet import (
     _CHUNK_SUMMARY_MAX_CHARS,
     _PACKET_BUDGET_CHARS,
@@ -781,7 +781,7 @@ class AnthropicReviewer(_LazyModelReviewer):
 
     provider = "anthropic"
 
-    def __init__(self, model: str = "claude-opus-4-8", base_url: Optional[str] = None,
+    def __init__(self, model: str, base_url: Optional[str] = None,
                  cost_budget_usd: Optional[float] = None,
                  time_budget_s: Optional[float] = None,
                  api_key: Optional[str] = None, request_timeout_s: float = 600.0):
@@ -820,6 +820,9 @@ class AnthropicReviewer(_LazyModelReviewer):
         text = next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
         return _loads_lenient(text)
 
+    def _list_models(self) -> list:  # pragma: no cover - network
+        return [m.id for m in self._client().models.list()]
+
 
 class OpenAIReviewer(_LazyModelReviewer):
     """Stage F via the OpenAI-compatible API. Install ``pip install .[model-openai]``.
@@ -832,7 +835,7 @@ class OpenAIReviewer(_LazyModelReviewer):
 
     provider = "openai"
 
-    def __init__(self, model: str = "gpt-4o", base_url: Optional[str] = None,
+    def __init__(self, model: str, base_url: Optional[str] = None,
                  cost_budget_usd: Optional[float] = None,
                  time_budget_s: Optional[float] = None,
                  api_key: Optional[str] = None, request_timeout_s: float = 600.0):
@@ -871,6 +874,9 @@ class OpenAIReviewer(_LazyModelReviewer):
             ],
         )
         return _loads_lenient(resp.choices[0].message.content or "")
+
+    def _list_models(self) -> list:  # pragma: no cover - network
+        return [m.id for m in self._client().models.list()]
 
 
 def _loads_lenient(text: str) -> dict:
@@ -919,9 +925,9 @@ def make_reviewer(provider: str, model: Optional[str] = None,
         cls = _REVIEWERS[provider]
     except KeyError:
         raise ValueError(f"unknown provider {provider!r}; choose from {sorted(_REVIEWERS)}")
-    kwargs: dict = {}
-    if model:
-        kwargs["model"] = model
+    if not model:
+        raise ConfigError(NO_MODEL_MESSAGE)
+    kwargs: dict = {"model": model}
     if base_url:
         kwargs["base_url"] = base_url
     if cost_budget_usd is not None:
@@ -940,6 +946,23 @@ def make_reviewer(provider: str, model: Optional[str] = None,
     if import_sdk is not None:
         import_sdk()
     return reviewer
+
+
+def list_models(provider: str, base_url: Optional[str] = None,
+                api_key: Optional[str] = None, request_timeout_s: float = 60.0) -> list:
+    """Model IDs the endpoint reports: a metadata request, no completion, no trace."""
+    try:
+        cls = _REVIEWERS[provider]
+    except KeyError:
+        raise ValueError(f"unknown provider {provider!r}; choose from {sorted(_REVIEWERS)}")
+    # The lister only needs the client, which does not depend on a model.
+    lister = cls(model="", base_url=base_url, api_key=api_key, request_timeout_s=request_timeout_s)
+    lister._import_sdk()  # a missing SDK is a setup error, not a provider failure
+    try:
+        ids = lister._list_models()
+    except Exception as exc:
+        raise ProviderRequestError(exc) from None
+    return sorted({i for i in ids if isinstance(i, str) and i})
 
 
 def test_connection(reviewer):

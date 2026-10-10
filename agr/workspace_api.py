@@ -176,6 +176,10 @@ def attach_workspace(app, default_store, read_only, *, allowed_hosts=None, sessi
     def test_ai_settings(payload: dict = Body(...)):
         return reviews.test(payload)
 
+    @app.post("/workspace/ai-review/models")
+    def list_ai_models(payload: dict = Body(...)):
+        return reviews.models(payload)
+
     @app.delete("/workspace/ai-review")
     def reset_ai_settings():
         if read_only:

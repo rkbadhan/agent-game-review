@@ -79,7 +79,7 @@ function renderRunsSurface(main) {
     back.addEventListener("click", () => { state.view = "review"; render(); });
     util.append(back);
   }
-  if (!state.readOnly && !state.workspace.unavailable)
+  if (!aiReadOnly() && !state.workspace.unavailable)
     util.append(workspaceButton("Review runs with AI", () => openAIReview()));
   nav.append(util);
   main.append(nav);

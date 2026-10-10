@@ -23,9 +23,10 @@ async function loadAIReviewData() {
     if (project === state.projectId && token === state.ai.token) state.ai.error = error.message;
   }
 }
+// Settings are shared defaults and reviews only add snapshots, so every project
+// of a writable local server can configure and run AI review.
 function aiReadOnly() {
-  const project = activeProject() || {};
-  return state.serverReadOnly || !!project.sample || !!project.archived;
+  return state.serverReadOnly;
 }
 function aiError(host) {
   if (!state.ai.error) return;
@@ -44,7 +45,7 @@ function renderAISettings(host) {
   card.append(el("h2", null, "AI review"), el("p", "engineer-hint",
     "Default for local reviews, shared with the CLI. Saving makes no model calls. Imports continue to use local deterministic analysis."));
   if (aiReadOnly()) {
-    card.append(el("p", null, "AI configuration and paid reviews are unavailable in sample or archived projects. Open an active personal project."));
+    card.append(el("p", null, "AI configuration and paid reviews are unavailable on a read-only server. Run agr serve locally to use them."));
     host.append(card); return;
   }
   aiError(card);
@@ -66,15 +67,33 @@ function renderAISettings(host) {
   provider.value = draft.provider;
   provider.addEventListener("change", () => {
     draft.provider = provider.value;
-    const defaults = settings.defaults[draft.provider];
-    draft.model = defaults.model; draft.base_url = defaults.base_url;
-    draft.api_key = ""; ai.plan = null; ai.testResult = null; render();
+    // A model ID belongs to one provider; the user chooses the new one.
+    draft.model = ""; draft.base_url = settings.defaults[draft.provider].base_url;
+    draft.api_key = ""; ai.plan = null; ai.testResult = null; ai.models = null; render();
   });
   providerLabel.append(provider); form.append(providerLabel);
-  workspaceField(form, "Reviewer model ID", draft.model, v => { draft.model = v; ai.plan = null; }).required = true;
-  const endpoint = workspaceField(form, "Endpoint URL (change for a custom or local server)", draft.base_url, v => { draft.base_url = v; ai.plan = null; }, "url");
+  const endpoint = workspaceField(form, "Endpoint URL (change for a custom or local server)", draft.base_url, v => { draft.base_url = v; ai.plan = null; ai.models = null; }, "url");
   endpoint.required = true;
   workspaceField(form, "API key (optional; server session only)", draft.api_key || "", v => draft.api_key = v, "password").autocomplete = "off";
+  const model = workspaceField(form, "Reviewer model ID", draft.model, v => { draft.model = v; ai.plan = null; });
+  model.required = true; model.placeholder = "Load models or enter a model ID";
+  const pick = el("div", "engineer-actions");
+  pick.append(workspaceButton("Load models", () => aiAction(async () => {
+    if (!endpoint.reportValidity()) return;
+    // The draft model keeps a saved session key for this configuration usable.
+    const result = await apiPost("/workspace/ai-review/models", draft);
+    ai.models = result.models;
+    if (!ai.models.length) throw new Error("The endpoint reported no models. Enter the model ID instead.");
+  })));
+  if (ai.models && ai.models.length) {
+    const choose = el("select"); choose.setAttribute("aria-label", "Available models");
+    const prompt = el("option", null, "Choose from " + ai.models.length + " available models"); prompt.value = ""; choose.append(prompt);
+    for (const id of ai.models) { const option = el("option", null, id); option.value = id; choose.append(option); }
+    choose.value = ai.models.includes(draft.model) ? draft.model : "";
+    choose.addEventListener("change", () => { if (choose.value) { draft.model = choose.value; ai.plan = null; render(); } });
+    pick.append(choose);
+  }
+  form.append(pick);
   form.append(el("p", "engineer-hint", "Credentials: " + settings.credentials + ". For a local server that ignores authentication, use a non-empty placeholder key. Session keys disappear when the server restarts."));
   const advanced = el("details", "engineer-advanced");
   advanced.append(el("summary", null, "Advanced review limits"));
@@ -110,7 +129,7 @@ function renderAISettings(host) {
     });
   });
   card.append(form);
-  card.append(el("p", "ai-effective", "Effective: " + settings.provider + " · " + settings.model + " · " + settings.base_url));
+  card.append(el("p", "ai-effective", "Effective: " + settings.provider + " · " + (settings.model || "no model selected") + " · " + settings.base_url));
   const overrides = Object.entries(settings.origins || {}).filter(([, source]) => source !== "saved" && source !== "default");
   if (overrides.length) card.append(el("p", "engineer-hint", "Environment overrides: " + overrides.map(([key, source]) => key + " from " + source).join(", ") + ". Change the server environment to remove these overrides."));
   const test = ai.testResult || settings.test || { status: "untested" };
@@ -130,13 +149,14 @@ function renderAIReview(host) {
   const ai = state.ai;
   workspaceHeading(host, "AI review", "Review captured behavior with the configured model. A redacted evidence packet is sent only when you start a review.");
   if (aiReadOnly()) {
-    host.append(el("p", null, "AI review is unavailable in sample or archived projects.")); return;
+    host.append(el("p", null, "AI review is unavailable on a read-only server.")); return;
   }
   aiError(host);
   if (ai.job) { renderAIJob(host, ai.job); return; }
   host.append(workspaceButton("Configure AI review", () => goEngineer("settings")));
   const settings = ai.settings;
   if (!settings || settings.read_only) { host.append(el("p", null, "Configure AI settings before starting a review.")); return; }
+  if (!settings.model) { host.append(el("p", null, "Choose a reviewer model in AI settings before starting a review.")); return; }
   host.append(el("p", "ai-effective", "Reviewer: " + settings.model + " · " + settings.base_url));
   const runs = (state.workspace.detail || {}).runs || [];
   if (!runs.length) { host.append(el("p", null, "No runs in this project yet. Import runs before reviewing.")); return; }

@@ -91,7 +91,7 @@ def test_single_run_selection_and_failed_connection(ai_server):
         page.get_by_role("button", name="Test connection · uses tokens", exact=True).click()
         expect(page.get_by_text(re.compile(r"Connection: failed"))).to_be_visible()
         page.get_by_label("API provider", exact=True).select_option("anthropic")
-        expect(page.get_by_label("Reviewer model ID", exact=True)).to_have_value("claude-opus-4-8")
+        expect(page.get_by_label("Reviewer model ID", exact=True)).to_have_value("")
         expect(page.get_by_label("Endpoint URL (change for a custom or local server)", exact=True)).to_have_value("https://api.anthropic.com")
         browser.close()
 
@@ -115,4 +115,40 @@ def test_bulk_selection_invalidates_preview(ai_server):
         expect(page.get_by_role("heading", name="Ready to review", exact=True)).to_have_count(0)
         expect(page.get_by_text("0 selected", exact=True)).to_be_visible()
         assert not control["calls"]
+        browser.close()
+
+
+def test_model_picker_lists_endpoint_models(ai_server, monkeypatch):
+    base, _ = ai_server
+    monkeypatch.setattr(models, "list_models", lambda provider, base_url=None, **kwargs: ["listed-a", "listed-b"])
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(base + "/?view=settings")
+        page.get_by_role("heading", name="AI review", exact=True).wait_for()
+        page.get_by_role("button", name="Load models", exact=True).click()
+        page.get_by_label("Available models", exact=True).select_option("listed-b")
+        expect(page.get_by_label("Reviewer model ID", exact=True)).to_have_value("listed-b")
+        page.get_by_role("button", name="Save AI settings", exact=True).click()
+        expect(page.get_by_text("Effective: openai · listed-b · https://offline.invalid/v1", exact=True)).to_be_visible()
+        browser.close()
+
+
+def test_sample_project_can_configure_and_start_ai_review(ai_server):
+    base, control = ai_server
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(base + "/?view=settings")
+        page.get_by_role("heading", name="AI review", exact=True).wait_for()
+        assert page.evaluate("fetch('/projects/sample', {method: 'POST'}).then(r => r.ok)")
+        page.goto(base + "/?view=settings")  # creating the sample made it the active project
+        page.get_by_role("heading", name="AI review", exact=True).wait_for()
+        expect(page.get_by_label("Switch project", exact=True).locator("option:checked")).to_have_text("Sample data · sample")
+        expect(page.get_by_label("Reviewer model ID", exact=True)).to_have_value("ui-model")
+        expect(page.get_by_text(re.compile("unavailable in sample"))).to_have_count(0)
+        page.get_by_role("button", name="Review project runs", exact=True).click()
+        page.get_by_role("button", name="Select all project runs", exact=True).click()
+        page.get_by_role("button", name="Preview AI review", exact=True).click()
+        page.get_by_role("heading", name="Ready to review", exact=True).wait_for()
         browser.close()

@@ -968,7 +968,7 @@ def cmd_review(args) -> int:
         return 1
 
     # Settings resolve --flag > $AGR_REVIEW_MODEL / $OPENAI_BASE_URL > saved
-    # `agr config` file > the provider's built-in default.
+    # `agr config` file. There is no built-in model: an unset one is an error.
     settings = effective_review_config(provider=args.provider, model=args.model, base_url=args.base_url,
         cost_budget_usd=getattr(args, "cost_budget", None),
         time_budget_s=getattr(args, "time_budget", None),
@@ -1040,11 +1040,32 @@ def cmd_config(args) -> int:
     effective = effective_review_config(**changes)
     print(f"reviewer settings ({config_path()}):")
     for field in ("provider", "model", "base_url", "cost_budget_usd", "time_budget_s", "request_timeout_s"):
-        print(f"  {field}: {effective[field]} ({effective['origins'][field]})")
+        value = effective[field] if effective[field] != "" else "(not set)"
+        print(f"  {field}: {value} ({effective['origins'][field]})")
+    if args.list_models:
+        from .model_reviewer import ProviderRequestError, list_models
+        try:
+            ids = list_models(effective["provider"], effective["base_url"],
+                              request_timeout_s=effective["request_timeout_s"])
+        except ProviderRequestError as exc:
+            hint = " This endpoint may not list its models; pass --model directly." if exc.code == "model_not_found" else ""
+            print(f"FAILED: {exc}{hint}", file=sys.stderr)
+            return 4
+        except RuntimeError as exc:
+            print(f"MISSING SDK: {exc}", file=sys.stderr)
+            return 3
+        print(f"models at {effective['base_url']}:")
+        for model_id in ids:
+            print(f"  {model_id}")
+        if not ids:
+            print("  (none reported; pass --model directly)")
     if args.test:
         try:
             reviewer = make_reviewer(**{k: effective[k] for k in changes})
             test_connection(reviewer)
+        except ValueError as exc:  # no model set, or an unknown provider
+            print(f"FAILED: {exc}", file=sys.stderr)
+            return 2
         except RuntimeError as exc:
             from .model_reviewer import ModelOutputError, ProviderRequestError
             if isinstance(exc, (ModelOutputError, ProviderRequestError)):
@@ -1320,8 +1341,8 @@ def build_parser() -> argparse.ArgumentParser:
     prv.add_argument("--provider", default=None, choices=["anthropic", "openai"],
                      help="model provider (default: saved 'agr config' provider, else anthropic)")
     prv.add_argument("--model", default=None,
-                     help="model id (default: $AGR_REVIEW_MODEL, else saved 'agr config' "
-                          "model, else the provider's default, e.g. claude-opus-4-8)")
+                     help="model id (default: $AGR_REVIEW_MODEL, else the saved 'agr config' "
+                          "model; there is no built-in model — see 'agr config --list-models')")
     prv.add_argument("--base-url", default=None,
                      help="OpenAI/Anthropic-compatible endpoint URL (use any model: "
                           "OpenRouter, Together, a local vLLM/Ollama server, …). "
@@ -1336,7 +1357,7 @@ def build_parser() -> argparse.ArgumentParser:
                           "is skipped (status: incomplete). Default 90, 0 disables "
                           "(also $AGR_REVIEW_TIME_BUDGET_S)")
     prv.add_argument("--request-timeout", type=float, default=None, metavar="SECONDS",
-                     help="timeout for each provider request (default: saved setting or 60)")
+                     help="timeout for each provider request (default: saved setting or 600)")
     prv.set_defaults(func=cmd_review)
 
     pcfg = sub.add_parser(
@@ -1347,6 +1368,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="save this model id for future 'agr review' runs")
     pcfg.add_argument("--base-url", default=None,
                       help="save this endpoint URL (OpenRouter, Ollama, vLLM, …)")
+    pcfg.add_argument("--list-models", action="store_true",
+                      help="list the model ids the effective endpoint offers (no completion call)")
     pcfg.add_argument("--test", action="store_true",
                       help="make one real completion call with the effective settings")
     pcfg.add_argument("--clear", action="store_true", help="delete the saved settings")
