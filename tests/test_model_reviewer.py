@@ -275,11 +275,14 @@ def _install_fake_sdk(monkeypatch, name):
 def test_make_reviewer_selects_provider(monkeypatch):
     _install_fake_sdk(monkeypatch, "anthropic")
     _install_fake_sdk(monkeypatch, "openai")
-    assert isinstance(make_reviewer("anthropic"), AnthropicReviewer)
-    assert isinstance(make_reviewer("openai"), OpenAIReviewer)
-    assert make_reviewer("anthropic").model == "claude-opus-4-8"
+    assert isinstance(make_reviewer("anthropic", "a-model"), AnthropicReviewer)
+    assert isinstance(make_reviewer("openai", "o-model"), OpenAIReviewer)
+    assert make_reviewer("anthropic", "a-model").model == "a-model"
     with pytest.raises(ValueError):
-        make_reviewer("gemini")
+        make_reviewer("gemini", "g-model")
+    # There is no built-in model: the user always chooses one.
+    with pytest.raises(ValueError, match="No reviewer model is set"):
+        make_reviewer("anthropic")
 
 
 def test_make_reviewer_fails_fast_when_sdk_missing(monkeypatch):
@@ -293,13 +296,13 @@ def test_make_reviewer_fails_fast_when_sdk_missing(monkeypatch):
     for name in ("anthropic", "openai"):
         monkeypatch.setitem(sys.modules, name, None)
     with pytest.raises(RuntimeError, match="anthropic"):
-        make_reviewer("anthropic")
+        make_reviewer("anthropic", "a-model")
     with pytest.raises(RuntimeError, match="openai"):
-        make_reviewer("openai")
+        make_reviewer("openai", "o-model")
 
 
 def test_anthropic_adapter_parses_completion(monkeypatch):
-    rev = AnthropicReviewer()
+    rev = AnthropicReviewer("claude-opus-4-8")
     facts = [{"type": "requirement_status", "check_id": "C3", "status_at_submission": "failed"}]
     monkeypatch.setattr(rev, "_complete", lambda system, user: {
         "moments": [_moment("cand_C3", ["C3"], facts, taxonomy_verdict="Mistake")]})
@@ -325,14 +328,14 @@ def test_base_url_makes_any_openai_compatible_model_usable(monkeypatch):
 
 def test_openai_base_url_falls_back_to_env(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "http://example.test/v1")
-    assert OpenAIReviewer().base_url == "http://example.test/v1"
+    assert OpenAIReviewer("o-model").base_url == "http://example.test/v1"
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    assert OpenAIReviewer().base_url is None
+    assert OpenAIReviewer("o-model").base_url is None
 
 
 def test_anthropic_base_url_is_optional():
-    assert AnthropicReviewer().base_url is None
-    assert AnthropicReviewer(base_url="https://gw.example/v1").base_url == "https://gw.example/v1"
+    assert AnthropicReviewer("a-model").base_url is None
+    assert AnthropicReviewer("a-model", base_url="https://gw.example/v1").base_url == "https://gw.example/v1"
 
 
 def _review_args(tmp_path, load_fixture, model):
@@ -343,8 +346,9 @@ def _review_args(tmp_path, load_fixture, model):
                               provider="openai", model=model, base_url=None)
 
 
-def test_review_model_resolves_flag_then_env_then_default(tmp_path, load_fixture, monkeypatch):
+def test_review_model_resolves_flag_then_env_then_default(tmp_path, load_fixture, monkeypatch, capsys):
     from agr import cli, model_reviewer
+    real_make = model_reviewer.make_reviewer
 
     captured = {}
 
@@ -368,11 +372,12 @@ def test_review_model_resolves_flag_then_env_then_default(tmp_path, load_fixture
         cli.cmd_review(_review_args(tmp_path, load_fixture, "flag-model"))
     assert captured["model"] == "flag-model"
 
-    # Neither set: the resolver reports the actual provider default.
+    # Neither set: there is no built-in model, so the review stops with a hint.
     monkeypatch.delenv("AGR_REVIEW_MODEL", raising=False)
-    with pytest.raises(SystemExit):
-        cli.cmd_review(_review_args(tmp_path, load_fixture, None))
-    assert captured["model"] == "gpt-4o"
+    monkeypatch.setattr(model_reviewer, "make_reviewer", real_make)
+    capsys.readouterr()
+    assert cli.cmd_review(_review_args(tmp_path, load_fixture, None)) == 2
+    assert "No reviewer model is set" in capsys.readouterr().err
 
 
 def test_cli_loads_env_file_without_overriding_real_env(tmp_path, monkeypatch):
@@ -422,7 +427,7 @@ def test_malformed_model_output_is_an_explicit_error_not_empty():
 def test_anthropic_live_beats_or_holds_baseline(tmp_path, load_fixture):
     store = Store(str(tmp_path / "store"))
     analyze(load_fixture("chess_best_move.atif.json"), store,
-            reviewer=AnthropicReviewer())
+            reviewer=AnthropicReviewer("claude-opus-4-8"))
     review = read.get_review(store, "chess_best_move__seed42")
     assert review["review_mode"] == "model_enriched"
     assert review["moments"], "the live reviewer surfaced no moment"

@@ -13,8 +13,8 @@ from . import model_reviewer as models
 from .imports import ImportProblem
 from .storage_io import atomic_json
 from .review_identity import matching_review_key
-from .userconfig import (ConfigError, FIELDS, DEFAULT_MODELS, DEFAULT_ENDPOINTS, config_path, effective_review_config,
-                         save_config, validate_settings, merged_config)
+from .userconfig import (ConfigError, FIELDS, DEFAULT_ENDPOINTS, config_path, effective_review_config,
+                         require_model, save_config, validate_settings, merged_config)
 from .workspace import bounded_text, identifier, job_owner, now, owner_running
 
 ACTIVE = ("queued", "running", "cancelling")
@@ -93,8 +93,7 @@ class AIReviewService:
                       scope="Default for local reviews", config_path=str(config_path()),
                       credentials="session" if key else "environment" if has_environment else "missing",
                       sdk_installed=importlib.util.find_spec(settings["provider"]) is not None)
-        result["defaults"] = {provider: {"model": model, "base_url": DEFAULT_ENDPOINTS[provider]}
-                              for provider, model in DEFAULT_MODELS.items()}
+        result["defaults"] = {provider: {"base_url": url} for provider, url in DEFAULT_ENDPOINTS.items()}
         result["test"] = self.tests.get(self._test_key(settings, key), {"status": "untested"})
         return result
 
@@ -125,10 +124,14 @@ class AIReviewService:
         self.tests.clear()
         return self.settings()
 
-    def _reviewer(self, settings, key=None):
+    def _credentials(self, settings, key=None):
         key = self._key(settings, key)
         if not key and not os.environ.get(settings["provider"].upper() + "_API_KEY"):
             raise ImportProblem("missing_credentials", "Set the provider API key in the server environment or save a session-only key in AI review settings.")
+        return key
+
+    def _reviewer(self, settings, key=None):
+        key = self._credentials(settings, key)
         try:
             return models.make_reviewer(**{k: settings[k] for k in FIELDS}, api_key=key)
         except Exception as exc:
@@ -153,8 +156,24 @@ class AIReviewService:
         self.tests[self._test_key(settings, key)] = result
         return {**result, "configuration_id": settings["configuration_id"]}
 
+    def models(self, payload):
+        """List the endpoint's model IDs so the user picks one instead of typing it."""
+        if self.workspace.read_only:
+            raise ImportProblem("read_only", "Sample data is read-only.", 403)
+        settings = effective_review_config(saved_config=merged_config(self._saved(), self._changes(payload)))
+        key = self._credentials(settings, payload.get("api_key"))
+        try:
+            ids = models.list_models(settings["provider"], settings["base_url"], api_key=key,
+                                     request_timeout_s=settings["request_timeout_s"])
+        except Exception as exc:
+            code, message = public_failure(exc)
+            if code == "model_not_found":
+                message = "This endpoint does not list its models. Enter the model ID instead."
+            raise ImportProblem(code, message) from None
+        return {"provider": settings["provider"], "base_url": settings["base_url"], "models": ids}
+
     def _selection(self, project_id, run_ids):
-        self.workspace.writable_project(project_id)
+        self.workspace.reviewable_project(project_id)
         if (not isinstance(run_ids, list) or not 1 <= len(run_ids) <= 1000
                 or not all(isinstance(r, str) for r in run_ids) or len(set(run_ids)) != len(run_ids)):
             raise ImportProblem("invalid_selection", "Select between 1 and 1000 distinct runs.")
@@ -175,6 +194,10 @@ class AIReviewService:
     def plan(self, project_id, run_ids):
         items = self._selection(project_id, run_ids)
         settings = effective_review_config()
+        try:
+            require_model(settings)
+        except ConfigError as exc:
+            raise ImportProblem("missing_model", str(exc)) from None
         from .userconfig import reviewer_key
         key = reviewer_key(settings)
         store = self.workspace.store(project_id)
@@ -189,7 +212,7 @@ class AIReviewService:
                 "cost_note": "Actual cost is unavailable before review. Targets are per run; one in-flight request can exceed them."}
 
     def submit(self, project_id, payload):
-        self.workspace.writable_project(project_id)
+        self.workspace.reviewable_project(project_id)
         request_id = bounded_text(payload.get("idempotency_key"), "a review request ID", 96)
         if not isinstance(payload.get("force", False), bool):
             raise ImportProblem("invalid_selection", "Rerun must be true or false.")
@@ -233,7 +256,7 @@ class AIReviewService:
                     job["status"] = "cancelled"
                     self._write(job)
                     return
-                workspace.writable_project(project_id)
+                workspace.reviewable_project(project_id)
                 job["status"] = "running"
                 self._write(job)
             settings = {**job["settings"], "configuration_id": job["configuration_id"]}
@@ -244,7 +267,7 @@ class AIReviewService:
                     job = workspace.record("reviews", job_id, project_id)
                     if job["status"] == "cancelling":
                         break
-                    workspace.writable_project(project_id)
+                    workspace.reviewable_project(project_id)
                     if any(r["run_id"] == item["run_id"] and r["status"] in ("completed", "skipped") for r in job["results"]):
                         continue
                     job["current_run"] = item["run_id"]
@@ -305,7 +328,7 @@ class AIReviewService:
                 self._write(job)
 
     def cancel(self, project_id, job_id):
-        self.workspace.writable_project(project_id)
+        self.workspace.reviewable_project(project_id)
         with self.workspace.write_lock():
             job = self.workspace.record("reviews", job_id, project_id)
             if job["status"] in ("queued", "running"):
@@ -314,7 +337,7 @@ class AIReviewService:
             return job
 
     def retry(self, project_id, job_id):
-        self.workspace.writable_project(project_id)
+        self.workspace.reviewable_project(project_id)
         with self.workspace.write_lock():
             job = self.workspace.record("reviews", job_id, project_id)
             if job["status"] not in RETRYABLE:

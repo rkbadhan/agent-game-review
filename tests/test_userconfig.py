@@ -52,7 +52,7 @@ def test_resolve_precedence_flag_beats_env_beats_file(cfg_path, monkeypatch):
 
     # Nothing anywhere -> provider default, no model.
     s = resolve_review_settings()
-    assert s == {"provider": "anthropic", "model": "claude-opus-4-8", "base_url": "https://api.anthropic.com"}
+    assert s == {"provider": "anthropic", "model": "", "base_url": "https://api.anthropic.com"}
 
     # File sets a baseline.
     save_config(provider="openai", model="file-model", base_url="https://file")

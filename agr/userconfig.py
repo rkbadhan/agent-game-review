@@ -12,7 +12,7 @@ from .storage_io import atomic_json, file_lock
 
 CONFIG_ENV_VAR = "AGR_CONFIG"
 CONFIG_FILENAME = "config.json"
-DEFAULT_MODELS = {"anthropic": "claude-opus-4-8", "openai": "gpt-4o"}
+# The model is always the user's choice; there is no built-in model ID.
 DEFAULT_ENDPOINTS = {"anthropic": "https://api.anthropic.com", "openai": "https://api.openai.com/v1"}
 DEFAULT_LIMITS = {"cost_budget_usd": 0.15, "time_budget_s": 90.0, "request_timeout_s": 600.0}
 ENV_SETTINGS = {"provider": "AGR_REVIEW_PROVIDER", "model": "AGR_REVIEW_MODEL",
@@ -49,7 +49,7 @@ def validate_settings(values: dict) -> dict:
             if not isinstance(value, str) or len(value) > 2048 or any(ord(c) < 32 for c in value):
                 raise ConfigError(f"Enter a valid {field}.")
             value = value.strip()
-            if field == "provider" and value not in DEFAULT_MODELS:
+            if field == "provider" and value not in DEFAULT_ENDPOINTS:
                 raise ConfigError("Choose anthropic or openai.")
             if field == "base_url" and value:
                 try:
@@ -133,13 +133,13 @@ def effective_review_config(*, saved_config=None, **overrides) -> dict:
         if saved is not None and saved.get(field) not in (None, ""):
             origins[field] = "saved"
             return saved[field]
-        origins[field] = "default"
+        origins[field] = "default" if default != "" else "unset"
         return default
     provider = choose("provider", "anthropic", saved=cfg)
     # A one-off provider override cannot inherit a different provider's model/URL.
     matching = cfg if cfg.get("provider", "anthropic") == provider else {}
     result = {"provider": provider}
-    result["model"] = choose("model", DEFAULT_MODELS[provider], saved=matching)
+    result["model"] = choose("model", "", saved=matching)
     result["base_url"] = choose("base_url", DEFAULT_ENDPOINTS[provider],
                                 env_name=provider.upper() + "_BASE_URL", saved=matching)
     for field, default in DEFAULT_LIMITS.items():
@@ -147,6 +147,16 @@ def effective_review_config(*, saved_config=None, **overrides) -> dict:
     result["origins"] = origins
     result["configuration_id"] = configuration_id(result)
     return result
+
+
+NO_MODEL_MESSAGE = ("No reviewer model is set. Choose one in Settings > AI review, run "
+                    "'agr config --model MODEL_ID' ('agr config --list-models' shows the "
+                    "endpoint's models), or set AGR_REVIEW_MODEL.")
+
+
+def require_model(settings) -> None:
+    if not settings.get("model"):
+        raise ConfigError(NO_MODEL_MESSAGE)
 
 
 def resolve_review_settings(provider=None, model=None, base_url=None) -> dict:
@@ -159,7 +169,7 @@ def configuration_id(settings) -> str:
     provider = settings["provider"]
     endpoint = (settings.get("base_url") or os.environ.get(provider.upper() + "_BASE_URL")
                 or DEFAULT_ENDPOINTS.get(provider, "")).rstrip("/")
-    identity = {"provider": provider, "model": settings.get("model") or DEFAULT_MODELS.get(provider, ""),
+    identity = {"provider": provider, "model": settings.get("model") or "",
                 "base_url": endpoint}
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
 

@@ -12,17 +12,21 @@ python -m pip install '.[api,model-openai]'
 python -m agr serve
 ```
 
-Use `.[api,model-anthropic]` for Anthropic. In an active personal project:
+Use `.[api,model-anthropic]` for Anthropic. In any project, including the
+sample project:
 
 1. Open **Settings → AI review**.
-2. Choose the API provider, enter the reviewer model ID, and set its endpoint.
+2. Choose the API provider and set its endpoint.
    The OpenAI adapter also supports compatible hosted gateways and local servers.
 3. Supply a session-only key, or configure `OPENAI_API_KEY` /
    `ANTHROPIC_API_KEY` in the server environment or local `.env`.
    For a local server that ignores authentication, enter a non-empty placeholder.
-4. **Save AI settings** saves non-secret defaults without calling a model.
+4. Choose **Load models** and pick the reviewer model from the endpoint's list,
+   or type its ID if the endpoint does not list models. There is no built-in
+   model; reviews cannot start until one is chosen.
+5. **Save AI settings** saves non-secret defaults without calling a model.
    The API key stays in server memory and disappears on restart.
-5. Optionally choose **Test connection · uses tokens**. It sends a small
+6. Optionally choose **Test connection · uses tokens**. It sends a small
    synthetic JSON request, never one of your traces, and checks the expected
    response. This checks connection/JSON support, not review quality.
 
@@ -31,8 +35,9 @@ overrides. The app and CLI share `~/.agr/config.json` (`AGR_CONFIG` overrides it
 location). These are defaults for local reviews across projects.
 
 Environment variables override saved settings. CLI flags override both.
-When changing providers, old saved model/endpoint values are cleared.
-Blank model/endpoint CLI values reset those fields to the provider default;
+When changing providers, old saved model/endpoint values are cleared, so choose
+the new provider's model. A blank endpoint CLI value resets it to the provider's
+official endpoint and a blank model clears it;
 **Reset saved AI settings** is available when a corrupt file prevents loading.
 
 Session keys are tied to the chosen provider/model/endpoint configuration.
@@ -61,8 +66,9 @@ retry; they do not resume paid work automatically.
 
 Review selections pin each run's capture. If a capture or configuration changes
 after preview, preview again. A queued job also refuses to silently review a
-newer capture. Jobs are isolated to their project. Sample/archived projects and
-saved evidence snapshots cannot start model work.
+newer capture. Jobs are isolated to their project. Sample and archived projects
+can be reviewed (a review only adds snapshots); saved evidence snapshots and a
+read-only server cannot start model work.
 
 Successful snapshots are identified by provider, model, and endpoint.
 A different configuration receives a separate snapshot. Existing older reviews
@@ -88,6 +94,7 @@ estimate. A budget/evidence stop is recorded as incomplete and the deterministic
 baseline remains available.
 
 ```powershell
+python -m agr config --provider openai --base-url ENDPOINT_URL --list-models
 python -m agr config --provider openai --model YOUR_MODEL_ID --base-url ENDPOINT_URL
 python -m agr config --cost-budget 0.15 --time-budget 90 --request-timeout 600
 python -m agr config

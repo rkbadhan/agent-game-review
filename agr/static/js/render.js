@@ -137,7 +137,7 @@ function render() {
     const snapshot = el("div", "notice callout", "Saved evidence snapshot · " + state.captureId + " · read-only ");
     snapshot.append(workspaceButton("Open latest capture", () => selectRun(state.runId))); main.append(snapshot);
   }
-  if (!state.loading && !state.readOnly && !state.workspace.unavailable)
+  if (!state.loading && !aiReadOnly() && !state.captureId && !state.workspace.unavailable)
     main.append(workspaceButton("Run AI review", () => openAIReview([state.runId])));
   renderInvestigationComposer(main);
 

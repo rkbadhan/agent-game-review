@@ -108,7 +108,7 @@ def finish(client, job, project="existing"):
 def test_provider_switch_and_one_off_override_discard_dependent_fields(environment):
     save_config("openai", "old-model", "https://old.invalid/v1")
     settings = resolve_review_settings(provider="anthropic")
-    assert settings["model"] == "claude-opus-4-8"
+    assert settings["model"] == ""
     assert settings["base_url"] == "https://api.anthropic.com"
     save_config(provider="anthropic")
     assert "model" not in load_config() and "base_url" not in load_config()
@@ -395,7 +395,7 @@ def test_whitespace_and_empty_fields_in_hand_edited_config(environment):
     (environment / "settings.json").write_text(json.dumps({"provider": " openai ", "model": "", "base_url": ""}))
     settings = effective_review_config()
     assert settings["provider"] == "openai"
-    assert settings["model"] == "gpt-4o"
+    assert settings["model"] == "" and settings["origins"]["model"] == "unset"
     assert settings["base_url"] == "https://api.openai.com/v1"
 
 
@@ -500,7 +500,7 @@ def test_default_request_timeout_allows_long_reviews_and_retains_sdk_retries(env
     options = {}
     sdk = type("SDK", (), {client_name: staticmethod(lambda **kwargs: options.update(kwargs))})
     monkeypatch.setattr(reviewer_class, "_import_sdk", lambda *_: sdk)
-    reviewer_class()._client()
+    reviewer_class("any-model")._client()
     assert options["timeout"] == 600
     assert "max_retries" not in options
 
@@ -519,3 +519,82 @@ def test_failed_forced_rerun_is_not_skipped_on_retry(client, offline):
     retried = client.post(f"/projects/existing/ai-reviews/{second['id']}/retry").json()
     assert finish(client, retried)["results"][0]["status"] == "completed"
     assert len(offline["calls"]) == calls + 1
+
+
+def test_no_builtin_model_blocks_preview_until_one_is_chosen(client):
+    selected = runs(client, 1)
+    settings = client.get("/workspace/ai-review").json()
+    assert settings["model"] == "" and settings["origins"]["model"] == "unset"
+    assert all("model" not in d for d in settings["defaults"].values())
+    response = client.post("/projects/existing/ai-reviews/plan", json={"run_ids": selected})
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "missing_model"
+    configure(client)
+    assert plan(client, selected)["settings"]["model"] == "test-model"
+
+
+def test_sample_and_archived_projects_can_run_ai_review(client, offline):
+    configure(client)
+    sample = client.post("/projects/sample").json()["id"]
+    job, _ = submit(client, runs(client, 1, project=sample), project=sample)
+    assert finish(client, job, project=sample)["status"] == "completed"
+    archived = client.post("/projects", json={"name": "Old work"}).json()["id"]
+    selected = runs(client, 1, project=archived)
+    client.patch(f"/projects/{archived}", json={"archived": True})
+    job, _ = submit(client, selected, project=archived, key="archived")
+    assert finish(client, job, project=archived)["status"] == "completed"
+
+
+def test_models_lists_the_draft_endpoint_without_saving(client, monkeypatch):
+    seen = {}
+    def fake_list(provider, base_url=None, api_key=None, request_timeout_s=None):
+        seen.update(provider=provider, base_url=base_url, api_key=api_key)
+        return ["model-a", "model-b"]
+    monkeypatch.setattr(models, "list_models", fake_list)
+    response = client.post("/workspace/ai-review/models", json={
+        "provider": "openai", "base_url": "https://draft.invalid/v1", "api_key": KEY})
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == ["model-a", "model-b"]
+    assert seen == {"provider": "openai", "base_url": "https://draft.invalid/v1", "api_key": KEY}
+    assert load_config() == {}
+    response = client.post("/workspace/ai-review/models", json={"provider": "openai"})
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "missing_credentials"
+    configure(client)  # a saved session key serves listing for the same configuration
+    assert client.post("/workspace/ai-review/models", json={}).json()["models"] == ["model-a", "model-b"]
+    assert seen["api_key"] == KEY
+
+
+def test_models_reports_endpoints_that_cannot_list(client, monkeypatch):
+    class NotFound(Exception):
+        status_code = 404
+    def failing(*args, **kwargs):
+        raise models.ProviderRequestError(NotFound("echo " + KEY))
+    monkeypatch.setattr(models, "list_models", failing)
+    response = client.post("/workspace/ai-review/models", json={"provider": "openai", "api_key": KEY})
+    detail = response.json()["detail"]
+    assert detail["code"] == "model_not_found" and "Enter the model ID" in detail["message"]
+    assert KEY not in response.text
+
+
+@pytest.mark.parametrize("reviewer_class,client_name", [
+    (models.AnthropicReviewer, "Anthropic"), (models.OpenAIReviewer, "OpenAI")])
+def test_list_models_uses_the_sdk_listing(environment, monkeypatch, reviewer_class, client_name):
+    options = {}
+    class Listing:
+        def list(self):
+            return [type("M", (), {"id": "z-model"})(), type("M", (), {"id": "a-model"})()]
+    def build(**kwargs):
+        options.update(kwargs)
+        return type("Client", (), {"models": Listing()})()
+    sdk = type("SDK", (), {client_name: staticmethod(build)})
+    monkeypatch.setattr(reviewer_class, "_import_sdk", lambda *_: sdk)
+    ids = models.list_models(reviewer_class.provider, "https://gw.invalid/v1", api_key=KEY, request_timeout_s=5)
+    assert ids == ["a-model", "z-model"]
+    assert options == {"timeout": 5, "base_url": "https://gw.invalid/v1", "api_key": KEY}
+
+
+def test_cli_config_lists_models(environment, monkeypatch, capsys):
+    from agr import cli
+    monkeypatch.setattr(models, "list_models", lambda provider, base_url, **kwargs: ["m-1", "m-2"])
+    assert cli.main(["config", "--provider", "openai", "--list-models"]) == 0
+    out = capsys.readouterr().out
+    assert "model: (not set) (unset)" in out and "  m-1\n  m-2" in out

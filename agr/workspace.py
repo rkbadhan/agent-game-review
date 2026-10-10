@@ -223,6 +223,13 @@ class Workspace:
             raise ImportProblem("read_only", "Choose an active personal project to make changes.", 403)
         return p
 
+    def reviewable_project(self, project_id):
+        """AI review only adds review snapshots, so sample and archived projects allow it."""
+        p = self.project(project_id)
+        if self.read_only:
+            raise ImportProblem("read_only", "AI review is unavailable on a read-only server.", 403)
+        return p
+
     def _path(self, kind, record_id):
         if not isinstance(record_id, str) or not re.fullmatch(r"[a-z]+_[a-f0-9]{32}", record_id):
             raise ImportProblem("not_found", "This record is no longer available.", 404)

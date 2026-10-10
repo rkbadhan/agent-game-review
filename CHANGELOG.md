@@ -18,7 +18,13 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
   response support without sending a trace. Single-run and selected batch
   reviews have durable progress, cancellation between runs, history, and
   retries that preserve successful work. Reviews use a separate worker from
-  imports and reject captures superseded during model work.
+  imports and reject captures superseded during model work. Settings and
+  reviews are available in every project of a writable local server, including
+  sample and archived projects.
+- **No built-in reviewer model.** The model is always the user's choice:
+  **Load models** in Settings and `agr config --list-models` read the
+  endpoint's model list, and a review without a configured model stops with a
+  setup hint instead of silently using a hard-coded model ID.
 - **Configuration-aware review snapshots.** Provider/model/endpoint identity
   separates results and determines which successful reviews a batch can skip.
   The latest successful healthy reviewer becomes the default view, with
