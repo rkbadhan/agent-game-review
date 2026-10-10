@@ -469,7 +469,9 @@ def test_small_trace_keeps_full_text_large_trace_gets_excerpts():
     assert digest == long_text  # full text — no unnecessary truncation
     # An absurdly small budget forces the 220-char excerpt fallback.
     tiny = build_packet(small, budget_chars=10)
-    assert len(tiny[0]["timeline_digest"][0]["excerpt"]) == 220
+    # Metadata also consumes the hard budget, so the excerpt may shrink further.
+    excerpt = tiny[0]["timeline_digest"][0]["excerpt"]
+    assert 0 < len(excerpt) <= 220 and long_text.startswith(excerpt)
 
 
 class _FakeProvider(_LazyModelReviewer):

@@ -760,6 +760,9 @@ class ReviewMoment:
     alternatives: list[Alternative] = field(default_factory=list)
     instructional_value: Optional[str] = None
     eval_lesson_recommended: bool = False
+    # Unfiltered model inputs retained for future envelope revalidation, including
+    # quotes and explanation prose that taxonomy filtering removes from cards.
+    raw_enrichment: Optional[dict] = None
     enrichment_source: Optional[str] = None  # e.g. "model:claude-opus-4-8"; None = deterministic
     taxonomy_version: Optional[str] = None
     review_mode: str = "deterministic_only"

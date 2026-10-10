@@ -705,6 +705,9 @@ def _build_demo(store: Store, args) -> dict:
                 print(f"  WARNING      {definition['stale_reviews']} review(s) skipped: "
                       "source hash does not match the run (re-bake with agr bake-reviews)",
                       file=sys.stderr)
+            if definition.get("failed_reviews"):
+                print(f"  WARNING      {definition['failed_reviews']} review(s) skipped: "
+                      "snapshot revalidation failed (see review_errors.json)", file=sys.stderr)
             if definition.get("landing_run"):
                 print(f"  opens on      {definition['landing_run']}")
             print(f"  comparison    {definition['axis']}")

@@ -56,12 +56,15 @@ def submit(client, project, manifest, key="test-import", selected=None):
 
 
 def finish(client, project, job):
-    for _ in range(200):
+    # Importing writes a complete capture; slow CI filesystems can exceed two
+    # seconds. Keep a bounded wall-clock deadline rather than a poll count.
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
         job = client.get(f"/projects/{project}/imports/{job['id']}").json()
         if job["status"] not in ("queued", "importing", "cancelling"):
             return job
         time.sleep(0.01)
-    pytest.fail("Import did not finish")
+    pytest.fail(f"Import did not finish: {job}")
 
 
 def test_legacy_store_registered_without_rewriting(client, tmp_path):

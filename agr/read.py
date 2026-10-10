@@ -1446,6 +1446,7 @@ def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) ->
         # unconfigured reviewer is never rendered as "no decisive moment").
         "review_status_success": review_status in SUCCESSFUL_REVIEW_STATUSES,
         "review_counts": review_counts,
+        "harness_protocol": _read(store, run_id, capture_id, "review_protocol.json", {}),
         "moments": moments,
         "review_moments": review_moments if review_moments is not None else [],
         "evidence_slices": _read(store, run_id, capture_id, "evidence_slices.json", []),

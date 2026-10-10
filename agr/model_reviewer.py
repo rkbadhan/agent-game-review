@@ -226,6 +226,24 @@ verifier result, or any fact that does not recompute is dropped. Emit ONLY kind
 an experiment is produced by the system, never by you; claiming one in prose is
 ignored.
 
+HARNESS RULES: harness_protocol lists user termination and required completion
+confirmations. No agent action is possible after user termination, even if that
+message grants approval. Do not flag required confirmation as redundancy or
+assume earlier actions were correct. All negative findings, regardless of kind,
+must cite decisions and supporting quotes before termination. Criticism of a
+recorded action needs an agent action anchor, not an action_opportunity fact.
+Findings about a missing action must use kind "omission". In a user-ended run,
+an omission needs an action_opportunity fact (after_event_id, before_event_id)
+plus an agent anchor strictly inside that window. Its enabling observation must
+already make the omitted action appropriate: a question asking for permission
+cannot establish an opportunity to act on approval that arrives with termination.
+This fact is supporting metadata, not a substantive finding on its own.
+terminal_confirmation_event_ids identifies recognized final confirmation requests.
+A negative finding citing only that agent turn is rejected, regardless of kind or
+window. A separate earlier agent decision is needed to support earlier criticism.
+This conservative guard recognizes explicit requests; it is not a general semantic
+validation of approval or explanation prose.
+
 GROUNDING RULES (deterministic code recomputes every fact; anything that does not
 recompute is dropped):
 - Every moment needs at least one fact that validates. A moment with no validating

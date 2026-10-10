@@ -67,7 +67,7 @@ SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # intended branch — an audited sample measured 1/5 precision on exactly this
 # shape. The raw failure fact is untouched; only this detector's reading of
 # it changed.
-DETECTOR_VERSION = "detectors-0.5"
+DETECTOR_VERSION = "detectors-0.6"
 CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
 # 1.1 (AGR-02, review 82cc113): reads each mapped check's effective_status
 # (the current, reconciled view) rather than its raw immutable status — a
@@ -113,14 +113,18 @@ REVIEWER_EVAL_VERSION = "reviewer-eval-0.2"
 # synthesized id like insession_pytest_1, so it always reported no observed
 # failure for one). Rendered wording no longer calls an in-session check "the
 # run's final verifier", a post-run-only concept.
-REVIEWER_VERSION = "reviewer-det-0.3"
+# Recorded per-harness constraints used by live and offline review validation.
+REVIEW_PROTOCOL_VERSION = "review-protocol-0.4"
+
+# 0.7: final confirmation requests alone cannot support missing-execution blame.
+REVIEWER_VERSION = "reviewer-det-0.7"
 
 # Stage F — the model reviewer (spec §8.7). The reviewer runs behind the
 # deterministic envelope: its structured facts are recomputed (Stage G), its
 # attribution language capped (Stage H), and its cards selected (Stage I). The
 # version stamps model-enriched review moments so a verdict is auditable against
 # the prompt/schema that produced it.
-MODEL_REVIEWER_VERSION = "reviewer-model-0.3"
+MODEL_REVIEWER_VERSION = "reviewer-model-0.7"
 
 # Redaction and untrusted-content isolation applied before any model-facing text
 # (spec §7.4, §16.1). The redaction map records what was removed and why, stamped

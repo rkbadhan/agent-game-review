@@ -79,6 +79,7 @@ class Analysis:
     # missing chunk). Distinct from ``review_error``: the attempt is recorded
     # as 'incomplete', not 'failed', and the deterministic baseline is served.
     review_incomplete: dict | None = None
+    review_context: ReviewerContext | None = None
 
     @property
     def candidates(self) -> list[Candidate]:
@@ -222,6 +223,9 @@ def analyze(doc: dict, store: Store, reviewer=None, *, expected_capture_id=None)
     # runs — persist only the rounds THIS attempt added, and stamp them with
     # the attempt id, so downstream run-cost aggregation cannot double-count.
     _rounds_before = len(getattr(reviewer, "telemetry", None) or [])
+    from .review_protocol import review_protocol
+    protocol = review_protocol(doc, events)
+
     def _review_context() -> ReviewerContext:
         # AGR-03/AGR-04: model discoveries meet the same capability
         # requirements as detectors, absence claims validate against what the
@@ -242,6 +246,7 @@ def analyze(doc: dict, store: Store, reviewer=None, *, expected_capture_id=None)
                                 if a.get("path")],
             task_instruction=(doc.get("task") or {}).get("instruction"),
             verifier_logs=(doc.get("verifier") or {}).get("log_excerpts", []),
+            protocol=protocol,
         )
 
     review_incomplete: dict | None = None
@@ -299,6 +304,7 @@ def analyze(doc: dict, store: Store, reviewer=None, *, expected_capture_id=None)
         # them without re-parsing the raw source or recomputing the pipeline.
         store.write_derived(rs.run_id, rs.source_capture_id, "run_source.json", rs.to_dict())
         store.write_derived(rs.run_id, rs.source_capture_id, "capabilities.json", profile.to_dict())
+        store.write_derived(rs.run_id, rs.source_capture_id, "review_protocol.json", protocol)
         store.write_derived(rs.run_id, rs.source_capture_id, "signature.json", [s.to_dict() for s in signature])
         store.write_derived(rs.run_id, rs.source_capture_id, "audit.json", [f.to_dict() for f in audit])
         store.write_derived(rs.run_id, rs.source_capture_id, "phases.json", [p.to_dict() for p in phases])
@@ -426,4 +432,5 @@ def analyze(doc: dict, store: Store, reviewer=None, *, expected_capture_id=None)
         signature=signature, audit=audit,
         idempotent=result.idempotent, review_moments=review_moments,
         review_error=review_error, review_incomplete=review_incomplete,
+        review_context=_review_context(),
     )

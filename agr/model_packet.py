@@ -48,7 +48,7 @@ _MIN_EXCERPT_CHARS = 80  # excerpt floor when enforcing the packet budget
 # adds the category-coverage block. This must cover the prompt's real size plus
 # slack; a guard test fails if the prompt outgrows it
 # (see tests/test_model_reviewer.py::test_packet_reserve_covers_system_prompt).
-_BUDGET_RESERVE_CHARS = 16_000
+_BUDGET_RESERVE_CHARS = 17_000
 # AGR-06: traces that fit the reviewer's budget are sent WITHOUT unnecessary
 # truncation — the digest carries full event text first and drops to excerpts
 # only when the serialized packet would exceed the character budget
@@ -366,6 +366,7 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
         # quoted verbatim (post-redaction); never a 220-char timeline excerpt.
         "task_instruction": redacted.get("task::instruction"),
         "task_contract": contract,
+        "harness_protocol": ctx.protocol,
         "atomic_checks": atomic_checks,
         # GR-3: the run's OWN failing-call argument-shape distribution — key SETS
         # and value TYPES only, never retained values. Lets the reviewer judge a
@@ -393,7 +394,7 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
         "phase_summaries": _phase_summaries(ctx.events),
         "supported_fact_types": [
             "requirement_status", "absence", "repetition", "state_transition",
-            "event_support", "termination",
+            "event_support", "termination", "action_opportunity",
         ],
     }
     if chunk_summaries is not None:

@@ -41,6 +41,7 @@ except ImportError:  # Python < 3.9 fallback (unlikely but safe)
 _PACKAGE = "agr"
 _FIXTURES_PKG = "demo_fixtures"
 
+from . import version
 from .pipeline import analyze
 from .store import Store
 
@@ -301,10 +302,10 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
                           include_comparison: bool = True) -> dict:
     """GR-4: build the demo from real runs + their pre-computed model reviews.
 
-    Ingests each committed real trajectory, installs the corresponding baked
-    model-review snapshot into the run's latest capture (re-keyed to that capture
-    so the slot is self-consistent), records the reviewer model and date in
-    ``review_meta.json``, and — unless disabled — adds the synthetic comparison
+    Ingests each committed real trajectory, revalidates the corresponding baked
+    model proposals against current facts and harness rules, and records the
+    original reviewer model and date in ``review_meta.json``. Unless disabled,
+    it adds the synthetic comparison
     slice so the Compare surface still has matched data. No model is called.
     """
     from . import read
@@ -316,9 +317,11 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
     reviews_dir = os.path.join(real_dir, "reviews")
 
     store_runs: dict[str, str] = {}
+    analyses = {}
     for doc in _load_json_dir(runs_dir):
         analysis = _ingest_with_confirmed_contract(doc, store)
         store_runs[analysis.run_source.run_id] = analysis.run_source.source_capture_id
+        analyses[analysis.run_source.run_id] = analysis
 
     # Clear every model slot this dataset owns before installing, so a review
     # that is no longer in the dataset (or is rejected below) cannot remain
@@ -333,17 +336,16 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
 
     installed: list[str] = []
     stale: list[str] = []
+    failed: list[str] = []
     for review in _load_json_dir(reviews_dir):
         run_id = review.get("run_id")
         capture_id = store_runs.get(run_id)
         key = review.get("reviewer_key")
         if capture_id is None or not key:
             continue  # a review whose run is not in this dataset is skipped, not guessed
-        # A baked review is installed, not re-validated, so it is only trustworthy
-        # against the EXACT source it was computed from. BOTH hashes must be
-        # present and equal: the source hash covers the whole trajectory text
-        # (not just event positions), so an unverifiable or changed run is
-        # rejected rather than served with stale quotes and validated facts.
+        # Source equality establishes identity, not current validator validity.
+        # Reject changed captures first, then replay the original proposals
+        # through today's envelope without calling the model.
         source = store.read_derived(run_id, capture_id, "run_source.json") \
             if store.has_derived(run_id, capture_id, "run_source.json") else {}
         baked_hash = review.get("source_hash")
@@ -351,14 +353,28 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
         if not baked_hash or not source_hash or baked_hash != source_hash:
             stale.append(run_id)
             continue
-        moments = review.get("moments") or []
-        for moment in moments:
-            moment["run_id"] = run_id
-            moment["source_capture_id"] = capture_id
+        # Reuse the confirmed analysis context. Revalidation is not another
+        # ingestion or a new model attempt, and has no deterministic fallback.
+        from .reviewer import ReviewBudgetExceededError
+        errors = store.read_derived(run_id, capture_id, "review_errors.json") \
+            if store.has_derived(run_id, capture_id, "review_errors.json") else []
+        errors = [e for e in errors if e.get("reviewer_key") != key]
+        try:
+            moments = _revalidate_baked_review(review, analyses[run_id].review_context)
+        except Exception as exc:  # malformed/incomplete snapshots fail closed
+            error = {"reviewer_key": key, "error_type": type(exc).__name__,
+                     "message": str(exc)[:500], "origin": "precomputed_revalidation"}
+            if isinstance(exc, ReviewBudgetExceededError):
+                error["incomplete"] = exc.to_dict()
+            store.write_derived(run_id, capture_id, "review_errors.json", errors + [error])
+            failed.append(run_id)
+            continue
         store.write_review(run_id, capture_id, key, moments)
+        store.write_derived(run_id, capture_id, "review_errors.json", errors)
         meta = _read_review_meta(store, run_id, capture_id)
         meta[key] = {"model": review.get("model"), "reviewed_at": review.get("reviewed_at"),
-                     "origin": "precomputed"}
+                     "origin": "precomputed",
+                     "revalidated_by": version.REVIEWER_VERSION}
         store.write_derived(run_id, capture_id, "review_meta.json", meta)
         installed.append(run_id)
 
@@ -369,8 +385,45 @@ def build_real_demo_store(store: Store, real_dir: Optional[str] = None, *,
 
     return {"landing_run": _choose_landing_run(store, installed),
             "real_runs": len(store_runs), "model_reviews": len(installed),
-            "stale_reviews": len(stale),
+            "stale_reviews": len(stale), "failed_reviews": len(failed),
             "axis": "evaluation_harness"}
+
+
+_EXPLANATION_DIAGNOSTICS = ("quote_authenticity", "explanation_support",
+                            "prose_references", "explanation_attribution")
+
+
+def _revalidate_baked_review(review: dict, ctx) -> list[dict]:
+    """Recompute saved proposals, preserving the limits of legacy snapshots."""
+    from .model_reviewer import ScriptedReviewer
+    from .reviewer import run_reviewer
+
+    originals = review.get("moments") or []
+    payload = {"moments": [
+        {**moment, **(moment.get("raw_enrichment") or {}),
+         "structured_facts": moment.get("validated_facts") or []}
+        for moment in originals
+    ]}
+    moments = run_reviewer(ctx, reviewer=ScriptedReviewer(payload, source=review["reviewer_key"]))
+    for original, moment in zip(originals, moments):
+        if original.get("raw_enrichment") is not None:
+            continue
+        # Legacy cards discarded raw quotes/prose. Keep their historical
+        # diagnostics explicitly labelled, never present missing inputs as a
+        # successful new check. Preserve known warnings through bake/replay.
+        prior = original.get("gate_results") or {}
+        historical = prior.get("historical_explanation_diagnostics") or {
+            name: prior[name] for name in _EXPLANATION_DIAGNOSTICS if name in prior}
+        moment.gate_results["historical_explanation_diagnostics"] = historical
+        moment.gate_results["explanation_revalidation"] = "unavailable_legacy_inputs"
+        for name in _EXPLANATION_DIAGNOSTICS:
+            status = historical.get(name)
+            moment.gate_results[name] = status if status in (
+                "overclaim", "mismatch", "dangling", "dangling_references", "invalid") else "not_revalidated"
+        moment.raw_enrichment = None
+        moment.limits.append("Original model quotes and explanation prose were not saved; "
+                             "explanation diagnostics could not be revalidated.")
+    return [m.to_dict() for m in moments]
 
 
 def _choose_landing_run(store: Store, run_ids: Iterable[str]) -> Optional[str]:
@@ -428,7 +481,13 @@ def _healthy_model_key(store: Store, run_id: str, capture_id: str,
         attempts = store.read_derived(run_id, capture_id, "review_attempts.json") or []
         latest = next((a for a in reversed(attempts)
                        if isinstance(a, dict) and a.get("reviewer_key") == key), None)
-        if latest is None or latest.get("outcome") != "ok":
+        if latest is None:
+            # Offline revalidation writes no fictitious model attempt. Its
+            # explicit provenance is enough to re-export a healthy snapshot.
+            meta = _read_review_meta(store, run_id, capture_id).get(key) or {}
+            if meta.get("origin") != "precomputed" or not meta.get("revalidated_by"):
+                return None
+        elif latest.get("outcome") != "ok":
             return None
     return key
 
@@ -476,7 +535,8 @@ def bake_reviews(store: Store, out_dir: str, *, model: Optional[str] = None) -> 
                 "task_id": source.get("task_id"),
                 "reviewer_key": key,
                 "model": model_name,
-                "reviewed_at": _iso_mtime(store.review_slot_path(run_id, capture_id, key)),
+                "reviewed_at": (_read_review_meta(store, run_id, capture_id).get(key) or {}).get(
+                    "reviewed_at") or _iso_mtime(store.review_slot_path(run_id, capture_id, key)),
                 "source_hash": source.get("source_hash"),
                 "moment_count": len(moments),
                 "selected_count": sum(1 for m in moments if m.get("selected")),
