@@ -903,8 +903,69 @@ def list_runs(store: Store) -> list[dict]:
         # write concurrent with it forces a recompute on the very next call.
         seq_before = store._write_seq
         summaries = _list_runs_uncached(store)
-        _list_runs_cache[store] = (seq_before, now, summaries)
+        # A leaderboard scan may itself exceed the TTL. Start the cache
+        # lifetime at completion so concurrent page requests can share it;
+        # keep the pre-scan write sequence to detect concurrent mutations.
+        _list_runs_cache[store] = (seq_before, time.monotonic(), summaries)
         return list(summaries)
+
+
+def _capture_heads(store: Store) -> list[tuple[str, str]]:
+    """Discover logical runs without walking their capture payloads."""
+    root = _runs_root(store)
+    found = []
+    for dirpath, dirnames, _ in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        if rel == ".":
+            continue
+        run_id = rel.replace(os.sep, "/")
+        try:
+            capture_id = store.latest_capture_id(run_id)
+        except InvalidRunId:
+            # Legacy unsafe directories must not abort the fleet listing.
+            continue
+        if capture_id is not None:
+            found.append((run_id, capture_id))
+            dirnames[:] = []
+    return sorted(found)
+
+
+_RUN_HEADERS_CACHE_TTL_S = 3.0
+_run_headers_cache = weakref.WeakKeyDictionary()
+_run_headers_cache_lock = threading.Lock()
+
+
+def list_run_headers(store: Store) -> list[dict]:
+    """Identity, versions and outcomes for fleet aggregations, without reviews.
+
+    Patterns do not need event transcripts, moments, workflow or contract
+    projections. Keep their read path independent of the full Runs inbox.
+    As with list_runs, same-process writes invalidate immediately; the TTL
+    bounds staleness from external writers and starts after the scan ends.
+    """
+    store = getattr(store, "_request_store", store)
+    from .capture_view import PinnedStore
+    if isinstance(store, PinnedStore):
+        rows = list_run_headers(store.store)
+        pinned = _run_header(store, store.run_id, store.capture_id)
+        return sorted([r for r in rows if r["run_id"] != store.run_id] + [pinned],
+                      key=lambda r: r["run_id"])
+    with _run_headers_cache_lock:
+        cached = _run_headers_cache.get(store)
+        if cached is not None:
+            seq, computed_at, rows = cached
+            if seq == store._write_seq and time.monotonic() - computed_at < _RUN_HEADERS_CACHE_TTL_S:
+                return list(rows)
+        seq = store._write_seq
+        rows = [_run_header(store, rid, cid) for rid, cid in _capture_heads(store)]
+        _run_headers_cache[store] = (seq, time.monotonic(), rows)
+        return list(rows)
+
+
+def _run_header(store: Store, run_id: str, capture_id: str) -> dict:
+    return {**_read(store, run_id, capture_id, "run_source.json", {}),
+            "run_id": run_id, "capture_id": capture_id,
+            "outcome": _read(store, run_id, capture_id, "outcome.json", {})}
 
 
 def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
@@ -913,32 +974,7 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
         return []
     summaries: list[dict] = []
 
-    def _discover_run_ids() -> list[str]:
-        # Runs may be nested under namespace dirs (the harbor adapter keys runs
-        # by task id, e.g. runs/harbor__terminal-bench/<task>/...). A dir is a
-        # run only when it carries a capture index; namespace dirs are descended
-        # into, run dirs are pruned (their captures/ subtree is not a run).
-        found: list[str] = []
-        for dirpath, dirnames, _ in os.walk(root):
-            rel = os.path.relpath(dirpath, root)
-            if rel == ".":
-                continue
-            run_id = rel.replace(os.sep, "/")
-            try:
-                capture_id = store.latest_capture_id(run_id)
-            except InvalidRunId:
-                # F1 follow-up (review of PR #64): a directory left over from
-                # before the path-safety charset existed (e.g. a colon in an
-                # old logical_run_id) is not a listable run, but it must not
-                # abort the WHOLE listing — skip it and keep walking, in case
-                # something valid is nested underneath.
-                continue
-            if capture_id is not None:
-                found.append(run_id)
-                dirnames[:] = []
-        return sorted(found)
-
-    for run_id in _discover_run_ids() if run_ids is None else run_ids:
+    for run_id in [rid for rid, _ in _capture_heads(store)] if run_ids is None else run_ids:
         capture_id = store.latest_capture_id(run_id)
         if capture_id is None:
             continue

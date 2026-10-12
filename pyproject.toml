@@ -52,7 +52,9 @@ packages = ["agr"]
 agr = ["static/*.html", "static/*.css", "static/js/*.js", "static/*.svg",
        "static/fonts/*.woff2", "static/fonts/*.txt", "static/ICONS-LICENSE",
        "demo_fixtures/*.json",
-       "demo_fixtures/real_demo/runs/*.json", "demo_fixtures/real_demo/reviews/*.json"]
+       "demo_fixtures/real_demo/runs/*.json", "demo_fixtures/real_demo/reviews/*.json",
+       "demo_fixtures/tb2_leaderboard/*.json", "demo_fixtures/tb2_leaderboard/*.md",
+       "demo_fixtures/tb2_leaderboard/LICENSE", "demo_fixtures/tb2_leaderboard/runs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

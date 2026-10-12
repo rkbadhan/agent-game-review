@@ -257,7 +257,16 @@
     "source_pointers": [
      "verifier/ctrf.json",
      "verifier/test_outputs.py"
-    ]
+    ],
+    "diagnostic": {
+     "line": "AssertionError: f(42): expected 267914296, got Python=267914296, C=6",
+     "basis": "pytest_assertion",
+     "signature": "AssertionError: f(<N>): expected <N>, got Python=<N>, C=<N>",
+     "signature_version": "error-sig-0.3",
+     "excerpt": "E           AssertionError: f(42): expected 267914296, got Python=267914296, C=6",
+     "truncated": false,
+     "source_pointer": "/verifier/log_excerpts/0/content"
+    }
    },
    {
     "check_id": "terminal_bench_reward",

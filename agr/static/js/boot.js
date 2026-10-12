@@ -28,6 +28,19 @@ async function dispatchLocation(want, isBoot) {
     state.workspace.job = await api(projectPath("/imports/" + encodeURIComponent(want.importId)));
     state.importRunIds = new Set(state.workspace.job.results.filter(r => r.run_id).map(r => r.run_id));
   } else state.importRunIds = null;
+  if (want.testPattern) {
+    if (JSON.stringify(state.patternSelector) !== JSON.stringify(want.testPattern)) {
+      const groups = await api("/fleet/test-failures?group_by=" + encodeURIComponent(want.testPattern.group_by.join(",")));
+      const group = groups.find(g => JSON.stringify({ key: g.key, group_by: g.group_by,
+        task_cohorts: g.task_cohorts, signature_version: g.signature_version }) === JSON.stringify(want.testPattern));
+      state.patternSelector = group ? want.testPattern : null;
+      state.patternRunIds = group ? new Set(group.run_ids) : null;
+      state.patternLabel = group ? group.example_line : null;
+      if (!group) toast("This test-failure group no longer exists; showing all runs.");
+    }
+  } else {
+    state.patternSelector = null; state.patternRunIds = null; state.patternLabel = null;
+  }
   if (want.view === "runs") {
     state.view = "runs";
     if (want.q != null) state.runsSearch = want.q;
@@ -48,6 +61,12 @@ async function dispatchLocation(want, isBoot) {
   if (want.view === "fleet") {
     state.view = "fleet";
     if (want.groupBy) state.fleet.groupBy = want.groupBy;
+    state.fleet.mode = want.patternType === "tests" ? "tests" : "tools";
+    if (want.testGroupBy && state.fleet.testGroupBy !== want.testGroupBy) {
+      state.fleet.testGroupBy = want.testGroupBy;
+      state.fleet.testGroups = null; state.fleet.testToken = (state.fleet.testToken || 0) + 1;
+      state.fleet.testPending = false;
+    }
     render();
     return;
   }
@@ -110,6 +129,9 @@ async function boot() {
       syncProjectChrome();
       toast("Workspace settings are unavailable. Existing runs can still be reviewed; repair workspace.json to restore project tools.");
     }
+    // Patterns use their own small records. The full inbox is loaded lazily
+    // if the reader opens Runs or a review, avoiding transcript I/O here.
+    if (want.view === "fleet") { await dispatchLocation(want, true); return; }
     await loadInbox();
     // T1: first use opens straight into the review — no blocking terminology
     // modal. The same orientation content stays reachable on demand from Help

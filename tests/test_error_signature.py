@@ -314,3 +314,67 @@ def test_session_expiry_line_wins_over_a_trailing_hint():
     sig, basis = error_signature_with_basis(raw)
     assert basis == "diagnostic_line"
     assert "expired" in sig
+
+
+
+@pytest.mark.parametrize('banner', ['Exit code 1', 'Exit code 127', 'Exit code -1'])
+def test_leading_exit_code_banner_is_not_a_diagnostic(banner):
+    from agr.error_signature import diagnostic_line_with_basis
+    raw = banner + '\nCompilation produced no executable'
+    assert error_signature_with_basis(raw) == ('Compilation produced no executable', 'fallback_last_nonempty')
+    assert diagnostic_line_with_basis(raw) == ('Compilation produced no executable', 'fallback_last_nonempty')
+    assert error_signature(banner) == '<empty>'
+    assert error_signature('[error] tool reported failure\n' + banner) == '<empty>'
+
+
+def test_exit_code_banner_does_not_merge_different_failures():
+    a = 'Exit code 1\npython3: command not found'
+    b = 'Exit code 1\nfatal: unresolved conflict'
+    assert error_signature_with_basis(a) == ('python3: command not found', 'diagnostic_line')
+    assert error_signature_with_basis(b) == ('fatal: unresolved conflict', 'diagnostic_line')
+
+
+@pytest.mark.parametrize('raw', ['Exit code 1 means a test failed', 'Message: Exit code 1',
+    'output\nExit code 1', 'exit code 1', 'Exit code unknown'])
+def test_substantive_or_nonleading_exit_code_text_is_retained(raw):
+    assert error_signature(raw) != '<empty>'
+
+
+@pytest.mark.parametrize('raw,expected,basis', [
+    ('<exit_code>1</exit_code>\n<command_execution_time>0.006502 second</command_execution_time>\n'
+     '<stdout>Compilation produced no executable\n</stdout>\n<stderr></stderr>',
+     'Compilation produced no executable', 'fallback_last_nonempty'),
+    ('<stdout>python3: command not found</stdout><stderr></stderr>',
+     'python3: command not found', 'diagnostic_line'),
+    ('<stdout>ordinary output</stdout><stderr>fatal: unresolved conflict</stderr><exit_code>1</exit_code>',
+     'fatal: unresolved conflict', 'diagnostic_line'),
+    ('<stdout>Traceback (most recent call last):\n  File "/tmp/tool.py", line 1\n'
+     'ValueError: bad input</stdout><stderr></stderr>',
+     'ValueError: bad input', 'traceback_exception'),
+    ('<stdout></stdout><stderr></stderr><exit_code>2</exit_code>', '<empty>', 'fallback_last_nonempty'),
+    ('<stderr></stderr>', '<empty>', 'fallback_last_nonempty'),
+    ('<stdout> </stdout>', '<empty>', 'fallback_last_nonempty'),
+])
+def test_tagged_output_wrappers_never_become_signatures(raw, expected, basis):
+    from agr.error_signature import diagnostic_line_with_basis
+    assert error_signature_with_basis(raw) == (expected, basis)
+    assert diagnostic_line_with_basis(raw) == (expected, basis)
+
+
+@pytest.mark.parametrize('raw', [
+    'Error: literal <stdout> appears in the file',
+    'prefix <stdout>keep literal text</stdout>',
+    '<stdout>truncated output',
+    '<stdout>one</stdout><stdout>two</stdout>',
+    '<other>keep this field</other><stdout>output</stdout>',
+    '<stdout>output</stdout> trailing text',
+    '<exit_code>1</exit_code>',
+])
+def test_tag_unwrap_requires_a_complete_known_transport(raw):
+    from agr.error_signature import _unwrap_tagged_transport
+    assert _unwrap_tagged_transport(raw) == raw
+
+
+def test_json_transport_can_contain_tagged_output():
+    raw = json.dumps({'output': '<stdout>python3: command not found</stdout><stderr></stderr>', 'returncode': 1})
+    assert error_signature_with_basis(raw) == ('python3: command not found', 'diagnostic_line')

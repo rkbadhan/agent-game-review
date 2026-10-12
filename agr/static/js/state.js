@@ -116,6 +116,7 @@ function syncUrl() {
     if (state.view === "ai-review" && state.ai.job) p.set("review_job", state.ai.job.id);
     _commitUrl(p.toString()); return;
   }
+  if (state.patternSelector && state.view !== "fleet") p.set("test_pattern", JSON.stringify(state.patternSelector));
   if (state.view === "runs") {
     p.set("view", "runs");
     if (state.importRunIds && state.workspace.job) p.set("import", state.workspace.job.id);
@@ -127,6 +128,10 @@ function syncUrl() {
   }
   if (state.view === "fleet") {
     p.set("view", "fleet");
+    if (state.fleet.mode === "tests") {
+      p.set("pattern_type", "tests");
+      p.set("test_group_by", state.fleet.testGroupBy || "task,test,signature");
+    }
     if (state.fleet.groupBy !== "tool,error_signature") p.set("group_by", state.fleet.groupBy);
     _commitUrl(p.toString());
     return;
@@ -179,6 +184,13 @@ function readUrl() {
   state.sort = SORT_OPTIONS.some(([v]) => v === sort) ? sort : "triage";
   state.filters = new Set(p.getAll("filter").filter(f => FILTER_CHIPS.some(([k]) => k === f)));
   state.runsSearch = p.get("q") || "";
+  let testPattern = null;
+  try {
+    const parsed = JSON.parse(p.get("test_pattern"));
+    if (parsed && Array.isArray(parsed.key) && Array.isArray(parsed.group_by)
+        && parsed.group_by.every(d => ["task", "test", "signature"].includes(d))
+        && Array.isArray(parsed.task_cohorts)) testPattern = parsed;
+  } catch (_) {}
   const left = p.get("left"), right = p.get("right");
   state.compare = (left && right) ? { left, right } : null;
   const v = state.versions;
@@ -187,5 +199,5 @@ function readUrl() {
   if (p.get("candidate")) v.candidate = p.get("candidate");
   return { project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
-    left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
+    testPattern, patternType: p.get("pattern_type"), testGroupBy: p.get("test_group_by"), left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

@@ -43,6 +43,10 @@ function renderRunsStatLine() {
   const s = state.sweep;
   if (!s) return null;
   const wrap = el("div", "runs-stat-line");
+  if (state.patternRunIds) {
+    wrap.append(el("span", "runs-stat-count", state.patternRunIds.size.toLocaleString() + " matching runs"));
+    return wrap;
+  }
   const total = s.total_runs ?? 0;
   wrap.append(el("span", "runs-stat-count", total.toLocaleString() + (total === 1 ? " run" : " runs")));
   const counts = state.queue && state.queue.filter_counts;
@@ -60,6 +64,10 @@ function renderRunsStatLine() {
 }
 
 function renderRunsSurface(main) {
+  if (!state.queue) {
+    main.append(el("p", "subline", "Loading runs…"));
+    return;
+  }
   if (state.importRunIds) {
     const importNotice = el("div", "notice callout", "Showing this import batch ");
     importNotice.append(workspaceButton("Show all project runs", () => { state.importRunIds = null; render(); }));
@@ -87,6 +95,15 @@ function renderRunsSurface(main) {
   const stat = renderRunsStatLine();
   if (stat) main.append(stat);
 
+  if (state.patternRunIds) {
+    const pattern = el("div", "card card-pad");
+    pattern.append(el("p", "chapter-lede", "Test failure: " + state.patternLabel));
+    const clearPattern = el("button", "seg", "Show all runs");
+    clearPattern.addEventListener("click", () => { state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null; render(); });
+    const backPattern = el("button", "seg", "Back to test failures");
+    backPattern.addEventListener("click", () => { state.view = "fleet"; state.fleet.mode = "tests"; render(); });
+    pattern.append(clearPattern, backPattern); main.append(pattern);
+  }
   const controls = el("div", "runs-controls-row");
   renderRunsControls(controls);
   main.append(controls);
@@ -178,7 +195,7 @@ function runsIdentityCell(r) {
 function renderRunsTable(host) {
   host.textContent = "";
   const all = (state.queue && state.queue.runs) || [];
-  const runs = all.filter(r => (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch));
+  const runs = all.filter(r => (!state.patternRunIds || state.patternRunIds.has(r.run_id)) && (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch));
   const card = el("div", "card card-pad runs-table-card");
   // Coordinator review 2, item 7: this used to always repeat "N runs ·
   // Sorted by …" — a duplicate of the page's own stat line above whenever

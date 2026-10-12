@@ -51,6 +51,15 @@ function render() {
   // "!state.review" case below (a run selected but not yet loaded) is exactly
   // that transient window, and renders its own "Loading…" placeholder.
   if (state.view === "review" && !state.runId) state.view = "runs";
+  // A direct Patterns visit skips the inbox. Fetch it only when navigation
+  // needs run summaries; concurrent renders reuse the same pending request.
+  if ((state.view === "runs" || state.view === "review") && !state.queue && !state.inboxRenderPending) {
+    state.inboxRenderPending = true;
+    ensureInbox().then(() => {
+      if (state.view === "runs" || state.view === "review") render();
+    }).catch(e => toast("Could not load runs: " + e.message))
+      .finally(() => { state.inboxRenderPending = false; });
+  }
   const workspace = isWorkspaceView(state.view);
   document.body.classList.toggle("workspace-mode", workspace);
   main.classList.toggle("wide", workspace);

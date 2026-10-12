@@ -1259,7 +1259,9 @@ def test_tau3_tool_error_maps_to_a_failed_tool_result(tmp_path):
     res = convert(trial, task_id="tau3-retail-7")
     err = next(s for s in res.doc["steps"]
                if s["kind"] == "tool_result" and s.get("tool") == "get_order_details")
-    assert err["exit_code"] == 1
+    assert err["status"] == "error"
+    assert err["status_source"] == "extra.is_error"
+    assert "exit_code" not in err
     ok = next(s for s in res.doc["steps"]
               if s["kind"] == "tool_result" and s.get("tool") == "find_user_id_by_name_zip")
     assert ok.get("exit_code") is None

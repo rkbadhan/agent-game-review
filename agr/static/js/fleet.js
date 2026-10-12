@@ -15,7 +15,7 @@ const FLEET_GROUP_OPTIONS = [
 function renderFleetSurface(main) {
   const nav = el("div", "review-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Patterns · tool failures and recovery episodes across every run"));
+  head.append(el("span", "eyebrow", "Patterns · repeated tool and test failures across runs"));
   nav.append(head);
   const util = el("div", "review-util");
   const back = el("button", "seg"); back.append(icon("chevron-left"), document.createTextNode(state.runId ? " Back to review" : " Back to runs"));
@@ -23,6 +23,14 @@ function renderFleetSurface(main) {
   util.append(back);
   nav.append(util);
   main.append(nav);
+  const modes = el("div", "vs-keys pattern-modes");
+  for (const [value, label] of [["tools", "Tool failures during runs"], ["tests", "Test failures at the end"]]) {
+    const button = el("button", "fchip" + ((state.fleet.mode || "tools") === value ? " on" : ""), label);
+    button.setAttribute("aria-pressed", String((state.fleet.mode || "tools") === value));
+    button.addEventListener("click", () => { state.fleet.mode = value; render(); });
+    modes.append(button);
+  }
+  main.append(modes);
   renderFleet(main).catch(e => main.append(el("div", "empty", "Failed: " + e.message)));
   renderEvidencePanel();
 }
@@ -517,26 +525,28 @@ function renderFleetGroupByCard(fl) {
 // Reading order: stat strip (orientation before any table) -> pattern
 // taxonomy (the Group by control and the table it drives) -> execution
 // quality last (collapsed by default when it's mostly "not evaluated" — see
-// renderFleetExecutionQuality). Fetches stay in their original order (group
-// membership is what a reader is here for, so it starts as soon as
-// possible); only the final DOM order — where each finished card gets
-// appended — changed.
+// renderFleetExecutionQuality). Supporting cards load independently so group
+// membership can render as soon as it arrives.
 async function renderFleet(main) {
   const fl = state.fleet;
+  if (fl.mode === "tests") return renderTestFailurePatterns(main);
   const wrap = el("div", "section");
   main.append(wrap);
 
-  // Guarded the same way loadFleetArgumentShapes() guards its own fetch: two
-  // renderFleet() calls overlapping in time (e.g. this await still pending
-  // when something elsewhere triggers a fresh top-level render()) must not
-  // both see `!fl.executionQuality` and each fire their own request to the
-  // same endpoint.
-  if (!fl.executionQuality && !fl.executionQualityPending) {
-    fl.executionQualityPending = true;
-    try { fl.executionQuality = await api("/fleet/execution-quality"); }
-    catch (e) { fl.executionQuality = null; }
-    finally { fl.executionQualityPending = false; }
-  }
+  // Supporting cards must not delay the failure table. These requests have
+  // independent pending guards and reconcile the current view on completion.
+  const loadCard = (field, path) => {
+    const pending = field + "Pending", loaded = field + "Loaded";
+    if (fl[loaded] || fl[pending]) return;
+    fl[pending] = true;
+    api(path).then(value => { fl[field] = value; })
+      .catch(() => { fl[field] = null; })
+      .finally(() => {
+        fl[pending] = false; fl[loaded] = true;
+        if (state.fleet === fl && state.view === "fleet" && fl.mode !== "tests") render();
+      });
+  };
+  loadCard("executionQuality", "/fleet/execution-quality");
 
   if (fl.pending) {
     wrap.append(renderFleetGroupByCard(fl));
@@ -571,13 +581,13 @@ async function renderFleet(main) {
     if (fl.executionQuality) wrap.append(renderFleetExecutionQuality(fl.executionQuality));
     return;
   }
-  if (!fl.usageSummary && !fl.usageSummaryPending) {
-    fl.usageSummaryPending = true;
-    try { fl.usageSummary = await api("/fleet/usage-summary"); }
-    catch (e) { fl.usageSummary = null; }
-    finally { fl.usageSummaryPending = false; }
+  loadCard("usageSummary", "/fleet/usage-summary");
+  if (!fl.argumentShapes && !fl.argumentShapesPending && !fl.argumentShapesLoaded) {
+    loadFleetArgumentShapes().finally(() => {
+      fl.argumentShapesLoaded = true;
+      if (state.fleet === fl && state.view === "fleet" && fl.mode !== "tests") render();
+    });
   }
-  if (!fl.argumentShapes && !fl.argumentShapesPending) await loadFleetArgumentShapes();
 
   if (fl.usageSummary) wrap.append(renderFleetUsageSummaryCard(fl.usageSummary));
   wrap.append(renderFleetGroupByCard(fl));
@@ -1006,4 +1016,133 @@ async function openRunAtEvent(runId, eventId) {
       || steps[0];
   }
   if (step) openTrace(step.step_id);
+}
+
+
+async function loadTestFailurePatterns(append = false) {
+  const fl = state.fleet;
+  const token = fl.testToken = (fl.testToken || 0) + 1;
+  fl.testPending = true; fl.testError = null;
+  const offset = append ? (fl.testGroups || []).length : 0;
+  try {
+    const url = "/fleet/test-failures?group_by=" + encodeURIComponent(fl.testGroupBy || "task,test,signature")
+      + "&limit=" + FLEET_PAGE_SIZE + "&offset=" + offset;
+    const response = await fetch(url, { headers: Object.assign({ accept: "application/json" }, projectHeaders(url)) });
+    if (!response.ok) throw new Error("Could not load test failures (" + response.status + ")");
+    const groups = await response.json();
+    if (state.fleet !== fl || fl.testToken !== token) return;
+    fl.testTotal = Number(response.headers.get("X-Total-Count") || groups.length);
+    fl.testGroups = append ? fl.testGroups.concat(groups) : groups;
+  } catch (error) {
+    if (state.fleet === fl && fl.testToken === token) fl.testError = error.message;
+  } finally {
+    if (state.fleet === fl && fl.testToken === token) fl.testPending = false;
+  }
+}
+
+async function openTestPatternRuns(group) {
+  state.filters.clear(); state.runsSearch = ""; state.importRunIds = null;
+  state.patternSelector = { key: group.key, group_by: group.group_by,
+    task_cohorts: group.task_cohorts, signature_version: group.signature_version };
+  state.patternRunIds = new Set(group.run_ids);
+  state.patternLabel = group.example_line;
+  await loadInbox();
+  goToRuns();
+}
+
+async function renderTestFailurePatterns(main) {
+  const fl = state.fleet;
+  const wrap = el("div", "section"); main.append(wrap);
+  const controls = el("div", "card test-pattern-controls");
+  controls.append(el("p", "eyebrow", "Group test failures by"));
+  const choices = el("div", "vs-keys");
+  for (const [value, label] of [["task,test,signature", "Task + test + message"], ["task", "Task only"], ["signature", "Message only"]]) {
+    const button = el("button", "fchip" + ((fl.testGroupBy || "task,test,signature") === value ? " on" : ""), label);
+    button.setAttribute("aria-pressed", String((fl.testGroupBy || "task,test,signature") === value));
+    button.addEventListener("click", () => {
+      fl.testGroupBy = value; fl.testGroups = null;
+      loadTestFailurePatterns().then(render); render();
+    });
+    choices.append(button);
+  }
+  controls.append(choices);
+  controls.append(el("p", "test-pattern-note", "Latest imported attempts, including unknown outcomes. Task and verifier versions stay separate. Shared failures are evidence to investigate; they do not identify who caused them."));
+  wrap.append(controls);
+  if (fl.testError) {
+    wrap.append(el("p", "empty", fl.testError));
+    const retry = el("button", "seg", "Retry");
+    retry.addEventListener("click", () => { loadTestFailurePatterns().then(render); render(); });
+    wrap.append(retry); return;
+  }
+  if (!fl.testGroups) {
+    wrap.append(el("p", "subline", "Loading test failures…"));
+    if (!fl.testPending) { await loadTestFailurePatterns(); render(); }
+    return;
+  }
+  if (!fl.testGroups.length) {
+    wrap.append(el("p", "empty", "No failing test diagnostics in this store. Re-import original Harbor bundles to add messages to older captures."));
+    return;
+  }
+  wrap.append(el("p", "subline", fl.testTotal + " test-failure groups · " + fl.testGroups.length + " shown"));
+  const card = el("div", "card test-pattern-table-wrap");
+  const table = el("table", "vs-table test-pattern-table");
+  table.append(rowEls("tr", ["Task", "Test", "Message", "Runs", "Configs", "Share of attempts"], "th"));
+  for (const group of fl.testGroups) {
+    const key = Object.fromEntries(group.group_by.map((dim, i) => [dim, group.key[i]]));
+    const row = el("tr");
+    const task = el("td");
+    task.append(el("div", null, key.task || (group.cohort_count + " task cohorts")));
+    if (group.cohort_count === 1) {
+      const cohort = group.task_cohorts[0];
+      const shortVersion = value => value ? (value.length > 20 ? value.slice(0, 17) + "…" : value) : "unresolved";
+      const versions = el("div", "test-pattern-versions");
+      versions.append(el("div", null, "Task " + shortVersion(cohort.task_version)),
+        el("div", null, "Verifier " + shortVersion(cohort.verifier_version)));
+      versions.title = "Task " + (cohort.task_version || "unresolved")
+        + " · verifier " + (cohort.verifier_version || "unresolved");
+      task.append(versions);
+    }
+    const message = el("td");
+    message.append(el("div", "test-pattern-message", group.example_line));
+    if (group.consistent_across_configurations && key.signature) {
+      const chip = el("span", "badge warn", "This failure appears in every tested configuration");
+      message.append(chip);
+    }
+    if (group.always_fails_task) message.append(el("div", "subline", "Every imported attempt failed"));
+    if (group.always_fails_task && group.consistent_across_configurations && !state.readOnly) {
+      const investigate = el("button", "seg", "Inspect task/verifier issue");
+      investigate.title = "Open an example run to consider its disposition";
+      investigate.addEventListener("click", async event => {
+        event.stopPropagation();
+        try {
+          await selectRun(group.run_ids[0], { chapter: "checks" });
+          if (state.runId === group.run_ids[0] && !state.loading) { state.dispOpen = true; render(); }
+        } catch (error) { toast(error.message); }
+      });
+      message.append(investigate);
+    }
+    if (!group.versions_resolved) message.append(el("div", "subline", "Versions unresolved; configuration-wide claims unavailable"));
+    const runs = el("td"); const open = el("button", "seg", String(group.runs));
+    open.title = "Open all " + group.runs + " matching runs";
+    open.addEventListener("click", event => { event.stopPropagation(); openTestPatternRuns(group).catch(showInboxError); });
+    runs.append(open);
+    const configs = el("td", "test-pattern-count", group.configurations.length + " / " + group.configurations_on_task.length);
+    configs.append(el("div", "subline", "tested configs"));
+    configs.title = group.configurations.map(c => c.join(" · ")).join("\n");
+    const share = el("td", "test-pattern-count", Math.round(100 * group.failing_share) + "%");
+    share.append(el("div", "subline", group.runs + " / " + group.attempts_total + " attempts"));
+    if (group.unknown_attempts) share.append(el("div", "subline", group.unknown_attempts + " unknown outcomes"));
+    const cells = [task, td(key.test || "All failing tests"), message, runs, configs, share];
+    const labels = ["Task", "Test", "Message", "Runs", "Configurations", "Share of attempts"];
+    cells.forEach((cell, i) => { cell.dataset.label = labels[i]; row.append(cell); });
+    row.addEventListener("click", event => { if (!event.target.closest("button")) openTestPatternRuns(group).catch(showInboxError); });
+    table.append(row);
+  }
+  card.append(table); wrap.append(card);
+  if (fl.testGroups.length < fl.testTotal) {
+    const more = el("button", "seg", fl.testPending ? "Loading…" : "Load more test failures");
+    more.disabled = !!fl.testPending;
+    more.addEventListener("click", () => { loadTestFailurePatterns(true).then(render); render(); });
+    wrap.append(more);
+  }
 }

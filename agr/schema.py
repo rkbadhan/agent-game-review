@@ -115,6 +115,7 @@ CONTRACT_POLARITIES = {"require", "forbid"}
 # Contract/check cross-check warnings (spec §8.2). These are surfaced, never
 # silently resolved.
 CONTRACT_WARNING_TYPES = {
+    "version_provenance",                # source of adapter task/verifier versions
     "verifier_only_requirement",         # verifier enforces something un-declared
     "prompt_only_unverified_requirement",  # stated requirement with no check
     "reference_only_assumption",         # assumption present only in the oracle
@@ -214,6 +215,8 @@ class RunSource:
     # surface; ``None`` when the source never declared it — never guessed
     # from task_id or any other field.
     cwd: Optional[str] = None
+    task_checksum: Optional[str] = None
+    version_provenance: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return _clean(asdict(self))
@@ -325,6 +328,7 @@ class VerifierCheck:
     # one per database-diff path from an environment verifier, with writer
     # provenance; every other key is adapter-defined and passed through.
     diagnostic_evidence: Optional[dict] = None
+    diagnostic: Optional[dict] = None
     # AGR-04 (pre-AGR-01 numbering): when the evidence was collected —
     # post-run verifier output is labelled so it is never presented as
     # information the agent had.

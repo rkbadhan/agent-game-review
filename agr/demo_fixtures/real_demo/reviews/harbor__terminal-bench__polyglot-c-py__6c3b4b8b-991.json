@@ -4,14 +4,14 @@
  "reviewer_key": "model:accounts/fireworks/models/kimi-k3",
  "model": "accounts/fireworks/models/kimi-k3",
  "reviewed_at": "2026-08-25T15:56:42Z",
- "source_hash": "sha256:b5d090e9892cd672c92475651ac12f5b840542222254c6551c142c68b738ac87",
+ "source_hash": "sha256:dd1c167878999b93a6a2ecba62abb7053a0bda79a0db4a87593231c26b898ec0",
  "moment_count": 2,
  "selected_count": 2,
  "moments": [
   {
    "moment_id": "mom_sem_1",
    "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
-   "source_capture_id": "capture_b5d090e9892c",
+   "source_capture_id": "capture_dd1c16787899",
    "candidate_id": "sem_1",
    "detector": "model",
    "kind": "behaviour",
@@ -133,7 +133,7 @@
   {
    "moment_id": "mom_sem_2",
    "run_id": "harbor__terminal-bench/polyglot-c-py__6c3b4b8b-991",
-   "source_capture_id": "capture_b5d090e9892c",
+   "source_capture_id": "capture_dd1c16787899",
    "candidate_id": "sem_2",
    "detector": "model",
    "kind": "behaviour",
@@ -224,6 +224,10 @@
  ],
  "curation": {
   "date": "2026-10-10",
-  "reason": "Corrected anchors and interpretation from the original trajectory and verifier; the original model provenance is retained separately."
+  "reason": "Corrected anchors and interpretation from the original trajectory and verifier; the original model provenance is retained separately.",
+  "capture_refresh": {
+   "previous_source_hash": "sha256:b5d090e9892cd672c92475651ac12f5b840542222254c6551c142c68b738ac87",
+   "reason": "Attached the existing verifier log assertion to its sole failing atomic test; event IDs, output and verdict unchanged. Saved proposals revalidated by demo import; no new model call."
+  }
  }
 }

@@ -149,6 +149,12 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None,
     def healthz() -> dict:
         return {"status": "ok", "read_model_version": version.READ_MODEL_VERSION, "read_only": read_only}
 
+    @app.get("/demo/start-here")
+    def demo_start_here():
+        import json
+        path = Path(store.root) / "start-here.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
     @app.get("/sweep")
     def sweep() -> dict:
         return queue.sweep_summary(store)
@@ -201,6 +207,20 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None,
         page = groups[offset:offset + limit] if limit is not None else groups
         body = [g.to_dict() for g in page]
         return JSONResponse(content=body, headers={"X-Total-Count": str(len(groups))})
+
+    @app.get("/fleet/test-failures")
+    def test_failures(
+        group_by: str = "task,test,signature",
+        limit: Optional[int] = Query(default=None, ge=1),
+        offset: int = Query(default=0, ge=0),
+    ):
+        dims = [d.strip() for d in group_by.split(",") if d.strip()]
+        try:
+            groups = fleet.test_failure_groups(store, group_by=dims)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        page = groups[offset:offset + limit] if limit is not None else groups[offset:]
+        return JSONResponse(content=page, headers={"X-Total-Count": str(len(groups))})
 
     @app.get("/fleet/usage-summary")
     def fleet_usage_summary() -> dict:

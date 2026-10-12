@@ -43,7 +43,7 @@ def _edit_failure_session(tmp_path, name, session_id, file_path, extra_input=Non
     return _write_session(tmp_path, name, lines)
 
 
-def _bash_failure_session(tmp_path, name, session_id):
+def _bash_failure_session(tmp_path, name, session_id, content="AssertionError: 5 != 4"):
     lines = [
         {"type": "user", "sessionId": session_id,
          "message": {"role": "user", "content": "Run the tests."}},
@@ -52,7 +52,7 @@ def _bash_failure_session(tmp_path, name, session_id):
                       "input": {"command": "pytest tests/"}}]}},
         {"type": "user", "message": {"role": "user", "content": [
              {"type": "tool_result", "tool_use_id": "t1",
-              "content": "AssertionError: 5 != 4", "is_error": True}]}},
+              "content": content, "is_error": True}]}},
     ]
     return _write_session(tmp_path, name, lines)
 
@@ -194,3 +194,15 @@ def test_argument_shape_link_is_none_for_a_non_failing_event(tmp_path):
     user = next(e for e in events if e.event_type != "tool_call" and e.event_type != "tool_result")
     assert argument_shapes.argument_shape_link_for_event(events, user.event_id) is None
     assert argument_shapes.argument_shape_link_for_event(events, "evt_missing") is None
+
+
+
+def test_exit_code_banner_cleanup_matches_native_claude_recovery_groups(tmp_path):
+    from agr import fleet
+    source = _bash_failure_session(tmp_path, 'wrapper.jsonl', 'wrapper-session',
+                                   content='Exit code 1\npython3: command not found')
+    store = _store_with(tmp_path, [source])
+    shapes = argument_shapes.argument_shapes(store)
+    episodes = fleet.fleet_episodes(store)
+    assert len(shapes) == len(episodes) == 1
+    assert shapes[0].key == episodes[0].key == ('Bash', 'python3: command not found')

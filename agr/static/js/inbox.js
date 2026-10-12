@@ -59,7 +59,8 @@ function setEntryPreference(v) {
 // One-based for display; null when the run is not part of the current queue view.
 function activeQueueIds() {
   const ids = (state.queue && state.queue.run_ids) || [];
-  return state.importRunIds ? ids.filter(id => state.importRunIds.has(id)) : ids;
+  const patternIds = state.patternRunIds ? ids.filter(id => state.patternRunIds.has(id)) : ids;
+  return state.importRunIds ? patternIds.filter(id => state.importRunIds.has(id)) : patternIds;
 }
 function queuePosition() {
   const ids = activeQueueIds();
@@ -80,7 +81,16 @@ function statusClass(s) { s = (s||"").toUpperCase();
   // harness broke, so it is not an agent failure.
   return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED"||s==="OPERATIONAL_ERROR")?"undetermined":"failed"; }
 
-async function loadInbox() {
+function loadInbox() {
+  const promise = loadInboxRecords();
+  state.inboxPromise = promise;
+  promise.finally(() => { if (state.inboxPromise === promise) state.inboxPromise = null; }).catch(() => {});
+  return promise;
+}
+function ensureInbox() {
+  return state.queue ? Promise.resolve() : state.inboxPromise || loadInbox();
+}
+async function loadInboxRecords() {
   // UX audit finding #2: capture the token before the request so a NEWER
   // loadInbox() call (a second filter click, a sort change, a "Show all
   // runs" reset) started while this one is still in flight can supersede it.
