@@ -1,0 +1,3 @@
+
+agr/demo_fixtures/tb2_leaderboard/runs/*.json -text linguist-generated=true
+agr/demo_fixtures/tb2_leaderboard/manifest.json -text linguist-generated=true

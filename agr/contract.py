@@ -220,6 +220,14 @@ def build_contract(doc: dict, run_source: RunSource, checks: list[VerifierCheck]
     warnings += _link_checks(items, checks)
     warnings += _coverage_warnings(items, checks, doc)
     warnings += _contradiction_warnings(items)
+    provenance = run_source.version_provenance or {}
+    if provenance.get("task_version_source"):
+        warnings.append(ContractWarning(
+            warning_type="version_provenance",
+            message=("Task version from " + provenance["task_version_source"]
+                     + "; verifier version from " + provenance.get("verifier_version_source", "unresolved")
+                     + ". Matching versions do not resolve environment, seed or task-parameter coverage."),
+        ))
 
     task = doc.get("task") or {}
     _ = task.get("instruction")  # retained as source, never parsed here

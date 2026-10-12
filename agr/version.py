@@ -16,7 +16,8 @@ RAW_ATIF_IMPORT_VERSION = "atif-import-0.1"
 # auditable against the release that produced it (never null).
 AGR_VERSION = "0.2.0"
 
-DERIVATION_VERSION = "event-map-0.2"
+# 0.3: retain explicit tool status_source in event payloads.
+DERIVATION_VERSION = "event-map-0.3"
 # 0.2 (AGR-02): checks carry scope/sequence/superseded_by/stale_reason and an
 # effective_status distinct from the raw historical status — reconciled by
 # agr.checks.reconcile_checks before agr.checks.outcome rolls them up.
@@ -48,7 +49,8 @@ DERIVATION_VERSION = "event-map-0.2"
 # excluded from success denominators) and validation of the
 # ``state_diff`` list inside a check's ``diagnostic_evidence`` (state-diff
 # entries with writer provenance, carried without ever counting as a check).
-CHECK_DERIVATION_VERSION = "check-extract-0.6"
+# 0.7: validate, redact and persist per-test diagnostics.
+CHECK_DERIVATION_VERSION = "check-extract-0.7"
 # Tool-to-state provenance (which tool call last wrote each diff path).
 PROVENANCE_DERIVATION_VERSION = "state-provenance-0.1"
 SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
@@ -68,7 +70,8 @@ SLICE_DERIVATION_VERSION = "evidence-slice-0.1"
 # shape. The raw failure fact is untouched; only this detector's reading of
 # it changed.
 DETECTOR_VERSION = "detectors-0.6"
-CONTRACT_BUILDER_VERSION = "contract-builder-0.1"
+# 0.2: surface task/verifier version provenance.
+CONTRACT_BUILDER_VERSION = "contract-builder-0.2"
 # 1.1 (AGR-02, review 82cc113): reads each mapped check's effective_status
 # (the current, reconciled view) rather than its raw immutable status — a
 # check a later same-scope check has superseded no longer speaks for its
@@ -149,7 +152,10 @@ AUDIT_VERSION = "audit-0.1"
 # banner no longer wins over a real diagnostic later in the output), then a
 # documented last-nonempty-line fallback. A truncated traceback (nothing
 # after its header) no longer collapses to the generic header text itself.
-ERROR_SIGNATURE_VERSION = "error-sig-0.2"
+# 0.3: exclude exact harness wrapper lines, including wrapper-only output.
+# 0.4: skip Claude Code exit-code banners and unwrap complete Judy output
+# envelopes, keeping transport metadata and empty channels out of signatures.
+ERROR_SIGNATURE_VERSION = "error-sig-0.4"
 
 # The recovery state machine (spec §8.6, items 4/5/29). RecoveryEpisode
 # previously carried no derivation_version at all — unlike every other
@@ -259,7 +265,8 @@ ERROR_SIGNATURE_VERSION = "error-sig-0.2"
 # plausible. Same-tool matching is unchanged; a cross-tool match is still
 # only ever plausibly_resolved, never promoted to good_recovery /
 # retry_succeeded_without_strategy_change.
-RECOVERY_VERSION = "recovery-0.12"
+# 0.13: signature/diagnostic selection uses error-sig-0.4 transport cleanup.
+RECOVERY_VERSION = "recovery-0.13"
 
 # The corpus manifest (AGR-01): reproducible provenance over a Harbor eval
 # corpus root — source locations/checksums, logical run ids, capture ids, and

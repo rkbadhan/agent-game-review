@@ -206,8 +206,11 @@ function renderChecksGroup(rv, f, moment) {
       statusRow.append(el("span", "badge " + badgeClass(chk.status), (chk.status || "?").toUpperCase()),
         el("span", "check-id mono", cid));
       it.append(statusRow);
-      it.append(kvLine("Expected", fmt(chk.expected) || "—"));
-      it.append(kvLine("Observed", fmt(chk.observed) || "—"));
+      if (chk.diagnostic && chk.status !== "passed") it.append(renderTestDiagnostic(chk.diagnostic));
+      else {
+        it.append(kvLine("Expected", fmt(chk.expected) || "—"));
+        it.append(kvLine("Observed", fmt(chk.observed) || "—"));
+      }
       g.append(it);
     }
     for (const sl of slices.filter(s => s.check_id === cid)) {

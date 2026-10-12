@@ -2196,3 +2196,116 @@ def test_review_header_labels_a_demo_contract_override(demo_override_server):
         assert "not human-confirmed" in text
 
         browser.close()
+
+def test_cross_run_test_patterns_switch_paging_and_run_drilldown(tmp_path):
+    from agr.ingest_harbor import build_test_diagnostic
+    store = Store(str(tmp_path / 'store'))
+    for i in range(28):
+        doc = {'atif_version': '1.7',
+               'run': {'logical_run_id': 'pattern-' + str(i), 'task_id': 'task-' + str(max(i - 1, 0)),
+                       'task_version': 'v1', 'verifier_version': 'v1', 'agent': 'agent', 'model': 'm' + str(i)},
+               'task': {'instruction': 'Produce output'},
+               'steps': [{'step_id': 's1', 'kind': 'task_received', 'actor': 'harness', 'content': 'Produce output'}],
+               'capabilities': {'verifier_results': 'complete'},
+               'verifier': {'checks': [{'check_id': 'test_output', 'name': 'test_output', 'status': 'failed',
+                   'source': 'native_structured', 'timing': 'post_run',
+                   'diagnostic': build_test_diagnostic('E   AssertionError: output missing', 'verifier/ctrf.json#/results/tests/0')}]}}
+        analyze(doc, store)
+    with _serving(str(tmp_path / 'store')) as base, sync_playwright() as pw:
+        browser = _launch(pw); page = _page(browser)
+        errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(base + '/?view=fleet&pattern_type=tests')
+        table = page.locator('.test-pattern-table')
+        table.wait_for()
+        assert table.locator('tr').count() == 26  # 25 groups plus header
+        header = table.locator('th').first.bounding_box()
+        first_cell = table.locator('td').first.bounding_box()
+        assert first_cell['y'] >= header['y'] + header['height'] - 1
+        for width in (1440, 1280, 1024, 390):
+            page.set_viewport_size({'width': width, 'height': 900})
+            layout = page.evaluate("""() => {
+              const card = document.querySelector('.test-pattern-table-wrap');
+              const bounds = card.getBoundingClientRect();
+              const cells = [...document.querySelectorAll('.test-pattern-table tr:nth-child(2) td')];
+              return {page:document.documentElement.scrollWidth, width:innerWidth,
+                scroll:card.scrollWidth, available:card.clientWidth,
+                controls:document.querySelector('.test-pattern-controls').getBoundingClientRect().height,
+                contained:cells.every(cell => {
+                  const rect=cell.getBoundingClientRect();
+                  return rect.width > 0 && rect.left >= bounds.left && rect.right <= bounds.right;
+                })};
+            }""")
+            assert layout['page'] <= layout['width']
+            assert layout['scroll'] <= layout['available']
+            assert layout['contained']
+            assert layout['controls'] <= (220 if width == 390 else 140)
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        assert page.get_by_text('This failure appears in every tested configuration').count() == 25
+        table.get_by_role('button', name='2', exact=True).click()
+        page.get_by_role('button', name='Show all runs', exact=True).wait_for()
+        assert page.locator('.runs-table-card .runs-row').count() == 2
+        assert page.evaluate('activeQueueIds().length') == 2
+        page.reload()
+        page.get_by_role('button', name='Back to test failures', exact=True).wait_for()
+        assert page.locator('.runs-table-card .runs-row').count() == 2
+        page.get_by_role('button', name='Back to test failures', exact=True).click()
+        page.get_by_role('button', name='Load more test failures', exact=True).click()
+        page.wait_for_function("state.fleet.testGroups.length === 27")
+        assert page.locator('.test-pattern-table tr').count() == 28
+        page.get_by_role('button', name='Message only', exact=True).click()
+        page.wait_for_function("state.fleet.testGroups && state.fleet.testGroups.length === 1 && !state.fleet.testPending")
+        assert page.locator('.test-pattern-table tr').count() == 2
+        page.get_by_role('button', name='Tool failures during runs', exact=True).click()
+        page.get_by_text('No recovery episodes in this store yet', exact=False).wait_for()
+        page.goto(base + '/?run=pattern-0&chapter=checks')
+        page.locator('.check-row summary').first.click()
+        page.locator('.test-diagnostic').first.wait_for()
+        assert 'AssertionError: output missing' in page.locator('.test-diagnostic').first.inner_text()
+        page.get_by_text('Show output excerpt', exact=True).first.click()
+        assert page.get_by_text('verifier/ctrf.json#/results/tests/0', exact=True).first.is_visible()
+        assert errors == []
+        browser.close()
+
+
+
+def test_patterns_render_while_inbox_and_supporting_cards_are_pending(tmp_path):
+    """A slow queue/quality request must not hold either Patterns table."""
+    from agr.ingest_harbor import build_test_diagnostic
+    store = Store(str(tmp_path / 'store'))
+    _analyzed(store, 'ignored_failure.atif.json')
+    doc = {'atif_version': '1.7', 'run': {'logical_run_id': 'pattern', 'task_id': 'task',
+        'task_version': 'v1', 'verifier_version': 'v1', 'agent': 'agent', 'model': 'model'},
+        'task': {'instruction': 'Produce output'},
+        'steps': [{'step_id': 's1', 'kind': 'task_received', 'actor': 'harness', 'content': 'Produce output'}],
+        'capabilities': {'verifier_results': 'complete'},
+        'verifier': {'checks': [{'check_id': 'test_output', 'name': 'test_output', 'status': 'failed',
+            'source': 'native_structured', 'timing': 'post_run',
+            'diagnostic': build_test_diagnostic('AssertionError: missing', 'ctrf.json#/results/tests/0')}]}}
+    analyze(doc, store)
+    with _serving(store.root) as base, sync_playwright() as pw:
+        browser = _launch(pw); page = _page(browser)
+        held = []; errors = []; requested = []
+        page.on('request', lambda request: requested.append(request.url))
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        for path in ('sweep', 'queue*', 'fleet/execution-quality', 'fleet/usage-summary', 'fleet/argument-shapes'):
+            page.route('**/' + path, lambda route: held.append(route))
+        page.goto(base + '/?view=fleet&pattern_type=tests')
+        page.locator('.test-pattern-table').wait_for()
+        assert page.evaluate('state.queue === null')
+        assert not any('/sweep' in url or '/queue?' in url for url in requested)
+        page.get_by_role('button', name='Tool failures during runs', exact=True).click()
+        page.locator('.fleet-table').wait_for()
+        page.wait_for_function('state.fleet.executionQualityPending && state.fleet.usageSummaryPending && state.fleet.argumentShapesPending')
+        assert page.locator('.fleet-row').count() > 0
+        page.get_by_role('button', name='Test failures at the end', exact=True).click()
+        page.locator('.test-pattern-table').wait_for()
+        for route in held:
+            route.continue_()
+        page.wait_for_function('!state.fleet.executionQualityPending')
+        assert page.locator('.test-pattern-table').is_visible()
+        page.unroute('**/sweep'); page.unroute('**/queue*')
+        page.locator('#runs-button').click()
+        page.wait_for_function('state.queue !== null')
+        page.locator('.runs-table-card').wait_for()
+        assert errors == []
+        browser.close()

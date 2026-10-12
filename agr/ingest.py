@@ -162,6 +162,8 @@ def _ingest(doc: dict, store: Store, adapter_version: str | None = None) -> Inge
         cost=run.get("total_cost_usd"),
         tokens=run.get("usage"),
         cwd=run.get("cwd"),
+        task_checksum=run.get("task_checksum"),
+        version_provenance=run.get("version_provenance"),
     )
     capabilities = _capability_profile(doc, run_id, capture_id)
 

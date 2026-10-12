@@ -710,6 +710,13 @@ def _build_demo(store: Store, args) -> dict:
                       "snapshot revalidation failed (see review_errors.json)", file=sys.stderr)
             if definition.get("landing_run"):
                 print(f"  opens on      {definition['landing_run']}")
+            if not getattr(args, "real_dir", None):
+                from .demo_leaderboard import build as build_leaderboard
+                print("  preparing     bundled leaderboard (first start builds local analysis)...", flush=True)
+                slice_info = build_leaderboard(store)
+                definition["leaderboard_runs"] = slice_info["run_count"]
+                print(f"  leaderboard   {slice_info['run_count']} bundled runs · seven configurations · ten tasks")
+                print(f"  start here    http://{getattr(args, 'host', '127.0.0.1')}:{getattr(args, 'port', 8000)}/?view=home")
             print(f"  comparison    {definition['axis']}")
             return definition
     fixtures_dir = demo.find_fixtures_dir(getattr(args, "fixtures", None))

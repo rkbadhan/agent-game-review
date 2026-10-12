@@ -649,8 +649,11 @@ function renderChecksChapter(main) {
     else if (c.stale_reason)
       body.append(el("div", "check-warn callout callout-warn", "⚠ stale — " + c.stale_reason
         + "; this " + (c.status || "?").toUpperCase() + " no longer counts as a current pass."));
-    body.append(kvLine("Expected", fmt(c.expected) || "—"));
-    body.append(kvLine("Observed", fmt(c.observed) || "—"));
+    if (c.diagnostic && c.status !== "passed") body.append(renderTestDiagnostic(c.diagnostic));
+    else {
+      body.append(kvLine("Expected", fmt(c.expected) || "—"));
+      body.append(kvLine("Observed", fmt(c.observed) || "—"));
+    }
     // Diagnostic evidence behind an aggregate check (e.g. tau3's tau2 reward
     // breakdown): why the check reached its status — which DB field mismatched,
     // which actions failed — never a separate verdict.
@@ -1084,3 +1087,18 @@ function evidenceCell(evidence, f) {
 // Wrap an evidenceCell in a real <td> for table rows.
 function evidenceTd(evidence, f) { const c = el("td", "mono"); c.append(evidenceCell(evidence, f)); return c; }
 
+
+
+function renderTestDiagnostic(diagnostic) {
+  const wrap = el("div", "test-diagnostic");
+  wrap.append(kvLine("Diagnostic", diagnostic.line));
+  wrap.append(el("p", "subline", "Collected after the run · " + diagnostic.basis.replace(/_/g, " ")));
+  if (diagnostic.excerpt) {
+    const output = el("details", "disclosure-inline");
+    output.append(el("summary", null, diagnostic.truncated ? "Show output excerpt (truncated)" : "Show output excerpt"));
+    output.append(el("pre", "disclosure-inline-text", diagnostic.excerpt));
+    output.append(el("p", "subline", diagnostic.source_pointer));
+    wrap.append(output);
+  }
+  return wrap;
+}

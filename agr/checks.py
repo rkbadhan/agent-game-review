@@ -23,6 +23,21 @@ class CheckExtractionError(ValueError):
     pass
 
 
+def _diagnostic(raw) -> Optional[dict]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise CheckExtractionError("check diagnostic must be an object")
+    for key in ("line", "basis", "signature", "excerpt", "source_pointer", "signature_version"):
+        if not isinstance(raw.get(key), str):
+            raise CheckExtractionError(f"check diagnostic needs string {key!r}")
+    if "truncated" in raw and not isinstance(raw["truncated"], bool):
+        raise CheckExtractionError("check diagnostic truncated must be boolean")
+    # These strings are served directly, outside model-packet redaction.
+    from .redaction import redact_value
+    return redact_value(raw)[0]
+
+
 def _diagnostic_evidence(raw) -> Optional[dict]:
     """Validate a check's optional ``diagnostic_evidence`` (never counted as a check).
 
@@ -89,6 +104,7 @@ def extract_checks(doc: dict, run_source: RunSource) -> list[VerifierCheck]:
                 # on an authoritative check, not a check, so outcome()/detectors
                 # never count it (see schema.VerifierCheck).
                 diagnostic_evidence=_diagnostic_evidence(raw.get("diagnostic_evidence")),
+                diagnostic=_diagnostic(raw.get("diagnostic")),
                 timing=timing,
                 # AGR-02: carried through only when the source (currently
                 # agr.verifier_synth) declared them; a native/structured

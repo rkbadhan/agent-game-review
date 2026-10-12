@@ -86,10 +86,29 @@ class ComparisonError(ValueError):
 
 
 def _runs(store: Store) -> list[dict]:
-    """Every run's review, keyed for comparison. One read pass over the store."""
+    """Only the persisted evidence used by comparison, from latest captures.
+
+    A full review also searches the fleet for passing-sibling alternatives.
+    Doing that once per run turns a leaderboard comparison into repeated fleet
+    scans, although none of those alternatives contribute to these metrics.
+    """
+    from .execution_quality import execution_quality_record
+
     out = []
     for summary in read.list_runs(store):
-        out.append(read.get_review(store, summary["run_id"]))
+        run_id, capture_id = summary["run_id"], summary["capture_id"]
+        signature = read._read(store, run_id, capture_id, "signature.json", [])
+        opportunities = read._read(store, run_id, capture_id, "opportunities.json", [])
+        out.append({
+            "run": read._read(store, run_id, capture_id, "run_source.json", {}),
+            "outcome": read._read(store, run_id, capture_id, "outcome.json", {}),
+            "signature": signature,
+            "opportunity_rows": read._opportunity_rows(
+                opportunities, signature, summary.get("capture_completeness")),
+            "detector_results": read._read(store, run_id, capture_id, "detector_results.json", []),
+            "execution_quality": execution_quality_record(store, run_id, capture_id),
+            "review_mode": summary.get("review_mode"),
+        })
     return out
 
 

@@ -310,6 +310,41 @@
                   "type": "string"
                 }
               },
+              "diagnostic": {
+                "type": "object",
+                "description": "Redacted post-run test diagnostic; preserves the exact message separately from the versioned normalized grouping key.",
+                "required": [
+                  "line",
+                  "basis",
+                  "signature",
+                  "signature_version",
+                  "excerpt",
+                  "source_pointer"
+                ],
+                "properties": {
+                  "line": {
+                    "type": "string"
+                  },
+                  "basis": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "signature_version": {
+                    "type": "string"
+                  },
+                  "excerpt": {
+                    "type": "string"
+                  },
+                  "source_pointer": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                }
+              },
               "diagnostic_evidence": {
                 "type": "object",
                 "additionalProperties": true,

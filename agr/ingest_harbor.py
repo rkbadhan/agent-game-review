@@ -44,12 +44,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .adapter import AdapterResult
 from .execution_quality import generation_usage_capability
 from .schema import CHECK_STATUSES
+from .error_signature import diagnostic_line_with_basis, error_signature
+from .redaction import redact
+from .version import ERROR_SIGNATURE_VERSION
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
@@ -116,7 +120,9 @@ from .schema import CHECK_STATUSES
 #      than landing in UNDETERMINED. ``agent_error`` is unchanged: it is the
 #      agent's failure and stays reward-decided. Bump requires re-ingest: the
 #      check status and run outcome change for such tau3 trials.
-HARBOR_ADAPTER_VERSION = "harbor-adapter-0.13"
+# 0.14: explicit agent status, CTRF diagnostics and task/verifier versions.
+# Re-convert original bundles to create a new capture of each logical run.
+HARBOR_ADAPTER_VERSION = "harbor-adapter-0.14"
 
 # Harbor ATIF top-level source labels (Trajectory.steps[].source).
 _HARBOR_SOURCES = {"user", "agent", "system"}
@@ -149,6 +155,54 @@ def _text_of(content: Any) -> str:
                 parts.append(part)
         return "\n".join(p for p in parts if p)
     return str(content)
+
+
+def _explicit_tool_status(res: dict, hstep: dict, agent_name: str) -> dict:
+    """First valid source wins; never manufacture an exit code from a flag."""
+    extra = res.get("extra")
+    extra = extra if isinstance(extra, dict) else {}
+    code = extra.get("exit_code")
+    if isinstance(code, int) and not isinstance(code, bool):
+        return {"exit_code": code, "status": "ok" if code == 0 else "error",
+                "status_source": "extra.exit_code"}
+    flag = extra.get("is_error")
+    if isinstance(flag, bool):
+        return {"status": "error" if flag else "ok", "status_source": "extra.is_error"}
+    step_extra = hstep.get("extra")
+    if isinstance(step_extra, dict):
+        for key in ("tool_result_metadata", "metadata"):
+            metadata = step_extra.get(key)
+            raw = metadata.get("raw_tool_result") if isinstance(metadata, dict) else None
+            cid = res.get("source_call_id")
+            if (isinstance(raw, dict) and isinstance(cid, str) and cid
+                    and raw.get("tool_use_id") == cid and isinstance(raw.get("is_error"), bool)):
+                return {"status": "error" if raw["is_error"] else "ok",
+                        "status_source": "step." + key}
+    # Judy wraps command responses in its own exact tags. Do not parse tags
+    # printed by arbitrary agents, or contradictory/malformed repeated tags.
+    text = _text_of(res.get("content"))
+    if agent_name == "judy":
+        tags = re.findall(r"<exit_code>(.*?)</exit_code>", text, re.DOTALL)
+        if len(tags) == 1 and len(tags[0]) <= 11 and re.fullmatch(r"-?\d+", tags[0], flags=re.ASCII):
+            code = int(tags[0])
+            return {"exit_code": code, "status": "ok" if code == 0 else "error",
+                    "status_source": "content.exit_code_tag"}
+    code = _parse_returncode(res.get("content"))
+    if code is not None:
+        return {"exit_code": code, "status": "ok" if code == 0 else "error",
+                "status_source": "content.returncode"}
+    return {}
+
+
+def build_test_diagnostic(text: str, source_pointer: str) -> dict:
+    """Bounded, redacted diagnostic with a resolvable source reference."""
+    text = redact(text).text
+    assertion = next((re.sub(r"^E\s+", "", line.strip()) for line in text.splitlines()
+                      if re.match(r"^E\s+", line.strip())), None)
+    line, basis = (assertion, "pytest_assertion") if assertion else diagnostic_line_with_basis(text)
+    return {"line": line, "basis": basis, "signature": error_signature(line),
+            "signature_version": ERROR_SIGNATURE_VERSION, "excerpt": text[:2000],
+            "truncated": len(text) > 2000, "source_pointer": source_pointer}
 
 
 def _parse_returncode(content: Any) -> int | None:
@@ -618,6 +672,11 @@ def _verifier_from_ctrf(trial_dir: Path, result_data: dict) -> tuple[dict | None
             "timing": "post_run",
             "source_pointers": pointers,
         })
+        text = next((test[key] for key in ("trace", "message")
+                     if isinstance(test.get(key), str) and test[key].strip()), None)
+        if status != "passed" and text is not None:
+            checks[-1]["diagnostic"] = build_test_diagnostic(
+                text, f"verifier/ctrf.json#/results/tests/{i}")
 
     # The aggregate reward remains the run outcome — keep it, clearly labelled
     # as an aggregate so per-test results and the overall verdict stay apart.
@@ -1031,6 +1090,19 @@ def convert(
     """
     traj_path, result_path, warnings, tau3_state_path = _resolve_paths(source)
     result_data: dict = _read_result(result_path) if result_path is not None else {}
+    if traj_path is not None:
+        trial_dir = traj_path.parent.parent if traj_path.parent.name == "agent" else traj_path.parent
+    else:
+        trial_dir = _tau3_trial_dir(tau3_state_path)
+    config_path = trial_dir / "config.json"
+    config = {}
+    if config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            warnings.append(f"config.json unreadable ({exc}); task Git provenance unavailable")
+    task_config = config.get("task") if isinstance(config, dict) else None
+    task_config = task_config if isinstance(task_config, dict) else {}
     tau3_task_hint: tuple[str, str] | None = None
     if traj_path is not None:
         traj = json.loads(traj_path.read_text(encoding="utf-8-sig"))
@@ -1185,30 +1257,12 @@ def convert(
                 # ATIF observations don't carry a POSIX exit code as a top-level
                 # field; only record one when the source explicitly surfaced it
                 # (via extra), never guess.
-                extra = res.get("extra") or {}
-                if isinstance(extra, dict) and "exit_code" in extra:
-                    payload["exit_code"] = extra["exit_code"]
-                elif isinstance(extra, dict) and extra.get("is_error"):
-                    payload["exit_code"] = 1
-                else:
-                    # mini-swe-agent's own harness encodes the exit status
-                    # inside content itself (adapter 0.8) — decode it when
-                    # ``extra`` carried nothing.
-                    returncode = _parse_returncode(raw_content)
-                    if returncode is not None:
-                        payload["exit_code"] = returncode
-                        payload["status"] = "ok" if returncode == 0 else "error"
-                    elif agent.get("name") == "terminus-2":
-                        # Item 20: terminus-2 observations are raw terminal
-                        # screen text with no exit code anywhere — never
-                        # promoted to exit_code/status (process_state is
-                        # declared unavailable for this agent below). This is
-                        # a SEPARATE, clearly-labelled, lower-confidence
-                        # signal a UI/detector may choose to use later.
-                        heuristic = _terminus2_heuristic_status(payload["content"])
-                        if heuristic is not None:
-                            payload["heuristic_status"] = heuristic
-                            payload["heuristic_status_source"] = "shell_error_marker"
+                payload.update(_explicit_tool_status(res, hstep, agent.get("name", "")))
+                if "status" not in payload and agent.get("name") == "terminus-2":
+                    heuristic = _terminus2_heuristic_status(payload["content"])
+                    if heuristic is not None:
+                        payload["heuristic_status"] = heuristic
+                        payload["heuristic_status_source"] = "shell_error_marker"
                 add("tool_result", "tool", **payload)
         else:
             warnings.append(
@@ -1277,6 +1331,9 @@ def convert(
         )
     derived_task_id = derived_task_id or f"harbor-trial-{traj_id[:12]}"
     resolved_run_id = run_id or _execution_run_id(derived_task_id, traj_id, result_data, warnings)
+    if (task_id is None and task_config.get("source") == "terminal-bench"
+            and not derived_task_id.startswith("terminal-bench/")):
+        derived_task_id = "terminal-bench/" + derived_task_id
     run: dict[str, Any] = {
         "logical_run_id": resolved_run_id,
         "task_id": derived_task_id,
@@ -1309,6 +1366,29 @@ def convert(
     # sources that don't record them.
     if result_data.get("task_checksum"):
         run["task_checksum"] = str(result_data["task_checksum"])
+    provenance = {key: task_config[key] for key in ("git_url", "git_commit_id", "path", "source")
+                  if isinstance(task_config.get(key), str) and task_config[key]}
+    checksum = result_data.get("task_checksum")
+    git_commit = provenance.get("git_commit_id")
+    task_version = ("checksum:" + checksum if isinstance(checksum, str) and checksum.strip()
+                    else "git:" + git_commit if git_commit else None)
+    if task_version:
+        run["task_version"] = task_version
+        provenance["task_version_source"] = "result.task_checksum" if task_version.startswith("checksum:") else "config.task.git_commit_id"
+        # Harbor Task.checksum hashes the entire task directory, including
+        # tests/. Verified in the pre-leaderboard implementation at commit
+        # e3ffbc2bef970c7c3bd33871220a47a681f33b3f (models/task/task.py).
+        # An externally supplied verifier is not covered by that checksum.
+        if verifier is None:
+            run["verifier_version"] = task_version
+            provenance["verifier_version_source"] = provenance["task_version_source"]
+            provenance["verifier_scope"] = ("entire_task_directory_including_tests"
+                                            if task_version.startswith("checksum:") else "task_repository_revision")
+        warnings.append("task_version from " + provenance["task_version_source"]
+                        + ("; verifier_version covers bundled tests" if verifier is None
+                           else "; explicit verifier version unresolved"))
+    if provenance:
+        run["version_provenance"] = provenance
     task_ref = result_data.get("task_id")
     if isinstance(task_ref, dict):
         for key in ("org", "name", "ref"):

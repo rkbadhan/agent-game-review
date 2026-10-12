@@ -112,7 +112,7 @@ def argument_shapes(store: Store, min_group_size: int = 1) -> list[ArgumentShape
     captures) — this is not a second, competing notion of "failing call".
     """
     merged: dict[tuple, Counter] = {}
-    for r in read.list_runs(store):
+    for r in read.list_run_headers(store):
         run_id, capture_id = r["run_id"], r.get("capture_id")
         if not capture_id or not store.has_derived(run_id, capture_id, "events.json"):
             continue

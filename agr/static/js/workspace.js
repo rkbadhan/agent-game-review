@@ -74,6 +74,7 @@ async function switchProject(projectId, navigate = true) {
   state.filters = new Set(); state.sort = "triage"; state.runsSearch = ""; state.runsShown = 0;
   state.versions = { configurations: null, baseline: null, candidate: null, axis: "evaluation_harness", keys: ["task_id", "task_version", "verifier_version", "environment_image_digest", "task_parameters", "seed"], result: null, pending: false, savedId: null };
   state.fleet.loadToken++;
+  state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null;
   state.fleet = { groupBy: "tool,error_signature", episodes: null, pending: false, error: null, loadToken: 0, usageSummary: null, executionQuality: null, total: null, hasMore: false, loadingMore: false, argumentShapes: null };
   Object.assign(state.workspace, { detail: null, files: [], preview: null, job: null, error: null, selected: new Set(), busy: false, connectionId: null, connectionForm: null, reviewerDraft: null, projectDraft: null });
   if (state.ai) { state.ai.token++; state.ai.job = null; state.ai.jobs = []; state.ai.plan = null; state.ai.selected.clear(); state.ai.error = null; }
@@ -87,8 +88,9 @@ async function loadEngineerData() {
   if (state.workspace.unavailable) return;
   const projectId = state.projectId, token = ++state.workspace.token;
   const prefix = "/projects/" + encodeURIComponent(projectId);
-  const [detail, connections, investigations] = await Promise.all([api(prefix), api(prefix + "/connections"), api(prefix + "/investigations")]);
+  const [detail, connections, investigations, startHere] = await Promise.all([api(prefix), api(prefix + "/connections"), api(prefix + "/investigations"), api("/demo/start-here")]);
   if (projectId !== state.projectId || token !== state.workspace.token) return;
+  state.workspace.startHere = startHere;
   state.workspace.detail = detail; state.workspace.connections = connections.connections; state.workspace.investigations = investigations.investigations;
   if (state.view === "settings" || state.view === "ai-review") await loadAIReviewData();
 }
@@ -145,6 +147,7 @@ function renderWelcome(host) {
 function renderProjectHome(host) {
   const project = activeProject(), detail = state.workspace.detail;
   workspaceHeading(host, project.name, project.sample ? "Explore sample captures. Start a personal project to analyze your own runs." : "Continue your investigations or bring in your next batch of runs.");
+  if (state.workspace.startHere) renderDemoStartHere(host, state.workspace.startHere);
   const actions = el("div", "engineer-actions"); actions.append(workspaceButton(project.sample ? "Analyze my runs" : "Add runs", startAddingRuns, true));
   if (!state.serverReadOnly) actions.append(workspaceButton("New project", () => goEngineer("welcome")));
   host.append(actions);
@@ -420,3 +423,24 @@ function renderInvestigationComposer(host) {
 $("#add-runs-button").addEventListener("click", () => startAddingRuns().catch(e => toast(e.message)));
 for (const view of ["home", "sources", "investigations", "settings"]) $("#" + view + "-button").addEventListener("click", () => goEngineer(view).catch(e => toast(e.message)));
 $("#reviewer-avatar").addEventListener("click", () => goEngineer("settings").catch(e => toast(e.message)));
+
+function renderDemoStartHere(host, guide) {
+  const section = el("section", "demo-start-here");
+  section.append(el("h2", null, guide.title), el("p", "engineer-subtitle", guide.description));
+  const grid = el("div", "engineer-cards demo-story-grid");
+  for (const [index, story] of guide.stories.entries()) {
+    const card = el("article", "engineer-card demo-story");
+    card.append(el("h3", null, (index + 1) + ". " + story.title), el("p", null, story.description));
+    const link = el("a", "button", "Open this story");
+    // Generated local links carry stable run/configuration selectors; normal
+    // navigation exercises the same shared-link route a video viewer follows.
+    link.href = story.href;
+    const project = state.projectId;
+    if (project && project !== "existing") {
+      const url = new URL(story.href, location.origin); url.searchParams.set("project", project); link.href = url.pathname + url.search;
+    }
+    card.append(link); grid.append(card);
+  }
+  section.append(grid, el("p", null, "Now try it on your own runs:"), el("pre", "demo-own-command", guide.own_runs_command));
+  host.append(section);
+}

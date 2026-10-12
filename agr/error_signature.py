@@ -75,6 +75,33 @@ def _unwrap_json_transport(text: str) -> str:
     return text
 
 
+# Judy serialises command results as a complete sequence of these blocks.
+# Recognise the whole envelope rather than deleting tag-like text inside an
+# ordinary diagnostic or malformed/truncated output. This only unwraps text;
+# it never infers a tool status from the envelope's metadata.
+_TAGGED_OUTPUT_BLOCK = re.compile(
+    r"\s*<(exit_code|command_execution_time|stdout|stderr)>(.*?)</\1>\s*", re.DOTALL
+)
+_EXIT_CODE_BANNER = re.compile(r"Exit code -?[0-9]+")
+
+
+def _unwrap_tagged_transport(text: str) -> str:
+    blocks = {}
+    position = 0
+    while position < len(text):
+        match = _TAGGED_OUTPUT_BLOCK.match(text, position)
+        if match is None or match[1] in blocks:
+            return text
+        blocks[match[1]] = match[2]
+        position = match.end()
+    if not ({"stdout", "stderr"} & blocks.keys()):
+        return text
+    # Match the JSON transport's stderr-before-stdout preference. Metadata
+    # and empty channels are never a diagnostic, even in wrapper-only output.
+    return next((blocks[channel] for channel in ("stderr", "stdout")
+                 if blocks.get(channel, "").strip()), "")
+
+
 # A closed, mechanical set of substrings a genuine diagnostic line commonly
 # carries — matched literally, never a semantic read of what the line MEANS
 # (the same philosophy as ingest_harbor.py's _SHELL_ERROR_MARKERS). Ordering
@@ -141,7 +168,14 @@ def _select_diagnostic(text: str) -> tuple[str, str]:
       anywhere: the last non-blank line, used and clearly labelled only
       because nothing more specific is available.
     """
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    text = _unwrap_tagged_transport(text)
+    # Exact harness wrappers carry no diagnostic information, even alone.
+    wrappers = {"[error] tool reported failure"}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and ln.strip() not in wrappers]
+    # Claude Code's leading status banner says only that the command failed.
+    # Preserve similar text elsewhere or a longer line with actual details.
+    if lines and _EXIT_CODE_BANNER.fullmatch(lines[0]):
+        lines = lines[1:]
     if not lines:
         return "", "fallback_last_nonempty"
 

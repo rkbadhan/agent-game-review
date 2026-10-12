@@ -79,14 +79,14 @@ jobs:
         run: |
           /tmp/agr-clean/bin/agr --store /tmp/agr-clean-demo demo --port 8377 &
           echo $! > /tmp/agr.pid
-          for i in $(seq 1 60); do
+          for i in $(seq 1 300); do
             curl -sf http://127.0.0.1:8377/ >/dev/null && break
             sleep 1
           done
       - name: Smoke-check every referenced asset
         run: |
           python3 - <<'EOF'
-          import re, sys, urllib.request
+          import json, re, sys, urllib.request
 
           base = "http://127.0.0.1:8377"
           html = urllib.request.urlopen(base + "/").read().decode("utf-8")
@@ -97,6 +97,11 @@ jobs:
                   assert resp.status == 200, f"{ref} -> {resp.status}"
                   body = resp.read()
                   assert body, f"{ref} is empty"
+          guide = json.load(urllib.request.urlopen(base + "/demo/start-here"))
+          assert len(guide["stories"]) == 4
+          configs = json.load(urllib.request.urlopen(base + "/configurations"))["configurations"]
+          leaderboard = [c for c in configs if c["selector"].get("configuration_id", "").startswith(("Terminus2__", "ClaudeCode__"))]
+          assert len(leaderboard) == 7 and sum(c["run_count"] for c in leaderboard) == 350
           css = [r for r in refs if r.endswith(".css")]
           js = [r for r in refs if r.endswith(".js")]
           assert css and len(js) >= 20, f"expected stylesheet + JS modules, got {refs}"
@@ -128,4 +133,4 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       - name: Run the browser suite
-        run: uv run pytest tests/test_ui.py
+        run: uv run pytest tests/test_ui.py tests/test_demo_leaderboard.py

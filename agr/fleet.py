@@ -350,13 +350,13 @@ def _load_all_episodes(store: Store) -> list[dict]:
         # the rest of the TTL.
         seq_before = store._write_seq
         all_eps = _load_all_episodes_uncached(store)
-        _episodes_cache[store] = (seq_before, now, all_eps)
+        _episodes_cache[store] = (seq_before, time.monotonic(), all_eps)
         return list(all_eps)
 
 
 def _load_all_episodes_uncached(store: Store) -> list[dict]:
     all_eps: list[dict] = []
-    for r in read.list_runs(store):
+    for r in read.list_run_headers(store):
         run_id = r["run_id"]
         capture_id = r.get("capture_id")
         if not capture_id or not store.has_derived(run_id, capture_id, "recoveries.json"):
@@ -375,7 +375,7 @@ def fleet_episodes(store: Store, group_by: Optional[list[str]] = None) -> list[E
     See :meth:`EpisodeGroup.rank_key`.
     """
     dims = _resolve_dims(group_by)
-    runs = read.list_runs(store)
+    runs = read.list_run_headers(store)
     task_of = {r["run_id"]: r.get("task_id") for r in runs}
     # P3-B: one shared classifier for every run's task outcome, so the
     # Patterns outcome split cannot disagree with the Runs chips.
@@ -589,9 +589,9 @@ def _anchor_events(record: dict, detector: str) -> list[str]:
 # paid fresh on every /fleet/execution-quality request without this cache.
 #
 # The outcome bucket is computed and cached HERE, in the same pass and from
-# the SAME read.list_runs() row the record itself came from, rather than
+# the SAME read.list_run_headers() row the record itself came from, rather than
 # fleet_execution_quality() looking each run back up in a separately-cached
-# read.list_runs() call afterwards — two independently-TTL'd caches could
+# read.list_run_headers() call afterwards — two independently-TTL'd caches could
 # otherwise (rarely, only under a concurrent external writer) disagree on
 # which runs exist for one request's duration, transiently misbucketing a
 # run under an outcome it no longer has by the time the second cache is read.
@@ -615,13 +615,13 @@ def _load_all_execution_quality(store: Store) -> list[tuple[str, Optional[str], 
                 return list(records)
         seq_before = store._write_seq
         records = _load_all_execution_quality_uncached(store)
-        _execution_quality_cache[store] = (seq_before, now, records)
+        _execution_quality_cache[store] = (seq_before, time.monotonic(), records)
         return list(records)
 
 
 def _load_all_execution_quality_uncached(store: Store) -> list[tuple[str, Optional[str], str, dict]]:
     records: list[tuple[str, Optional[str], str, dict]] = []
-    for run in read.list_runs(store):
+    for run in read.list_run_headers(store):
         run_id, capture_id = run["run_id"], run.get("capture_id")
         if not capture_id:
             continue
@@ -734,4 +734,114 @@ def fleet_execution_quality(store: Store) -> dict:
             "unevaluated_tasks": len(sets["unevaluated"]),
             "tasks": len(sets["eligible"] | sets["unevaluated"]),
         }
+    return result
+
+
+TEST_FAILURE_DIMENSIONS = ("task", "test", "signature")
+
+
+_TEST_RECORDS_CACHE_TTL_S = 3.0
+_test_records_cache = weakref.WeakKeyDictionary()
+_test_records_cache_lock = threading.Lock()
+
+
+def _load_test_records(store: Store) -> list[tuple[dict, list[dict]]]:
+    """Reuse persisted checks across grouping changes and pagination."""
+    store = getattr(store, "_request_store", store)
+    with _test_records_cache_lock:
+        cached = _test_records_cache.get(store)
+        if cached is not None:
+            seq, computed_at, records = cached
+            if seq == store._write_seq and time.monotonic() - computed_at < _TEST_RECORDS_CACHE_TTL_S:
+                return records
+        seq = store._write_seq
+        records = [(run, read._read(store, run["run_id"], run["capture_id"], "checks.json", []))
+                   for run in read.list_run_headers(store)]
+        _test_records_cache[store] = (seq, time.monotonic(), records)
+        return records
+
+
+def test_failure_groups(store: Store, group_by=None) -> list[dict]:
+    """Failed atomic post-run checks from each logical run's latest capture.
+
+    Denominators include all imported attempts, including unknown/operational
+    outcomes. Task groups are partitioned by task and verifier versions;
+    signature-only groups use the union of their contributing task cohorts.
+    Missing versions permit inspection but never a configuration-wide claim.
+    """
+    dims = list(dict.fromkeys(group_by or TEST_FAILURE_DIMENSIONS))
+    if any(d not in TEST_FAILURE_DIMENSIONS for d in dims):
+        raise ValueError("group_by must use task, test, signature")
+    cohorts, buckets = {}, {}
+    seen = set()
+    for run, checks in _load_test_records(store):
+        rid, cid = run["run_id"], run.get("capture_id")
+        if not cid or rid in seen:
+            continue
+        seen.add(rid)
+        rs = run
+        cohort = (rs.get("task_id"), rs.get("task_version"), rs.get("verifier_version"))
+        configuration = (rs.get("agent"), rs.get("model"))
+        record = {"run_id": rid, "configuration": configuration,
+                  "status": (run.get("outcome") or {}).get("status")}
+        cohorts.setdefault(cohort, {})[rid] = record
+        for check in checks:
+            if (check.get("status") != "failed" or check.get("timing") != "post_run"
+                    or check.get("source") != "native_structured"
+                    or check.get("check_id") == "terminal_bench_reward"
+                    or check.get("superseded_by")):
+                continue
+            diagnostic = check.get("diagnostic") or {}
+            if not diagnostic.get("signature") or not diagnostic.get("line"):
+                continue
+            values = {"task": cohort[0], "test": check.get("name") or check["check_id"],
+                      "signature": diagnostic["signature"]}
+            key = tuple(values[d] for d in dims)
+            # Normalizer revisions must never silently merge signature groups.
+            version = diagnostic.get("signature_version") if "signature" in dims else None
+            bucket_key = (key, cohort if "task" in dims else None, version)
+            bucket = buckets.setdefault(bucket_key, {
+                "key": list(key), "group_by": dims, "signature_version": version,
+                "example_line": diagnostic["line"], "members": {}, "cohorts": set(),
+            })
+            bucket["cohorts"].add(cohort)
+            bucket["members"].setdefault(rid, {"run_id": rid, "check_id": check["check_id"],
+                                                "source_capture_id": cid})
+    result = []
+    for bucket in buckets.values():
+        cohort_keys = bucket.pop("cohorts")
+        members = bucket.pop("members")
+        attempts = {rid: row for c in cohort_keys for rid, row in cohorts[c].items()}
+        configurations = {attempts[rid]["configuration"] for rid in members}
+        configurations_on_task = {row["configuration"] for row in attempts.values()}
+        failed = sum(row["status"] == "FAILED" for row in attempts.values())
+        passed = sum(row["status"] == "PASSED" for row in attempts.values())
+        unknown = len(attempts) - failed - passed
+        single_cohort = len(cohort_keys) == 1
+        versions_resolved = all(all(c) for c in cohort_keys)
+        known_configs = all(all(c) for c in configurations_on_task)
+        consistent = (single_cohort and versions_resolved and known_configs
+                      and configurations == configurations_on_task)
+        result.append({**bucket,
+            "task_cohorts": [{"task_id": c[0], "task_version": c[1], "verifier_version": c[2]}
+                             for c in sorted(cohort_keys, key=lambda c: tuple(x or "" for x in c))],
+            "cohort_count": len(cohort_keys), "versions_resolved": versions_resolved,
+            "runs": len(members), "run_ids": sorted(members),
+            "attempts_on_task": len(attempts), "attempts_total": len(attempts),
+            "attempts_with_verdict": failed + passed, "failed_attempts": failed,
+            "unknown_attempts": unknown, "passed_attempts": passed,
+            "failing_share": len(members) / len(attempts),
+            "configurations": [list(c) for c in sorted(configurations, key=str)],
+            "configurations_on_task": [list(c) for c in sorted(configurations_on_task, key=str)],
+            "consistent_across_configurations": consistent,
+            "always_fails_task": single_cohort and failed == len(attempts),
+            "no_observed_pass": passed == 0,
+            "same_failure_every_attempt": (single_cohort and versions_resolved
+                                           and len(members) == len(attempts)),
+            "example_runs": [members[rid] for rid in sorted(members)[:_MAX_ANCHORS]],
+            "coverage": "latest imported captures; excluded source trials are not in this denominator",
+        })
+    result.sort(key=lambda g: (-int(g["consistent_across_configurations"]),
+                              -len(g["configurations"]), -g["runs"], str(g["key"]),
+                              str(g["task_cohorts"])))
     return result
