@@ -26,12 +26,20 @@ agr demo
 # open the printed link (http://127.0.0.1:8000/...)
 ```
 
-The demo is built from **real runs**: 15 Terminal-Bench 2.0 trials across 7
-tasks and 16 τ³-bench retail trials across 8 tasks (one passing and one failing
-attempt each), with 23 pre-computed model reviews baked in. A small synthetic
-slice is added only so the version-comparison screen has two configurations to
-compare; those runs are labelled `synthetic_demo`. No credentials, no model
-calls. Press `Ctrl+C` to stop.
+Open [Home](http://127.0.0.1:8000/?view=home) for four things to click:
+
+1. **[One failed run: polyglot-c-py](http://127.0.0.1:8000/?run=harbor__terminal-bench%2Fpolyglot-c-py__6c3b4b8b-991&chapter=moments)** — Inspect the successful smoke tests at step 22, the later edit at step 25, and the final Checks output showing C=6.
+2. **[A customer ends the chat: retail-29](http://127.0.0.1:8000/?run=harbor__sierra-research%2Ftau3-bench__tau3-retail-29__2f510d52-4453-4982-95f1-b2f0e3829164&chapter=outcome)** — The customer said yes and ended the chat. Inspect the recorded stop and the review's evidence limits before attributing a failure to the agent.
+3. **[Patterns: a shared test failure](http://127.0.0.1:8000/?view=fleet&pattern_type=tests&test_group_by=task%2Ctest%2Csignature)** — Find filter-js-from-html: the same test failure appears across all seven configurations. Shared failures are a reason to investigate, not proof of who caused them.
+4. **[Compare: GLM-4.7 to GLM-5](http://127.0.0.1:8000/?view=versions&baseline=Terminus2__GLM-4.7&candidate=Terminus2__GLM-5&axis=model)** — On these ten selected tasks, Terminus 2 improves from 19/50 to 28/50 passed attempts (38% to 56%). These are sample results, not full-leaderboard scores.
+
+The install needs internet access once. After that, `agr demo` works **offline,
+without credentials or model calls**. It loads 350 real Terminal-Bench 2.0
+leaderboard attempts (seven configurations, ten tasks, five attempts each) next to
+the curated Terminal-Bench and τ³-bench runs with their baked model reviews. The
+leaderboard slice ships inside the package and gets deterministic analysis; see its
+[source, pinned revision and Apache-2.0 licence](agr/demo_fixtures/tb2_leaderboard/SOURCE.md).
+Press `Ctrl+C` to stop.
 
 On pip instead of uv? Clone the repo, then `pip install '.[api]'` (quote the
 extra — zsh globs unquoted brackets) and run the same commands.
