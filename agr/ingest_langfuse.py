@@ -402,6 +402,11 @@ def _normalize(export: dict, warnings: list[str]) -> tuple[list[NormalizedSpan],
     return spans, trace_id
 
 
+def run_id_for_trace(trace_id: str) -> str:
+    """The logical run id :func:`convert` assigns a trace when no overrides are given."""
+    return f"langfuse__langfuse-trace-{trace_id[:16]}__{trace_id}"
+
+
 def convert(
     source: Union[str, Path, dict],
     *,

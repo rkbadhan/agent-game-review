@@ -92,6 +92,7 @@ From the command line:
 | OpenTelemetry (OTLP JSON) — beta | `agr ingest-from --adapter otel ./trace.json` |
 | Langfuse trace export — beta | `agr ingest-from --adapter langfuse ./trace.json` |
 | Langfuse, live by trace id — beta | `agr ingest-langfuse-api --trace-id <id>` |
+| Langfuse, browse and batch import — beta | `agr serve`, then Add runs → Langfuse |
 | LangSmith run export — beta | `agr ingest-from --adapter langsmith ./run.json` |
 | Your own ATIF document | `agr ingest ./run.atif.json` |
 

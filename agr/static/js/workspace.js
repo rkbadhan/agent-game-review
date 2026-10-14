@@ -76,7 +76,7 @@ async function switchProject(projectId, navigate = true) {
   state.fleet.loadToken++;
   state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null;
   state.fleet = { groupBy: "tool,error_signature", episodes: null, pending: false, error: null, loadToken: 0, usageSummary: null, executionQuality: null, total: null, hasMore: false, loadingMore: false, argumentShapes: null };
-  Object.assign(state.workspace, { detail: null, files: [], preview: null, job: null, error: null, selected: new Set(), busy: false, connectionId: null, connectionForm: null, reviewerDraft: null, projectDraft: null });
+  Object.assign(state.workspace, { detail: null, files: [], preview: null, job: null, error: null, selected: new Set(), busy: false, connectionId: null, lf: null, reviewerDraft: null, projectDraft: null });
   if (state.ai) { state.ai.token++; state.ai.job = null; state.ai.jobs = []; state.ai.plan = null; state.ai.selected.clear(); state.ai.error = null; }
   clearTimeout(aiPollTimer);
   closeTrace();
@@ -174,7 +174,7 @@ function importHistoryRow(job) {
   row.append(workspaceButton("View import", async () => { state.workspace.job = job; await goEngineer("import"); pollImport(); })); return row;
 }
 function renderSources(host) {
-  workspaceHeading(host, "Bring runs in from your tools", "File imports for all supported sources, plus single-trace retrieval from Langfuse v4. Sources do not sync automatically.");
+  workspaceHeading(host, "Bring runs in from your tools", "File imports for all supported sources, plus browsing and batch retrieval from Langfuse v4. Sources do not sync automatically.");
   const cards = el("div", "source-grid");
   for (const source of state.workspace.catalog || []) {
     const card = el("div", "engineer-card source-card"); card.append(el("h2", null, source.name), el("p", null, source.help), el("span", "engineer-hint", source.formats));
@@ -182,7 +182,7 @@ function renderSources(host) {
     button.disabled = state.serverReadOnly; card.append(button); cards.append(card);
   } host.append(cards);
   host.append(el("h2", "engineer-section-title", "Langfuse connections"));
-  if (!state.workspace.connections.length) host.append(el("p", "engineer-hint", "No connections configured. Add Langfuse runs to configure a session-only connection."));
+  if (!state.workspace.connections.length) host.append(el("p", "engineer-hint", "No connections configured. Add Langfuse runs to connect with a session-only key pair."));
   for (const connection of state.workspace.connections) {
     const row = el("div", "engineer-list-row"); row.append(el("strong", null, connection.name), el("span", "engineer-hint", connection.status.replaceAll("_", " ") + (connection.last_test_at ? " · " + connection.last_test_at : "")));
     if (!state.readOnly) row.append(workspaceButton("Disconnect", () => workspaceAction(async () => { await apiDelete(projectPath("/connections/" + connection.id)); await loadEngineerData(); })));
@@ -262,30 +262,132 @@ async function uploadAndPreview() {
   if (projectId !== state.projectId) return;
   ws.preview = result; ws.files = []; ws.selected = new Set(result.items.filter(i => i.status !== "invalid").map(i => i.id)); ws.uploadProgress = null;
 }
-function renderLangfuseFetch(host) {
+const LANGFUSE_WINDOWS = [["1h", "Last hour", 3600e3], ["24h", "Last 24 hours", 86400e3], ["7d", "Last 7 days", 7 * 86400e3], ["30d", "Last 30 days", 30 * 86400e3], ["custom", "Custom range (UTC)", 0]];
+function langfuseState() {
   const ws = state.workspace;
-  ws.connectionForm = ws.connectionForm || { name: "Langfuse", host: "", public_key: "", secret_key: "", trace_id: "", from_time: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 16), to_time: new Date().toISOString().slice(0, 16) };
-  const values = ws.connectionForm;
-  const form = el("form", "engineer-card"); form.append(el("h3", null, "Fetch one trace · Langfuse v4"), el("p", "engineer-hint", "Retrieves the trace for preview; it does not import or invoke a model. Keys stay in this server session and are not saved to disk. Older instances can use JSON file import."));
+  ws.lf = ws.lf || { form: { name: "Langfuse", host: "", public_key: "", secret_key: "" }, preset: "24h", from: new Date(Date.now() - 86400e3).toISOString().slice(0, 16), to: new Date().toISOString().slice(0, 16),
+    filters: { name: "", tag: "", user_id: "", session_id: "", environment: "" }, limit: "50", result: null, searched: null, picked: new Set(), single: { trace_id: "", from: new Date(Date.now() - 7 * 86400e3).toISOString().slice(0, 16), to: new Date().toISOString().slice(0, 16) } };
+  return ws.lf;
+}
+// Keep the browsed list truthful after an import, so a repeat selection skips what was just imported.
+function markLangfuseImported(job) {
+  const lf = state.workspace.lf;
+  if (!lf || !lf.result) return;
+  const imported = new Set((job.results || []).map(r => r.run_id).filter(Boolean));
+  // Same run ID the Langfuse adapter derives: the first 16 characters (code points) name the task.
+  const runId = id => "langfuse__langfuse-trace-" + Array.from(id).slice(0, 16).join("") + "__" + id;
+  for (const trace of lf.result.traces) if (imported.has(runId(trace.trace_id))) { trace.already_imported = true; lf.picked.delete(trace.trace_id); }
+}
+function langfuseWindow(lf) {
+  const preset = LANGFUSE_WINDOWS.find(w => w[0] === lf.preset);
+  if (preset[2]) { const to = new Date(); return { from_time: new Date(to - preset[2]).toISOString(), to_time: to.toISOString() }; }
+  return { from_time: new Date(lf.from + "Z").toISOString(), to_time: new Date(lf.to + "Z").toISOString() };
+}
+function langfuseSelect(host, label, value, options, onchange) {
+  const wrapper = el("label", "engineer-field"); wrapper.append(el("span", null, label)); const select = el("select");
+  for (const [id, text] of options) { const option = el("option", null, text); option.value = id; select.append(option); }
+  select.value = value; select.addEventListener("change", () => onchange(select.value)); wrapper.append(select); host.append(wrapper); return select;
+}
+function renderLangfuseFetch(host) {
+  const ws = state.workspace, lf = langfuseState(), values = lf.form;
+  const connected = ws.connectionId && ws.connections.find(c => c.id === ws.connectionId);
+  if (ws.connectionId && !connected) ws.connectionId = null;
+  const connect = el("form", "engineer-card");
+  connect.append(el("h3", null, "1. Connect to Langfuse"), el("p", "engineer-hint", "Use a project's public and secret key (Langfuse v4). Keys stay in this server session and are not saved to disk. Older instances can use JSON file import."));
   if (ws.connections.length) {
     const label = el("label", "engineer-field"); label.append(el("span", null, "Connection")); const select = el("select");
     const fresh = el("option", null, "Configure a new connection"); fresh.value = ""; select.append(fresh);
-    for (const c of ws.connections) { const option = el("option", null, c.name + " · session-only credentials"); option.value = c.id; select.append(option); }
-    select.value = ws.connectionId || ""; select.addEventListener("change", () => { ws.connectionId = select.value; render(); }); label.append(select); form.append(label);
+    for (const c of ws.connections) { const option = el("option", null, c.name + " · " + c.status.replaceAll("_", " ")); option.value = c.id; select.append(option); }
+    select.value = ws.connectionId || ""; select.addEventListener("change", () => { ws.connectionId = select.value; lf.result = null; lf.picked = new Set(); render(); }); label.append(select); connect.append(label);
   }
   if (!ws.connectionId) {
-    for (const [key, label, type] of [["name", "Connection name", "text"], ["host", "Langfuse host (for example, https://cloud.langfuse.com)", "url"], ["public_key", "Public key (optional for the server's configured Langfuse host)", "text"], ["secret_key", "Secret key (optional for the server's configured Langfuse host)", "password"]]) workspaceField(form, label, values[key], v => values[key] = v, type).required = key === "host";
+    for (const [key, label, type] of [["name", "Connection name", "text"], ["host", "Langfuse host (for example, https://cloud.langfuse.com)", "url"], ["public_key", "Public key (optional for the server's configured Langfuse host)", "text"], ["secret_key", "Secret key (optional for the server's configured Langfuse host)", "password"]]) workspaceField(connect, label, values[key], v => values[key] = v, type).required = key === "host";
+    const submit = el("button", "button primary", "Connect and test access"); submit.type = "submit"; connect.append(submit);
+    connect.addEventListener("submit", e => { e.preventDefault(); workspaceAction(async () => {
+      const projectId = state.projectId, base = "/projects/" + encodeURIComponent(projectId);
+      const connection = await apiPost(base + "/connections", values);
+      try { await apiPost(base + "/connections/" + connection.id + "/test"); }
+      catch (error) { await apiDelete(base + "/connections/" + connection.id).catch(() => {}); throw error; }
+      if (projectId !== state.projectId) return;
+      ws.connectionId = connection.id; values.secret_key = ""; values.public_key = ""; lf.result = null; await loadEngineerData(); toast("Connected to Langfuse");
+    }); });
+  } else connect.append(workspaceButton("Test access again", () => workspaceAction(async () => { await apiPost(projectPath("/connections/" + ws.connectionId + "/test")); await loadEngineerData(); toast("Langfuse access confirmed"); })));
+  host.append(connect);
+  if (!ws.connectionId) { renderLangfuseTraceId(host, lf); return; }
+  const browse = el("form", "engineer-card");
+  browse.append(el("h3", null, "2. Find traces"), el("p", "engineer-hint", "Lists root observations from the time range, newest first. Nothing is imported or sent to a model until you preview and confirm. Data from older SDKs and exporters can take up to 15 minutes to appear in Langfuse, so very recent traces may be incomplete."));
+  langfuseSelect(browse, "Time range", lf.preset, LANGFUSE_WINDOWS.map(w => [w[0], w[1]]), v => { lf.preset = v; render(); });
+  if (lf.preset === "custom") {
+    workspaceField(browse, "From (UTC)", lf.from, v => lf.from = v, "datetime-local").required = true;
+    workspaceField(browse, "To (UTC)", lf.to, v => lf.to = v, "datetime-local").required = true;
   }
-  workspaceField(form, "Trace ID", values.trace_id, v => values.trace_id = v).required = true;
-  // These fields explicitly use UTC so their meaning is stable across devices.
-  workspaceField(form, "From (UTC)", values.from_time, v => values.from_time = v, "datetime-local").required = true;
-  workspaceField(form, "To (UTC)", values.to_time, v => values.to_time = v, "datetime-local").required = true;
-  const submit = el("button", "button primary", "Test connection and preview trace"); submit.type = "submit"; form.append(submit);
+  const refine = el("details", "engineer-advanced"); refine.append(el("summary", null, "Narrow by name, tag, user, session or environment"));
+  if (Object.values(lf.filters).some(Boolean)) refine.open = true;
+  for (const [key, label] of [["name", "Trace name (exact)"], ["tag", "Tag"], ["user_id", "User ID"], ["session_id", "Session ID"], ["environment", "Environment"]]) workspaceField(refine, label, lf.filters[key], v => lf.filters[key] = v);
+  browse.append(refine);
+  langfuseSelect(browse, "Maximum traces to list", lf.limit, [["25", "25"], ["50", "50"], ["100", "100"], ["250", "250"], ["500", "500"]], v => lf.limit = v);
+  const find = el("button", "button primary", "Find traces"); find.type = "submit"; browse.append(find);
+  browse.addEventListener("submit", e => { e.preventDefault(); workspaceAction(async () => {
+    const range = langfuseWindow(lf), filters = {}, projectId = state.projectId;
+    for (const [key, value] of Object.entries(lf.filters)) if (value.trim()) filters[key] = value.trim();
+    const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/traces"), Object.assign({ limit: Number(lf.limit) }, range, filters));
+    if (projectId !== state.projectId) return;
+    lf.result = result; lf.searched = range; lf.picked = new Set(lf.result.traces.filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); await loadEngineerData();
+  }); });
+  host.append(browse);
+  if (lf.result) renderLangfuseResults(host, lf);
+  renderLangfuseTraceId(host, lf);
+}
+function renderLangfuseResults(host, lf) {
+  const ws = state.workspace, traces = lf.result.traces;
+  const card = el("div", "engineer-card"); card.append(el("h3", null, "3. Choose traces to preview"));
+  if (!traces.length) { card.append(el("p", null, "No traces matched. Widen the time range or clear a filter. Only traces whose root observation started in the range are listed, and a filter only matches traces that report that field.")); host.append(card); return; }
+  card.append(el("p", "engineer-hint", traces.length + " traces" + (lf.result.scan_capped ? " (the search stopped before the end of the time range; narrow the range or filters)" : lf.result.truncated ? " (more exist; raise the maximum or narrow the filters)" : "") + ". Up to 100 can be previewed at once. Traces already in this project start unchecked."));
+  const tools = el("div", "engineer-actions");
+  tools.append(workspaceButton("Select first 100 new", () => { lf.picked = new Set(traces.filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); render(); }), workspaceButton("Select none", () => { lf.picked = new Set(); render(); }));
+  card.append(tools);
+  const list = el("div", "selected-file-list");
+  for (const trace of traces) {
+    const label = el("label", "file-selection"); const check = el("input"); check.type = "checkbox"; check.checked = lf.picked.has(trace.trace_id); check.setAttribute("aria-label", "Select trace " + trace.name + " " + trace.trace_id);
+    check.addEventListener("change", () => { check.checked ? lf.picked.add(trace.trace_id) : lf.picked.delete(trace.trace_id); refresh(); });
+    const detail = [typeof trace.started_at === "string" && trace.started_at.replace("T", " ").slice(0, 19) + " UTC", trace.user_id && "user " + trace.user_id, trace.session_id && "session " + trace.session_id, trace.tags.length && trace.tags.join(", "), trace.level && trace.level !== "DEFAULT" && trace.level].filter(Boolean).join(" · ");
+    const copy = el("span"); copy.append(el("strong", null, trace.name), document.createElement("br"), el("span", "engineer-hint", detail + (detail ? " · " : "") + trace.trace_id));
+    label.append(check, copy, el("span", "engineer-hint", trace.already_imported ? "already imported" : "")); list.append(label);
+  }
+  card.append(list);
+  // Toggling a box updates these in place; rebuilding the list would drop keyboard focus on every change.
+  const preview = workspaceButton("", () => workspaceAction(async () => {
+    const projectId = state.projectId;
+    if (!lf.picked.size) throw new Error("Select at least one trace.");
+    const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/trace-previews"), Object.assign({ trace_ids: [...lf.picked] }, lf.searched));
+    if (projectId !== state.projectId) return;
+    ws.preview = result; ws.selected = new Set(result.items.filter(i => i.status !== "invalid").map(i => i.id)); ws.batchLabel = "Langfuse · " + result.items.length + " traces";
+  }), true);
+  const limitNote = el("p", "engineer-hint");
+  function refresh() {
+    const count = lf.picked.size;
+    preview.textContent = "Preview " + count + " selected trace" + (count === 1 ? "" : "s"); preview.disabled = !count || count > 100;
+    limitNote.textContent = count > 100 ? "Preview up to 100 traces at a time. Uncheck " + (count - 100) + " to continue." : ""; limitNote.hidden = count <= 100;
+  }
+  refresh(); card.append(preview, limitNote);
+  host.append(card);
+}
+function renderLangfuseTraceId(host, lf) {
+  const ws = state.workspace, single = lf.single;
+  const details = el("details", "engineer-advanced"); details.append(el("summary", null, "Already have a trace ID? Fetch just that trace"));
+  if (!ws.connectionId) { details.append(el("p", "engineer-hint", "Connect first, then fetch a single trace by ID.")); host.append(details); return; }
+  const form = el("form");
+  workspaceField(form, "Trace ID", single.trace_id, v => single.trace_id = v).required = true;
+  workspaceField(form, "From (UTC)", single.from, v => single.from = v, "datetime-local").required = true;
+  workspaceField(form, "To (UTC)", single.to, v => single.to = v, "datetime-local").required = true;
+  const submit = el("button", "button", "Preview this trace"); submit.type = "submit"; form.append(submit);
   form.addEventListener("submit", e => { e.preventDefault(); workspaceAction(async () => {
-    if (!ws.connectionId) { const connection = await apiPost(projectPath("/connections"), values); ws.connectionId = connection.id; values.secret_key = ""; values.public_key = ""; await loadEngineerData(); }
-    ws.preview = await apiPost(projectPath("/connections/" + ws.connectionId + "/trace-previews"), { trace_id: values.trace_id, from_time: new Date(values.from_time + "Z").toISOString(), to_time: new Date(values.to_time + "Z").toISOString() });
-    ws.selected = new Set(ws.preview.items.filter(i => i.status !== "invalid").map(i => i.id));
-  }); }); host.append(form);
+    const projectId = state.projectId;
+    const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/trace-previews"), { trace_id: single.trace_id, from_time: new Date(single.from + "Z").toISOString(), to_time: new Date(single.to + "Z").toISOString() });
+    if (projectId !== state.projectId) return;
+    ws.preview = result; ws.selected = new Set(result.items.filter(i => i.status !== "invalid").map(i => i.id));
+  }); });
+  details.append(form); host.append(details);
 }
 function renderImportPreview(host) {
   const ws = state.workspace, preview = ws.preview;
@@ -305,10 +407,15 @@ function renderImportPreview(host) {
     if (item.warnings.length) { const warnings = el("details"); warnings.append(el("summary", null, item.warnings.length + " capture notes")); const list = el("ul"); for (const warning of item.warnings) list.append(el("li", null, warning)); warnings.append(list); card.append(warnings); }
     host.append(card);
   }
+  if ((preview.fetch_errors || []).length) {
+    const failed = el("details", "engineer-advanced"); failed.open = true; failed.append(el("summary", null, preview.fetch_errors.length + " selected traces could not be fetched"));
+    for (const failure of preview.fetch_errors) failed.append(el("p", "engineer-error", failure.trace_id + " · " + failure.message));
+    host.append(failed);
+  }
   if (preview.ignored.length) { const ignored = el("details", "engineer-advanced"); ignored.append(el("summary", null, preview.ignored.length + " auxiliary or unsupported files")); preview.ignored.forEach(i => ignored.append(el("p", "engineer-hint", i.file + " · " + i.reason))); host.append(ignored); }
   workspaceField(host, "Import batch label", ws.batchLabel || "Imported runs", v => ws.batchLabel = v);
   const actions = el("div", "engineer-actions");
-  actions.append(workspaceButton("Choose different files", () => { ws.preview = null; ws.error = null; render(); }));
+  actions.append(workspaceButton(ws.source === "langfuse" ? "Back to traces" : "Choose different files", () => { ws.preview = null; ws.error = null; render(); }));
   const submit = workspaceButton("Import selected runs", () => workspaceAction(async () => {
     if (!ws.selected.size) throw new Error("Select at least one valid run.");
     const requestSignature = JSON.stringify([preview.id, preview.manifest_hash, [...ws.selected]]);
@@ -329,7 +436,7 @@ async function pollImport() {
     state.workspace.job = result;
     if (state.view === "import") render();
     if (["queued", "importing", "cancelling"].includes(result.status)) importPollTimer = setTimeout(pollImport, 800);
-    else { await loadInbox(); await loadEngineerData(); if (state.view === "import") render(); }
+    else { markLangfuseImported(result); await loadInbox(); await loadEngineerData(); if (state.view === "import") render(); }
   } catch (e) { if (state.projectId === projectId) { state.workspace.error = e.message; if (state.view === "import") render(); } }
 }
 function renderImportJob(host) {
@@ -349,6 +456,7 @@ function renderImportJob(host) {
     if (successes.length === 1) await selectRun(successes[0].run_id);
     else { state.importRunIds = new Set(successes.map(r => r.run_id)); goToRuns(); }
   }, true));
+  if (successes.length && !state.readOnly) actions.append(workspaceButton(successes.length === 1 ? "Review imported run with AI" : "Review " + successes.length + " imported runs with AI", () => openAIReview(successes.map(r => r.run_id))));
   if (active) actions.append(workspaceButton("Cancel remaining work", () => workspaceAction(async () => { state.workspace.job = await apiPost(projectPath("/imports/" + job.id + "/cancel")); pollImport(); })));
   else if (["failed", "completed_with_errors", "cancelled", "interrupted"].includes(job.status)) actions.append(workspaceButton("Retry unfinished work", () => workspaceAction(async () => { state.workspace.job = await apiPost(projectPath("/imports/" + job.id + "/retry")); pollImport(); })));
   if (!active) actions.append(workspaceButton("Import more", startAddingRuns));
