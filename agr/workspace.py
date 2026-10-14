@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import copy
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -15,8 +16,17 @@ import time
 import uuid
 
 from .imports import CATALOG, ImportProblem, MAX_ARCHIVE, MAX_ENTRIES, MAX_EXPANDED, MAX_FILE, discover, publish_analysis, safe_relative
-from .store import Store
+from .store import InvalidRunId, Store
 from .storage_io import atomic_json, file_lock, read_json
+
+
+LOG = logging.getLogger(__name__)
+MAX_FETCH_TRACES = 100
+MAX_TRACE_ID = 512
+MAX_BATCH_SECONDS = 240
+MAX_CONCURRENT_FETCHES = 2
+# Errors that say the connection itself is unusable; a rate limit or a size problem does not.
+ACCESS_FAILURES = ("source_auth_failed", "source_unreachable", "source_not_found", "unsupported_response", "source_redirect")
 
 
 def now():
@@ -119,6 +129,9 @@ class Workspace:
         self.root = self.default_root / ".workspace"
         self.read_only = read_only
         self.secrets = {}
+        # Each batch holds up to MAX_ARCHIVE in memory, so how many run at once is bounded per server.
+        self.fetch_slots = threading.BoundedSemaphore(MAX_CONCURRENT_FETCHES)
+        self._previews_expired_at = 0.0
         self._stores = {"existing": default_store} if default_store is not None else {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agr-import")
         self.review_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agr-review")
@@ -247,22 +260,44 @@ class Workspace:
         return sorted([r for path in (self.root / kind).glob("*.json") if (r := self._read(path))["project_id"] == project_id], key=lambda r: r.get("created_at", ""), reverse=True)
 
     def _expire_previews(self):
+        # Cheap checks first: only previews past their day are compared with job history, and each project's
+        # submitted previews are read once. One unreadable file must not stop the sweep.
+        submitted = {}
         for path in (self.root / "previews").glob("*.json"):
-            preview = self._read(path)
-            if any(j.get("preview_id") == preview["id"] for j in self.records("jobs", preview["project_id"])):
-                # Submitted manifests and original artifacts are durable import
-                # provenance, including the source needed to retry failed work.
-                continue
-            if time.time() - preview["created_epoch"] > 86400:
+            try:
+                preview = self._read(path)
+                if preview["status"] == "expired" or time.time() - preview["created_epoch"] <= 86400:
+                    continue
+                if preview["project_id"] not in submitted:
+                    submitted[preview["project_id"]] = {j.get("preview_id") for j in self.records("jobs", preview["project_id"])}
+                if preview["id"] in submitted[preview["project_id"]]:
+                    # Submitted manifests and original artifacts are durable import
+                    # provenance, including the source needed to retry failed work.
+                    continue
                 folder = self.root / "staging" / preview["id"]
                 if folder.exists():
                     shutil.rmtree(folder)
                 preview["status"] = "expired"
                 preview["items"] = []
                 atomic_json(path, preview)
+            except (ValueError, KeyError, TypeError, OSError):
+                LOG.warning("Skipping an unreadable preview record while expiring old previews", exc_info=True)
+
+    def _expire_previews_periodically(self):
+        # Previews abandoned while the server keeps running (a closed tab, a proxy timeout) are cleaned up too.
+        if time.time() - self._previews_expired_at < 600:
+            return
+        self._previews_expired_at = time.time()
+        try:
+            with self.write_lock():
+                self._expire_previews()
+        except Exception:
+            # Housekeeping must never fail the request that happened to trigger it.
+            LOG.warning("Expiring old previews failed", exc_info=True)
 
     def new_preview(self, project_id, source, options=None):
         self.writable_project(project_id)
+        self._expire_previews_periodically()
         if source not in {s["id"] for s in CATALOG}:
             raise ImportProblem("unsupported_source", "Choose a supported source.")
         with self.write_lock():
@@ -424,11 +459,7 @@ class Workspace:
 
     def save_connection(self, project_id, payload):
         self.writable_project(project_id)
-        from urllib.parse import urlsplit
-        host = payload.get("host", "").rstrip("/")
-        parsed = urlsplit(host)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ImportProblem("invalid_host", "Enter an HTTP(S) host without credentials, query parameters, or a fragment.")
+        host = self._validated_host(payload.get("host"))
         environment = self.environment_keys(host)
         public = payload.get("public_key") or environment[0]
         secret = payload.get("secret_key") or environment[1]
@@ -439,6 +470,25 @@ class Workspace:
             self.secrets[connection["id"]] = (public, secret)
             atomic_json(self._path("connections", connection["id"]), connection)
         return connection
+
+    @staticmethod
+    def _validated_host(value):
+        """A Langfuse base URL a browser typed: anything unparseable is an input error, never a server error."""
+        from urllib.parse import urlsplit
+        message = "Enter an HTTP(S) host without credentials, query parameters, or a fragment."
+        if not isinstance(value, str) or len(value) > 2048:
+            raise ImportProblem("invalid_host", message)
+        host = value.strip().rstrip("/")
+        if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in host):
+            raise ImportProblem("invalid_host", message)
+        try:
+            parsed = urlsplit(host)
+            parsed.port  # raises for a non-numeric or out-of-range port
+        except ValueError:
+            raise ImportProblem("invalid_host", "Enter a valid host address. IPv6 addresses need brackets, and a port must be a number from 0 to 65535.") from None
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ImportProblem("invalid_host", message)
+        return host
 
     @staticmethod
     def environment_keys(host):
@@ -458,37 +508,218 @@ class Workspace:
             matches = False
         return (os.environ.get("LANGFUSE_PUBLIC_KEY"), os.environ.get("LANGFUSE_SECRET_KEY")) if matches else (None, None)
 
-    def fetch_connection(self, project_id, connection_id, trace_id, from_time=None, to_time=None):
+    def _connection_keys(self, project_id, connection_id):
         self.writable_project(project_id)
         connection = self.record("connections", connection_id, project_id)
-        trace_id = bounded_text(trace_id, "a trace ID", 512)
-        from .langfuse_v2 import fetch_trace
         keys = self.secrets.get(connection_id)
         if not keys:
             keys = self.environment_keys(connection["host"])
         if not all(keys):
             raise ImportProblem("missing_credentials", "Session credentials expired. Configure a new connection or server environment keys.")
+        return connection, keys
+
+    def _mark_connection(self, project_id, connection_id, status, must_exist=False):
+        with self.write_lock():
+            path = self._path("connections", connection_id)
+            # A disconnect wins over a request that was already in flight.
+            if must_exist or path.exists():
+                current = self.record("connections", connection_id, project_id)
+                current.update(status=status, last_test_at=now())
+                atomic_json(path, current)
+
+    def test_connection(self, project_id, connection_id):
+        from datetime import datetime, timedelta, timezone
+        from .langfuse_v2 import list_traces
+        connection, keys = self._connection_keys(project_id, connection_id)
+        end = datetime.now(timezone.utc)
         try:
-            data = fetch_trace(trace_id, host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=from_time, to_time=to_time)
+            list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=(end - timedelta(hours=1)).isoformat(), to_time=end.isoformat(), limit=1)
         except ImportProblem as exc:
-            with self.write_lock():
-                path = self._path("connections", connection_id)
-                if path.exists():
-                    current = self.record("connections", connection_id, project_id)
-                    current.update(status="fetch_failed", last_test_at=now())
-                    atomic_json(path, current)
+            if exc.code in ACCESS_FAILURES:
+                self._mark_connection(project_id, connection_id, "access_failed")
+            raise
+        self._mark_connection(project_id, connection_id, "accessible", must_exist=True)
+        return self.record("connections", connection_id, project_id)
+
+    def browse_connection(self, project_id, connection_id, payload):
+        from .ingest_langfuse import run_id_for_trace
+        from .langfuse_v2 import list_traces
+        connection, keys = self._connection_keys(project_id, connection_id)
+        filters = {k: payload.get(k) for k in ("name", "tag", "user_id", "session_id", "environment")}
+        try:
+            result = list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=payload.get("from_time"), to_time=payload.get("to_time"), limit=payload.get("limit", 50), **filters)
+        except ImportProblem as exc:
+            if exc.code in ACCESS_FAILURES:
+                self._mark_connection(project_id, connection_id, "access_failed")
+            raise
+        self._mark_connection(project_id, connection_id, "accessible", must_exist=True)
+        store = self.store(project_id)
+        for trace in result["traces"]:
+            try:
+                trace["already_imported"] = bool(store.read_index(run_id_for_trace(trace["trace_id"])))
+            except InvalidRunId:
+                # SDK users choose trace IDs; one the store cannot hold is simply not imported yet.
+                trace["already_imported"] = False
+        return result
+
+    @staticmethod
+    def _extended_window_end(to_time):
+        # A trace found by its root can still be running past the end of the search
+        # window, so its observations are fetched a day later, never into the future.
+        from datetime import datetime, timedelta, timezone
+        try:
+            end = datetime.fromisoformat(to_time.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            return to_time
+        current = datetime.now(timezone.utc)
+        if not end.tzinfo or end >= current:
+            return to_time
+        return min(end + timedelta(days=1), current).isoformat()
+
+    def fetch_connection(self, *args, **kwargs):
+        if not self.fetch_slots.acquire(blocking=False):
+            raise ImportProblem("fetch_busy", "Other trace fetches are still running. Wait for them to finish, then try again.", 429)
+        try:
+            return self._fetch_connection(*args, **kwargs)
+        finally:
+            self.fetch_slots.release()
+
+    def _fetch_connection(self, project_id, connection_id, trace_id=None, from_time=None, to_time=None, trace_ids=None):
+        """Stage one preview from one trace ID (``trace_id``) or a browsed selection (``trace_ids``)."""
+        from concurrent.futures import as_completed
+        from .langfuse_v2 import fetch_trace
+        connection, keys = self._connection_keys(project_id, connection_id)
+        browsed = trace_ids is not None
+        if not browsed:
+            trace_ids = [trace_id]
+        elif not isinstance(trace_ids, list):
+            raise ImportProblem("invalid_selection", "Select at least one trace.")
+        if browsed:
+            # A selection is validated per trace, so one unusable ID cannot fail the rest.
+            candidates = list(dict.fromkeys(t for t in trace_ids if isinstance(t, str)))
+            ids = [t for t in candidates if t == t.strip() and 0 < len(t) <= MAX_TRACE_ID]
+            if not ids or len(trace_ids) > MAX_FETCH_TRACES:
+                raise ImportProblem("invalid_selection", f"Select between 1 and {MAX_FETCH_TRACES} traces to preview at once.")
+        else:
+            ids = [bounded_text(trace_ids[0], "a trace ID", MAX_TRACE_ID)]
+        window_to = self._extended_window_end(to_time) if browsed else to_time
+        always_fatal = ("source_auth_failed", "source_redirect", "invalid_time_range")
+        fetched, errors, staged_bytes, unreachable = {}, [], 0, 0
+        for t in trace_ids if browsed else []:
+            if t not in ids:
+                errors.append({"trace_id": t if isinstance(t, str) else str(t)[:80], "code": "invalid_trace_id", "message": "This trace ID cannot be fetched.", "status": 422})
+        halted = None
+        deadline = time.monotonic() + MAX_BATCH_SECONDS
+        # Queued fetches observe this flag instead of being cancelled: cancelling a future
+        # after as_completed has started never wakes it, and the request would hang.
+        stop = threading.Event()
+        def one(identifier_):
+            if stop.is_set() or time.monotonic() > deadline:
+                return None
+            try:
+                return fetch_trace(identifier_, host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=from_time, to_time=window_to, deadline=deadline)
+            except ImportProblem:
+                raise
+            except Exception:
+                # Malformed or hostile JSON must fail one trace, never the batch; the cause is still logged.
+                LOG.warning("Unexpected error while fetching a Langfuse trace", exc_info=True)
+                raise ImportProblem("unsupported_response", "Langfuse returned a trace AGR cannot read. Import an export of it instead.", 502) from None
+        def halt(code, message):
+            nonlocal halted
+            if not halted:
+                halted = (code, message)
+                stop.set()
+        pool = ThreadPoolExecutor(max_workers=min(4, len(ids)))
+        abandon = False
+        try:
+            futures = {pool.submit(one, t): t for t in ids}
+            for future in as_completed(futures):
+                tid = futures[future]
+                try:
+                    result = future.result()
+                    if result is None:
+                        if time.monotonic() > deadline:
+                            halt("source_timeout", "Not fetched: the batch reached its time limit. Preview the remaining traces separately.")
+                        continue
+                    try:
+                        content = json.dumps(result).encode()
+                    except (ValueError, TypeError, RecursionError):
+                        raise ImportProblem("unsupported_response", "Langfuse returned a trace AGR cannot read. Import an export of it instead.", 502) from None
+                except ImportProblem as exc:
+                    # An unreachable host is fatal only until something has been fetched; after that it is one trace's failure.
+                    if exc.code in always_fatal or len(ids) == 1 or (exc.code == "source_unreachable" and not fetched):
+                        abandon = True
+                        stop.set()
+                        raise
+                    errors.append({"trace_id": tid, "code": exc.code, "message": str(exc), "status": exc.status})
+                    if exc.code == "source_rate_limited":
+                        halt("source_rate_limited", "Not fetched: Langfuse rate-limited the batch. Wait, then preview the remaining traces.")
+                    if exc.code == "source_unreachable":
+                        unreachable += 1
+                        if unreachable >= 3:
+                            halt("source_unreachable", "Not fetched: Langfuse stopped responding. Check connectivity, then preview the remaining traces.")
+                    continue
+                if len(content) > MAX_FILE:
+                    errors.append({"trace_id": tid, "code": "import_limit", "message": "This trace is too large to import. Import a smaller export of it.", "status": 413})
+                    continue
+                staged_bytes += len(content)
+                if staged_bytes > MAX_ARCHIVE:
+                    errors.append({"trace_id": tid, "code": "import_limit", "message": "Skipped: this batch reached the size limit. Preview the remaining traces separately.", "status": 413})
+                    halt("import_limit", "Not fetched: this batch reached the size limit. Preview the remaining traces separately.")
+                    continue
+                fetched[tid] = content
+        except ImportProblem as exc:
+            # A bad time range is the caller's input, not a sign the connection is unusable.
+            if exc.code != "invalid_time_range":
+                self._mark_connection(project_id, connection_id, "fetch_failed")
             raise exc
+        finally:
+            # A connection-level failure must not wait for every queued fetch; in-flight ones finish alone.
+            stop.set()
+            pool.shutdown(wait=not abandon)
+        for tid in ids:
+            if tid not in fetched and not any(e["trace_id"] == tid for e in errors):
+                errors.append({"trace_id": tid, "code": halted[0] if halted else "not_fetched", "message": halted[1] if halted else "Not fetched.", "status": 413 if halted and halted[0] == "import_limit" else 502})
+        if not fetched:
+            # The outcome must not depend on which trace happened to finish first.
+            rank = {code: n for n, code in enumerate(("source_auth_failed", "source_redirect", "source_unreachable", "source_rate_limited", "source_timeout", "source_fetch_failed", "unsupported_response", "import_limit", "invalid_trace_id", "source_not_found"))}
+            first = min(errors, key=lambda e: rank.get(e["code"], len(rank)))
+            self._mark_connection(project_id, connection_id, "fetch_failed")
+            raise ImportProblem(first["code"], first["message"], first["status"])
         with self.write_lock():
             # A disconnect wins over a fetch that was already in flight.
             self.record("connections", connection_id, project_id)
         preview = self.new_preview(project_id, "langfuse")
-        self.stage_file(project_id, preview["id"], "trace.json", json.dumps(data).encode())
-        result = self.inspect(project_id, preview["id"])
-        with self.write_lock():
-            current = self.record("connections", connection_id, project_id)
-            current.update(status="trace_accessible", last_test_at=now())
-            atomic_json(self._path("connections", connection_id), current)
+        try:
+            for position, tid in enumerate(ids, 1):
+                if tid in fetched:
+                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", tid)[:80].strip(".") or "trace"
+                    self.stage_file(project_id, preview["id"], f"{position:03d}-{safe}.json" if len(ids) > 1 else "trace.json", fetched[tid])
+            if errors:
+                with self.write_lock():
+                    record = self.preview(project_id, preview["id"])
+                    record["fetch_errors"] = [{k: v for k, v in e.items() if k != "status"} for e in errors]
+                    atomic_json(self._path("previews", preview["id"]), record)
+            result = self.inspect(project_id, preview["id"])
+            # A disconnect wins, and then nothing staged for it may linger.
+            self._mark_connection(project_id, connection_id, "trace_accessible", must_exist=True)
+        except BaseException:
+            self._discard_preview(preview["id"])
+            raise
         return result
+
+    def _discard_preview(self, preview_id):
+        """Drop a preview that could not be completed; it must not linger as staging."""
+        try:
+            with self.write_lock():
+                shutil.rmtree(self.root / "staging" / preview_id, ignore_errors=True)
+                path = self._path("previews", preview_id)
+                if path.exists():
+                    record = read_json(path)
+                    record.update(status="expired", items=[], files=[])
+                    atomic_json(path, record)
+        except Exception:
+            pass
 
     def disconnect(self, project_id, connection_id):
         self.writable_project(project_id)

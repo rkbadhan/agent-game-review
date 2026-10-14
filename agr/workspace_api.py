@@ -311,9 +311,17 @@ def attach_workspace(app, default_store, read_only, *, allowed_hosts=None, sessi
     def save_connection(project_id: str, payload: dict = Body(...)):
         return workspace.save_connection(project_id, payload)
 
+    @app.post("/projects/{project_id}/connections/{connection_id}/test")
+    def test_connection(project_id: str, connection_id: str):
+        return workspace.test_connection(project_id, connection_id)
+
+    @app.post("/projects/{project_id}/connections/{connection_id}/traces")
+    def browse_traces(project_id: str, connection_id: str, payload: dict = Body(...)):
+        return workspace.browse_connection(project_id, connection_id, payload)
+
     @app.post("/projects/{project_id}/connections/{connection_id}/trace-previews")
     def fetch_trace(project_id: str, connection_id: str, payload: dict = Body(...)):
-        return workspace.fetch_connection(project_id, connection_id, payload.get("trace_id"), payload.get("from_time"), payload.get("to_time"))
+        return workspace.fetch_connection(project_id, connection_id, payload.get("trace_id"), payload.get("from_time"), payload.get("to_time"), payload.get("trace_ids"))
 
     @app.delete("/projects/{project_id}/connections/{connection_id}")
     def disconnect(project_id: str, connection_id: str):

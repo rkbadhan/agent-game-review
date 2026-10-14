@@ -38,7 +38,7 @@ to a newer capture. Open latest capture resumes editable review.
 | Claude Code | Saved session JSONL, stream JSONL, final-result JSON | Final-only output is limited; session completion does not establish task success. |
 | pi | Session JSONL or deliberately selected session folder | Only selected uploads are read; missing evaluation evidence stays unverified. |
 | OpenTelemetry | OTLP JSON containing `resourceSpans` | Partition by trace ID before conversion; this does not start a collector. |
-| Langfuse | Trace JSON with observations/scores; explicit trace fetch | Live fetch targets Langfuse v4 observations v2 and scores v3 with a bounded UTC time range. |
+| Langfuse | Trace JSON with observations/scores; browse and batch fetch from a connection | Live access targets Langfuse v4 observations v2 and scores v3 with a bounded UTC time range. Browsing lists root observations; up to 500 traces are listed and 100 previewed at once. |
 | LangSmith | Run-record list, or `{runs: [...], feedback: [...]}` | Partition by trace ancestry/identity; unrelated unscoped feedback is excluded with a warning. No live API connection. |
 | Custom ATIF | AGR ATIF-shaped document | Validate the existing contract; arbitrary JSON is not accepted. |
 
@@ -54,8 +54,24 @@ and base path), or the CLI's default `http://localhost:3000` when `LANGFUSE_HOST
 is unset or empty; this restriction also applies after a server restart. Both keys
 must be supplied explicitly for other hosts. Keys are never serialized in workspace metadata. Disconnect removes
 connection metadata and session keys while retaining imported evidence.
-The UI requests a trace ID and time window, retrieves one immutable preview,
-and imports that snapshot without refetching on confirmation. Time-scoped
+The UI connects and tests access, then lists traces in a UTC time range
+(optionally narrowed by trace name, tag, user, session or environment). Langfuse
+v4 has no trace-list endpoint, so candidates are the root observations returned
+by observations v2, grouped by trace ID; each filter is re-checked locally on
+the fields returned (a filtered field the response omits excludes the trace). The engineer selects up to 100 traces (already-imported
+ones start unchecked), and AGR retrieves them into one immutable preview, four
+at a time. A trace that fails to fetch is reported beside the preview and does
+not block the others; authentication and redirect failures stop the batch, as
+does an unreachable host until something has been fetched. After that, three
+unreachable traces or a rate limit stop the batch but keep the traces already
+fetched. A trace that is too large, or whose ID cannot be fetched, is skipped on
+its own, and a batch has a four-minute limit with traces not reached reported. The limit is checked before each fetch and between pages, and each request is also capped by what remains of it (score retrieval may run at most 30 seconds past it), so a batch ends shortly after four minutes. At most two batch fetches run at once per server; another returns a busy error, and previews abandoned while the server runs are expired after 24 hours. Time bounds are sent as UTC with milliseconds and a Z suffix, the only form Langfuse documents. Langfuse documents that data from older SDKs and exporters can take up to 15 minutes to appear, so a trace from the last 15 minutes carries a capture note saying it may be incomplete. A search that uses filters also sends the time range and root-observation flag inside the filter and re-checks the time range locally, because Langfuse documents that the filter overrides the fixed parameters. A trace that Langfuse returns in a shape AGR cannot read fails on its own.
+Traces are fetched
+for the search window extended by one day (never past now) so a run that
+outlived the window is not cut off. A single trace ID can still be fetched
+directly. The import imports that snapshot without refetching on confirmation.
+After an import, **Review imported runs with AI** opens AI review with that
+batch preselected; no model call happens until the engineer starts it. Time-scoped
 retrieval is explicitly partial; observation completion never fabricates a
 task outcome. Score retrieval failures produce an evidence limitation.
 Scores are fetched by trace ID without restricting their creation timestamps
@@ -233,7 +249,9 @@ test store because it creates projects and imports a fixture.
 The following gates remain before declaring the spec's release validated:
 
 - **AC-22:** Test live Langfuse access on representative deployments with real
-  account credentials. Network tests here use mocked responses.
+  account credentials. Network tests here use mocked responses and a local fake
+  Langfuse server; the filter syntax used for tag and trace-name narrowing follows
+  Langfuse's migration guide and is unverified against a live account.
 - **Initial usability gate:** Observe five unfamiliar engineers completing
   own-data imports, distinguishing unverified outcomes, and identifying useful
   next actions. Browser automation does not establish usability or usefulness.

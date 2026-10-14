@@ -12,6 +12,13 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Added
 
+- **Browse and batch-import Langfuse traces from the browser.** After
+  connecting with a project key pair (access is tested first), engineers list
+  recent traces by time range, name, tag, user, session or environment, select
+  up to 100, preview them together and import them as one batch. A trace that
+  fails to fetch is reported without blocking the rest, traces already in the
+  project are flagged, and the import page offers **Review imported runs with
+  AI**. Live compatibility with a real account remains to be verified.
 - **AI review in the local app.** Settings configures the provider, model,
   endpoint, session-only credentials, and review targets using the same saved
   defaults as the CLI. An explicit synthetic connection test validates JSON
