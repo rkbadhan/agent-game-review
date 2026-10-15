@@ -88,6 +88,12 @@ FILTER_CHIPS: dict[str, Callable[[dict], bool]] = {
     "handled": lambda r: r["workflow"].get("review_progress") == "handled",
 }
 
+# Chips that are alternatives of one question share a group and combine with "or"; every other chip is its own
+# group, so it narrows the result with "and".
+FILTER_GROUP = {**{k: "outcome" for k in ("failed", "passed", "undetermined", "unverified", "operational_error")},
+                **{k: "review" for k in ("unreviewed", "in_progress", "handled")},
+                **{k: "verification" for k in ("ground_truth", "analysis_only")}}
+
 # §4.3.2 — supported sort controls. Every key maps to a sort function; the default
 # is ``triage`` (the documented triage-priority order, not a severity score).
 SORTS = ("triage", "outcome", "review_progress", "cost", "duration", "recently_updated")
@@ -271,8 +277,13 @@ def queue_view(
     filter_counts = {key: sum(1 for r in all_rows if pred(r)) for key, pred in FILTER_CHIPS.items()}
 
     rows = all_rows
+    # Chips in one group (the outcome buckets, the review states) are alternatives and widen the result; the groups
+    # themselves, and the remaining behavioural chips, each narrow it. Failed and Passed together are "either".
+    chosen = {}
     for f in filters:
-        rows = [r for r in rows if FILTER_CHIPS[f](r)]
+        chosen.setdefault(FILTER_GROUP.get(f, f), []).append(f)
+    for members in chosen.values():
+        rows = [r for r in rows if any(FILTER_CHIPS[f](r) for f in members)]
     rows.sort(key=_sort_key(sort))
 
     definition = {"filters": sorted(filters), "sort": sort, "grouping": grouping}

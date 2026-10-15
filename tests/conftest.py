@@ -19,3 +19,12 @@ def fixtures_dir():
 @pytest.fixture
 def load_fixture():
     return load
+
+
+@pytest.fixture(autouse=True)
+def _fresh_langfuse_version_cache():
+    """A host's detected Langfuse version is cached in-process; tests must not inherit one another's."""
+    from agr import langfuse_source
+    langfuse_source.clear_cache()
+    yield
+    langfuse_source.clear_cache()

@@ -38,7 +38,7 @@ to a newer capture. Open latest capture resumes editable review.
 | Claude Code | Saved session JSONL, stream JSONL, final-result JSON | Final-only output is limited; session completion does not establish task success. |
 | pi | Session JSONL or deliberately selected session folder | Only selected uploads are read; missing evaluation evidence stays unverified. |
 | OpenTelemetry | OTLP JSON containing `resourceSpans` | Partition by trace ID before conversion; this does not start a collector. |
-| Langfuse | Trace JSON with observations/scores; browse and batch fetch from a connection | Live access targets Langfuse v4 observations v2 and scores v3 with a bounded UTC time range. Browsing lists root observations; up to 500 traces are listed and 100 previewed at once. |
+| Langfuse | Trace JSON with observations/scores; browse and batch fetch from a connection | Live access reads the server's version from the unauthenticated `/api/public/health`: Langfuse 4 and later use observations v2 and scores v3 with a bounded UTC time range, and Langfuse 3.x uses the v1 trace endpoints (`/api/public/traces` to list, `/api/public/traces/{id}` to fetch a whole trace). Browsing lists root observations (v4) or traces (3.x); up to 500 traces are listed and 100 previewed at once. |
 | LangSmith | Run-record list, or `{runs: [...], feedback: [...]}` | Partition by trace ancestry/identity; unrelated unscoped feedback is excluded with a warning. No live API connection. |
 | Custom ATIF | AGR ATIF-shaped document | Validate the existing contract; arbitrary JSON is not accepted. |
 
@@ -54,7 +54,7 @@ and base path), or the CLI's default `http://localhost:3000` when `LANGFUSE_HOST
 is unset or empty; this restriction also applies after a server restart. Both keys
 must be supplied explicitly for other hosts. Keys are never serialized in workspace metadata. Disconnect removes
 connection metadata and session keys while retaining imported evidence.
-The UI connects and tests access, then lists traces in a UTC time range
+The UI connects, reads the server's Langfuse version and tests access, then lists traces in a UTC time range
 (optionally narrowed by trace name, tag, user, session or environment). Langfuse
 v4 has no trace-list endpoint, so candidates are the root observations returned
 by observations v2, grouped by trace ID; each filter is re-checked locally on
@@ -68,8 +68,21 @@ fetched. A trace that is too large, or whose ID cannot be fetched, is skipped on
 its own, and a batch has a four-minute limit with traces not reached reported. The limit is checked before each fetch and between pages, and each request is also capped by what remains of it (score retrieval may run at most 30 seconds past it), so a batch ends shortly after four minutes. At most two batch fetches run at once per server; another returns a busy error, and previews abandoned while the server runs are expired after 24 hours. Time bounds are sent as UTC with milliseconds and a Z suffix, the only form Langfuse documents. Langfuse documents that data from older SDKs and exporters can take up to 15 minutes to appear, so a trace from the last 15 minutes carries a capture note saying it may be incomplete. A search that uses filters also sends the time range and root-observation flag inside the filter and re-checks the time range locally, because Langfuse documents that the filter overrides the fixed parameters. A trace that Langfuse returns in a shape AGR cannot read fails on its own.
 Traces are fetched
 for the search window extended by one day (never past now) so a run that
-outlived the window is not cut off. A single trace ID can still be fetched
-directly. The import imports that snapshot without refetching on confirmation.
+outlived the window is not cut off. The listing also carries the fields Langfuse's own trace table shows (release,
+version, latency, cost, input and output previews, metadata) wherever the server
+returns them, and can be filtered by trace ID (matched anywhere in the ID, over
+the last 400 days rather than the form's range) and by one metadata key and
+value. On Langfuse 4 each listed row is the trace's root observation, so Latency, the metadata shown and the
+metadata filter describe that observation, not the whole trace (Langfuse 3.x returns trace-level values).
+Cost is summed over every observation of the listed traces through `GET /api/public/v2/metrics` (view
+`observations`, dimension `traceId` filtered to 50 IDs per request and ordered descending by the summed
+cost as the server's top-N rule requires, measure `totalCost` summed, result key `sum_totalCost`; shapes
+recorded in `server_contract.json` from the server source; the requests of one listing share a 30 second budget). If that
+endpoint is unavailable the root observation's cost is shown and the Cost header says so. The imported trace
+always carries every observation. The
+connection records the Langfuse project the key pair belongs to,
+from `/api/public/projects`, when the server reports it. A single trace ID can
+still be fetched directly. The import imports that snapshot without refetching on confirmation.
 After an import, **Review imported runs with AI** opens AI review with that
 batch preselected; no model call happens until the engineer starts it. Time-scoped
 retrieval is explicitly partial; observation completion never fabricates a
@@ -269,3 +282,38 @@ The following gates remain before declaring the spec's release validated:
 Hosted login, memberships, authorization, and local-to-hosted transfer
 (AC-36/37), automatic source sync, OS keychain persistence, and external issue
 notifications are outside this local implementation.
+
+## Langfuse API compatibility notes
+
+The connector's requests were checked against the open-source Langfuse server's own source code
+([langfuse/langfuse](https://github.com/langfuse/langfuse), commit `c900b11`, web package version 4.59.0), not only
+its documentation. The checks that were run:
+
+- Every filter the connector can send, for both APIs and every filter combination, was parsed with the server's own
+  validation schemas (its `eventsTableSingleFilterList` and `singleFilterList`, run with zod 4). All were accepted.
+- Each filter column was matched against the server's column mappings for the traces table (v1) and the events table
+  (v2), and the field groups against the server's `OBSERVATION_FIELD_GROUPS_PUBLIC_API` and `TRACE_FIELD_GROUPS`.
+- The server's handlers were read for status codes, limits, timestamp parsing and the health response.
+
+What the server's source established, and what is still open:
+
+| Point | Result |
+|---|---|
+| `GET /api/public/health` returns `{status, version}` (for example `4.59.0`) and needs no credentials | Confirmed |
+| v1 list parameters (`page`, `limit` up to 100, `fromTimestamp`, `toTimestamp`, `orderBy`, `tags`, `name`, `userId`, `sessionId`, `environment`, `fields`, `filter`) and the `core`, `io`, `scores`, `observations`, `metrics` field groups | Confirmed |
+| v1 filter columns `id`, `name`, `timestamp`, `userId`, `sessionId`, `environment`, `tags`, `metadata` (with a key), and the type and operator pairs the connector sends | Confirmed: accepted by the server's schemas and resolved by its column mapping |
+| v1 trace fields: `latency` in seconds, `totalCost` in USD, `metadata`, `release`, `version`, `tags`, `input`, `output` | Confirmed |
+| v2 parameters including `isRootObservation` (`true` or `false`), `fields`, `limit` up to 1000, `cursor`; unknown field groups are ignored | Confirmed. The earlier disagreement between documentation pages is settled: it is a parameter and a filter column |
+| v2 field groups: cost is in `usage`, latency in `metrics` (seconds), trace name, tags and release in `trace_context`, user and session in `basic` | Confirmed |
+| v2 filter columns `traceId`, `traceName`, `tags`, `userId`, `sessionId`, `metadata` (with a key), `startTime`, `isRootObservation`, `environment` | Confirmed |
+| `GET /api/public/v2/metrics` with view `observations`, dimension `traceId`, measure `totalCost` summed, `row_limit` up to 1000, result key `sum_totalCost` | Request shape confirmed against the server source and its query validator: a trace-ID dimension is high cardinality, so the server accepts it only as a top-N, with an explicit `config.row_limit` and an `orderBy` descending on a measure of the query (here `sum_totalCost`); otherwise it answers 400. The fake server in the tests enforces the same rule. Not run against a live server |
+| `isRootObservation` is true for observations the SDK marked as app roots, which keep a parent ID | Confirmed. The listing trusts the flag and only falls back to "no parent" when it is absent |
+| Timestamps: `...Z` and `+00:00` are accepted; a naive time, a space separator and `+0200` are rejected | Confirmed |
+| On a **self-hosted** server, observations v2 answers 404 unless `LANGFUSE_MIGRATION_V4_ALLOW_PREVIEW_OPT_IN=true` | Confirmed. The v1 endpoints are used instead, whatever version the server reports |
+| In `events_only` write mode the v1 trace endpoints answer 404 | Confirmed. The v2 endpoint is used instead |
+| `latency` and `totalCost` are `-1` when not computed | Confirmed. Shown as unknown |
+| Cloud plans clamp `fromTimestamp` to the plan's data access window | Confirmed. A trace ID search over 400 days is clamped on a plan with a shorter window |
+| The server itself running against the connector | **Not run.** It needs Postgres, ClickHouse and Redis. `scripts/verify-langfuse-live.py` runs the same checks against any real server |
+
+The recorded contract is `tests/fixtures/langfuse/server_contract.json`; a test checks every request the connector
+makes against it, so a change to what is sent cannot drift from what the server validates.

@@ -1,0 +1,78 @@
+{
+  "_about": "What the open-source Langfuse server accepts on the endpoints AGR calls, recorded from its source code. AGR's requests are checked against this so a change to what is sent cannot drift from what the server validates. Re-record by reading the files listed under source.",
+  "source": {
+    "repo": "https://github.com/langfuse/langfuse",
+    "commit": "c900b110501e911f958bc826d7eac9579a08f38e",
+    "web_package_version": "4.59.0",
+    "files": [
+      "web/src/pages/api/public/health.ts",
+      "web/src/pages/api/public/traces/index.ts",
+      "web/src/pages/api/public/v2/observations/index.ts",
+      "web/src/features/public-api/types/traces.ts",
+      "web/src/features/public-api/types/observations.ts",
+      "web/src/features/public-api/server/createAuthedProjectAPIRoute.ts",
+      "packages/shared/src/interfaces/filters.ts",
+      "packages/shared/src/server/tableMappings/mapTracesTable.ts",
+      "packages/shared/src/server/tableMappings/mapEventsTable.ts",
+      "packages/shared/src/server/ingestion/types.ts",
+      "packages/shared/src/utils/zod.ts",
+      "packages/shared/src/domain/observation-field-groups.ts"
+    ]
+  },
+  "health": {"path": "/api/public/health", "needs_auth": false, "fields": ["status", "version"], "version_example": "4.59.0"},
+  "datetime_regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+  "filter_operators": {
+    "datetime": [">", "<", ">=", "<="],
+    "string": ["=", "contains", "does not contain", "starts with", "ends with", "is not empty", "matches"],
+    "stringOptions": ["any of", "none of"],
+    "arrayOptions": ["any of", "none of", "all of"],
+    "stringObject": ["=", "contains", "does not contain", "starts with", "ends with", "is set", "is not set", "matches"],
+    "boolean": ["=", "<>"]
+  },
+  "v1_traces": {
+    "list_path": "/api/public/traces",
+    "by_id_path": "/api/public/traces/{traceId}",
+    "limit_max": 100,
+    "query_parameters": ["page", "limit", "userId", "name", "tags", "environment", "sessionId", "version", "release", "fromTimestamp", "toTimestamp", "orderBy", "fields", "useEventsTable", "filter"],
+    "field_groups": ["core", "io", "scores", "observations", "metrics"],
+    "order_by_columns": ["id", "timestamp", "name", "userId", "release", "version", "public", "bookmarked", "sessionId"],
+    "filter_columns": ["id", "traceId", "name", "traceName", "timestamp", "userId", "sessionId", "metadata", "version", "release", "environment", "tags", "traceTags", "bookmarked", "level"],
+    "list_item_fields": ["id", "externalId", "timestamp", "name", "userId", "metadata", "release", "version", "projectId", "environment", "public", "bookmarked", "tags", "input", "output", "sessionId", "createdAt", "updatedAt", "observations", "scores", "totalCost", "latency", "htmlPath"],
+    "unavailable_when": "LANGFUSE_MIGRATION_V4_WRITE_MODE is events_only (404 with a message)"
+  },
+  "v2_observations": {
+    "path": "/api/public/v2/observations",
+    "limit_max": 1000,
+    "query_parameters": ["fields", "expandMetadata", "limit", "cursor", "parseIoAsJson", "type", "name", "userId", "sessionId", "level", "traceId", "version", "parentObservationId", "isRootObservation", "environment", "fromStartTime", "toStartTime", "filter"],
+    "is_root_observation_values": ["true", "false"],
+    "field_groups": ["core", "basic", "time", "io", "metadata", "model", "usage", "prompt", "metrics", "trace_context"],
+    "unknown_field_groups": "ignored, not an error",
+    "field_group_contents": {
+      "core": ["id", "traceId", "startTime", "endTime", "projectId", "parentObservationId", "type"],
+      "basic": ["name", "level", "statusMessage", "version", "environment", "bookmarked", "public", "userId", "sessionId", "isRootObservation"],
+      "io": ["input", "output"],
+      "metadata": ["metadata"],
+      "usage": ["usageDetails", "costDetails", "totalCost", "usagePricingTierName"],
+      "metrics": ["latency", "timeToFirstToken"],
+      "trace_context": ["tags", "release", "traceName"]
+    },
+    "filter_columns": ["id", "type", "name", "traceId", "startTime", "endTime", "environment", "level", "version", "release", "metadata", "sessionId", "traceName", "userId", "traceTags", "tags", "isRootObservation", "parentObservationId", "latency", "totalCost"],
+    "unavailable_unless": "LANGFUSE_MIGRATION_V4_ALLOW_PREVIEW_OPT_IN is true (404 with a message)"
+  },
+  "v2_metrics": {
+    "path": "/api/public/v2/metrics",
+    "query_parameter": "query (a JSON string)",
+    "views": ["observations", "scores-numeric", "scores-categorical", "scores-boolean"],
+    "observations_dimension": "traceId",
+    "trace_id_dimension_high_cardinality": true,
+    "high_cardinality_rule": "a dimension in `dimensions` (not `entityDimension`, which the public v2 schema does not take) needs config.row_limit and an orderBy with direction desc on a measure of the query, else 400 missing_top_n; not allowed with timeDimension",
+    "order_by_field": "sum_totalCost",
+    "order_by_direction": "desc",
+    "measure": "totalCost",
+    "aggregation": "sum",
+    "result_key": "sum_totalCost",
+    "row_limit_max": 1000,
+    "row_limit_default": 100,
+    "unavailable_unless": "LANGFUSE_MIGRATION_V4_ALLOW_PREVIEW_OPT_IN is true and LANGFUSE_MIGRATION_V4_WRITE_MODE is not legacy (404 with a message)"
+  }
+}

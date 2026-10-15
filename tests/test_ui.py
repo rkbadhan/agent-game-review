@@ -436,7 +436,8 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         # neither fixture run in this store captured a cost value — a column
         # of permanent "—" cells is never shown.
         headers = [h.inner_text().upper() for h in page.query_selector_all(".runs-table th")]
-        assert headers == ["SESSION", "OUTCOME", "MAIN FINDING", "REVIEW STATUS", "DURATION"]
+        # AI review status is a column of its own, so a run's state is visible without opening it.
+        assert headers == ["SESSION", "OUTCOME", "MAIN FINDING", "REVIEW STATUS", "AI REVIEW", "DURATION"]
         rows = page.query_selector_all(".runs-row")
         assert len(rows) == 2
 

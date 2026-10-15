@@ -24,6 +24,7 @@ LOG = logging.getLogger(__name__)
 MAX_FETCH_TRACES = 100
 MAX_TRACE_ID = 512
 MAX_BATCH_SECONDS = 240
+ID_LOOKUP_DAYS = 400
 MAX_CONCURRENT_FETCHES = 2
 # Errors that say the connection itself is unusable; a rate limit or a size problem does not.
 ACCESS_FAILURES = ("source_auth_failed", "source_unreachable", "source_not_found", "unsupported_response", "source_redirect")
@@ -518,36 +519,47 @@ class Workspace:
             raise ImportProblem("missing_credentials", "Session credentials expired. Configure a new connection or server environment keys.")
         return connection, keys
 
-    def _mark_connection(self, project_id, connection_id, status, must_exist=False):
+    def _mark_connection(self, project_id, connection_id, status, must_exist=False, **details):
         with self.write_lock():
             path = self._path("connections", connection_id)
             # A disconnect wins over a request that was already in flight.
             if must_exist or path.exists():
                 current = self.record("connections", connection_id, project_id)
-                current.update(status=status, last_test_at=now())
+                current.update(status=status, last_test_at=now(), **details)
                 atomic_json(path, current)
 
     def test_connection(self, project_id, connection_id):
         from datetime import datetime, timedelta, timezone
-        from .langfuse_v2 import list_traces
+        from . import langfuse_source
         connection, keys = self._connection_keys(project_id, connection_id)
         end = datetime.now(timezone.utc)
+        # A fresh look at the server's version, so a Langfuse upgrade is picked up when access is retested.
+        langfuse_source.detect(connection["host"], refresh=True)
         try:
-            list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=(end - timedelta(hours=1)).isoformat(), to_time=end.isoformat(), limit=1)
+            langfuse_source.list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=(end - timedelta(hours=1)).isoformat(), to_time=end.isoformat(), limit=1)
         except ImportProblem as exc:
             if exc.code in ACCESS_FAILURES:
                 self._mark_connection(project_id, connection_id, "access_failed")
             raise
-        self._mark_connection(project_id, connection_id, "accessible", must_exist=True)
+        info = langfuse_source.detect(connection["host"])
+        project = langfuse_source.project(connection["host"], keys[0], keys[1])
+        self._mark_connection(project_id, connection_id, "accessible", must_exist=True, api=info["api"], api_label=langfuse_source.LABELS.get(info["api"]), server_version=info["server_version"], langfuse_project=project)
         return self.record("connections", connection_id, project_id)
 
     def browse_connection(self, project_id, connection_id, payload):
         from .ingest_langfuse import run_id_for_trace
-        from .langfuse_v2 import list_traces
+        from .langfuse_source import list_traces
         connection, keys = self._connection_keys(project_id, connection_id)
-        filters = {k: payload.get(k) for k in ("name", "tag", "user_id", "session_id", "environment")}
+        filters = {k: payload.get(k) for k in ("name", "tag", "user_id", "session_id", "environment", "trace_id", "metadata_key", "metadata_value")}
+        from_time, to_time = payload.get("from_time"), payload.get("to_time")
+        if filters["trace_id"]:
+            # Looking a trace up by its ID should not depend on when it ran, so the form's time range is replaced
+            # by a long one. The range used is reported, and a preview fetches over the same range.
+            from datetime import datetime, timedelta, timezone
+            now_utc = datetime.now(timezone.utc)
+            from_time, to_time = (now_utc - timedelta(days=ID_LOOKUP_DAYS)).isoformat(), (now_utc + timedelta(hours=1)).isoformat()
         try:
-            result = list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=payload.get("from_time"), to_time=payload.get("to_time"), limit=payload.get("limit", 50), **filters)
+            result = list_traces(host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=from_time, to_time=to_time, limit=payload.get("limit", 50), **filters)
         except ImportProblem as exc:
             if exc.code in ACCESS_FAILURES:
                 self._mark_connection(project_id, connection_id, "access_failed")
@@ -560,6 +572,7 @@ class Workspace:
             except InvalidRunId:
                 # SDK users choose trace IDs; one the store cannot hold is simply not imported yet.
                 trace["already_imported"] = False
+        result["searched"] = {"from_time": from_time, "to_time": to_time}
         return result
 
     @staticmethod
@@ -587,7 +600,7 @@ class Workspace:
     def _fetch_connection(self, project_id, connection_id, trace_id=None, from_time=None, to_time=None, trace_ids=None):
         """Stage one preview from one trace ID (``trace_id``) or a browsed selection (``trace_ids``)."""
         from concurrent.futures import as_completed
-        from .langfuse_v2 import fetch_trace
+        from .langfuse_source import detect, fetch_trace
         connection, keys = self._connection_keys(project_id, connection_id)
         browsed = trace_ids is not None
         if not browsed:
@@ -629,6 +642,9 @@ class Workspace:
             if not halted:
                 halted = (code, message)
                 stop.set()
+        # Choose the API once, here: on a cold cache each worker would otherwise wait on the health endpoint
+        # by itself, outside the batch deadline and the stop flag.
+        detect(connection["host"])
         pool = ThreadPoolExecutor(max_workers=min(4, len(ids)))
         abandon = False
         try:

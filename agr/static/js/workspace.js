@@ -60,8 +60,9 @@ function syncProjectChrome() {
   $("#add-runs-button").textContent = activeProject() && activeProject().sample ? "Analyze my runs" : "Add runs";
   $("#reviewer-avatar").textContent = state.reviewer.split(/\s+/).slice(0, 2).map(x => x[0]).join("").toUpperCase();
   $("#reviewer-avatar").title = state.reviewer + " · local display attribution";
-  for (const [id, view] of [["home", "home"], ["sources", "sources"], ["investigations", "investigations"], ["settings", "settings"]]) $("#" + id + "-button").classList.toggle("current", state.view === view);
-  for (const id of ["home", "sources", "investigations", "settings", "runs", "fleet", "versions"]) $("#" + id + "-button").disabled = state.workspace.busy;
+  for (const [id, view] of [["home", "home"], ["sources", "sources"], ["investigations", "investigations"], ["settings", "settings"], ["ai-review", "ai-review"]]) $("#" + id + "-button").classList.toggle("current", state.view === view);
+  renderAIBadge();
+  for (const id of ["home", "sources", "investigations", "settings", "runs", "fleet", "versions", "ai-review"]) $("#" + id + "-button").disabled = state.workspace.busy;
   if (state.workspace.unavailable) for (const id of ["home", "sources", "investigations", "settings"]) $("#" + id + "-button").disabled = true;
 }
 async function switchProject(projectId, navigate = true) {
@@ -82,6 +83,7 @@ async function switchProject(projectId, navigate = true) {
   closeTrace();
   if (!state.serverReadOnly) await apiPatch("/workspace", { last_project: projectId });
   await loadInbox();
+  loadAIJobs();
   if (navigate) await goEngineer("home");
 }
 async function loadEngineerData() {
@@ -156,6 +158,7 @@ function renderProjectHome(host) {
   const stats = el("div", "engineer-stat-row");
   const counts = { Runs: detail.runs.length, Failed: detail.runs.filter(r => r.outcome.status === "FAILED").length, Unverified: detail.runs.filter(r => r.outcome.status === "UNVERIFIED").length, Undetermined: detail.runs.filter(r => r.outcome.status === "UNDETERMINED").length, "Operational error": detail.runs.filter(r => r.outcome.status === "OPERATIONAL_ERROR").length };
   for (const [label, value] of Object.entries(counts)) { const card = el("div", "engineer-stat"); card.append(el("strong", null, String(value)), el("span", null, label)); stats.append(card); } host.append(stats);
+  const aiHome = el("div", "ai-strip-host"); host.append(aiHome); renderAIStrip(aiHome);
   let last; try { last = localStorage.getItem("agr-last-" + state.projectId); } catch (_) {}
   if (last) {
     const p = new URLSearchParams(last); const runId = p.get("run");
@@ -266,7 +269,7 @@ const LANGFUSE_WINDOWS = [["1h", "Last hour", 3600e3], ["24h", "Last 24 hours", 
 function langfuseState() {
   const ws = state.workspace;
   ws.lf = ws.lf || { form: { name: "Langfuse", host: "", public_key: "", secret_key: "" }, preset: "24h", from: new Date(Date.now() - 86400e3).toISOString().slice(0, 16), to: new Date().toISOString().slice(0, 16),
-    filters: { name: "", tag: "", user_id: "", session_id: "", environment: "" }, limit: "50", result: null, searched: null, picked: new Set(), single: { trace_id: "", from: new Date(Date.now() - 7 * 86400e3).toISOString().slice(0, 16), to: new Date().toISOString().slice(0, 16) } };
+    filters: { trace_id: "", name: "", tag: "", user_id: "", session_id: "", environment: "", metadata_key: "", metadata_value: "" }, limit: "50", result: null, searched: null, view: { search: "", facets: {} }, picked: new Set(), single: { trace_id: "", from: new Date(Date.now() - 7 * 86400e3).toISOString().slice(0, 16), to: new Date().toISOString().slice(0, 16) } };
   return ws.lf;
 }
 // Keep the browsed list truthful after an import, so a repeat selection skips what was just imported.
@@ -288,17 +291,30 @@ function langfuseSelect(host, label, value, options, onchange) {
   for (const [id, text] of options) { const option = el("option", null, text); option.value = id; select.append(option); }
   select.value = value; select.addEventListener("change", () => onchange(select.value)); wrapper.append(select); host.append(wrapper); return select;
 }
+function langfuseWhen(iso) { return typeof iso === "string" && iso ? iso.replace("T", " ").replace(/\.\d+/, "").replace(/(Z|\+00:00)$/, "").slice(0, 19) : "—"; }
+function langfuseMoney(value) { return typeof value === "number" ? "$" + (value >= 0.01 ? value.toFixed(2) : value.toFixed(4)) : "—"; }
+function langfuseDuration(value) { return typeof value === "number" ? (value < 10 ? value.toFixed(2) : value.toFixed(1)) + " s" : "—"; }
+const LANGFUSE_FILTERS = [["trace_id", "Trace ID", "Any part of an ID. Searches the last 400 days, ignoring the time range above.", "lf-ids"], ["name", "Trace name (exact)", null, "lf-names"], ["environment", "Environment", null, "lf-environments"],
+  ["user_id", "User ID", null, "lf-users"], ["session_id", "Session ID", null, "lf-sessions"], ["tag", "Tag", null, "lf-tags"], ["metadata_key", "Metadata key", null, null], ["metadata_value", "Metadata value (exact)", null, null]];
 function renderLangfuseFetch(host) {
   const ws = state.workspace, lf = langfuseState(), values = lf.form;
   const connected = ws.connectionId && ws.connections.find(c => c.id === ws.connectionId);
   if (ws.connectionId && !connected) ws.connectionId = null;
   const connect = el("form", "engineer-card");
-  connect.append(el("h3", null, "1. Connect to Langfuse"), el("p", "engineer-hint", "Use a project's public and secret key (Langfuse v4). Keys stay in this server session and are not saved to disk. Older instances can use JSON file import."));
+  connect.append(el("h3", null, "1. Connect to Langfuse"), el("p", "engineer-hint", "Use a project's public and secret key (Langfuse 3 or 4; AGR reads the server's version and picks the matching API). A key pair belongs to one Langfuse project, so add another connection for another project. Keys stay in this server session and are not saved to disk. Older instances can use JSON file import."));
   if (ws.connections.length) {
     const label = el("label", "engineer-field"); label.append(el("span", null, "Connection")); const select = el("select");
-    const fresh = el("option", null, "Configure a new connection"); fresh.value = ""; select.append(fresh);
-    for (const c of ws.connections) { const option = el("option", null, c.name + " · " + c.status.replaceAll("_", " ")); option.value = c.id; select.append(option); }
+    const fresh = el("option", null, "Add another Langfuse project"); fresh.value = ""; select.append(fresh);
+    for (const c of ws.connections) { const option = el("option", null, ((c.langfuse_project && c.langfuse_project.name) || c.name) + " · " + c.host.replace(/^https?:\/\//, "") + " · " + c.status.replaceAll("_", " ")); option.value = c.id; select.append(option); }
     select.value = ws.connectionId || ""; select.addEventListener("change", () => { ws.connectionId = select.value; lf.result = null; lf.picked = new Set(); render(); }); label.append(select); connect.append(label);
+  }
+  if (connected) {
+    // What Langfuse itself shows at the top of a project: which project, its ID, the server, and how AGR reads it.
+    const project = connected.langfuse_project, facts = el("dl", "lf-facts");
+    for (const [term, value] of [["Langfuse project", project ? project.name : "not reported by this server"], ["Project ID", project && project.id], ["Server", connected.host], ["Version", connected.api_label ? (connected.server_version || "unknown") + " · " + connected.api_label : null]]) {
+      if (!value) continue; const row = el("div"); row.append(el("dt", null, term), el("dd", term === "Project ID" ? "mono" : null, value)); facts.append(row);
+    }
+    connect.append(facts);
   }
   if (!ws.connectionId) {
     for (const [key, label, type] of [["name", "Connection name", "text"], ["host", "Langfuse host (for example, https://cloud.langfuse.com)", "url"], ["public_key", "Public key (optional for the server's configured Langfuse host)", "text"], ["secret_key", "Secret key (optional for the server's configured Langfuse host)", "password"]]) workspaceField(connect, label, values[key], v => values[key] = v, type).required = key === "host";
@@ -315,61 +331,147 @@ function renderLangfuseFetch(host) {
   host.append(connect);
   if (!ws.connectionId) { renderLangfuseTraceId(host, lf); return; }
   const browse = el("form", "engineer-card");
-  browse.append(el("h3", null, "2. Find traces"), el("p", "engineer-hint", "Lists root observations from the time range, newest first. Nothing is imported or sent to a model until you preview and confirm. Data from older SDKs and exporters can take up to 15 minutes to appear in Langfuse, so very recent traces may be incomplete."));
-  langfuseSelect(browse, "Time range", lf.preset, LANGFUSE_WINDOWS.map(w => [w[0], w[1]]), v => { lf.preset = v; render(); });
+  browse.append(el("h3", null, "2. Find traces"), el("p", "engineer-hint", "Search the project the way Langfuse's trace table does: by time, ID, name, environment, user, session, tag or metadata. Nothing is imported or sent to a model until you preview and confirm. Data from older SDKs and exporters can take up to 15 minutes to appear in Langfuse, so very recent traces may be incomplete."));
+  const grid = el("div", "lf-filter-grid");
+  langfuseSelect(grid, "Time range", lf.preset, LANGFUSE_WINDOWS.map(w => [w[0], w[1]]), v => { lf.preset = v; render(); });
   if (lf.preset === "custom") {
-    workspaceField(browse, "From (UTC)", lf.from, v => lf.from = v, "datetime-local").required = true;
-    workspaceField(browse, "To (UTC)", lf.to, v => lf.to = v, "datetime-local").required = true;
+    workspaceField(grid, "From (UTC)", lf.from, v => lf.from = v, "datetime-local").required = true;
+    workspaceField(grid, "To (UTC)", lf.to, v => lf.to = v, "datetime-local").required = true;
   }
-  const refine = el("details", "engineer-advanced"); refine.append(el("summary", null, "Narrow by name, tag, user, session or environment"));
-  if (Object.values(lf.filters).some(Boolean)) refine.open = true;
-  for (const [key, label] of [["name", "Trace name (exact)"], ["tag", "Tag"], ["user_id", "User ID"], ["session_id", "Session ID"], ["environment", "Environment"]]) workspaceField(refine, label, lf.filters[key], v => lf.filters[key] = v);
-  browse.append(refine);
-  langfuseSelect(browse, "Maximum traces to list", lf.limit, [["25", "25"], ["50", "50"], ["100", "100"], ["250", "250"], ["500", "500"]], v => lf.limit = v);
-  const find = el("button", "button primary", "Find traces"); find.type = "submit"; browse.append(find);
+  for (const [key, label, hint, listId] of LANGFUSE_FILTERS) {
+    const input = workspaceField(grid, label, lf.filters[key], v => lf.filters[key] = v);
+    if (key === "trace_id") input.classList.add("mono");
+    if (listId) input.setAttribute("list", listId);
+    if (hint) input.parentElement.append(el("span", "engineer-hint", hint));
+  }
+  // Values already seen in this project's traces, offered as suggestions as Langfuse's own filter menus do.
+  if (lf.result) for (const [listId, getter] of [["lf-ids", t => t.trace_id], ["lf-names", t => t.name], ["lf-environments", t => t.environment], ["lf-users", t => t.user_id], ["lf-sessions", t => t.session_id], ["lf-tags", t => t.tags]]) {
+    const list = el("datalist"); list.id = listId; const seen = new Set();
+    for (const trace of lf.result.traces) for (const value of [].concat(getter(trace) || [])) if (value && !seen.has(value) && seen.size < 200) { seen.add(value); const option = el("option"); option.value = value; list.append(option); }
+    grid.append(list);
+  }
+  langfuseSelect(grid, "Maximum traces to list", lf.limit, [["25", "25"], ["50", "50"], ["100", "100"], ["250", "250"], ["500", "500"]], v => lf.limit = v);
+  browse.append(grid);
+  const actions = el("div", "engineer-actions");
+  const find = el("button", "button primary", "Find traces"); find.type = "submit"; actions.append(find);
+  actions.append(workspaceButton("Reset filters", () => { for (const key of Object.keys(lf.filters)) lf.filters[key] = ""; render(); }));
+  browse.append(actions);
   browse.addEventListener("submit", e => { e.preventDefault(); workspaceAction(async () => {
     const range = langfuseWindow(lf), filters = {}, projectId = state.projectId;
     for (const [key, value] of Object.entries(lf.filters)) if (value.trim()) filters[key] = value.trim();
     const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/traces"), Object.assign({ limit: Number(lf.limit) }, range, filters));
     if (projectId !== state.projectId) return;
-    lf.result = result; lf.searched = range; lf.picked = new Set(lf.result.traces.filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); await loadEngineerData();
+    // The server says which range it searched (a trace ID search replaces the form's range), and a preview uses the same one.
+    lf.result = result; lf.searched = result.searched || range; lf.view = { search: "", facets: {} };
+    lf.picked = new Set(lf.result.traces.filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); await loadEngineerData();
   }); });
   host.append(browse);
   if (lf.result) renderLangfuseResults(host, lf);
   renderLangfuseTraceId(host, lf);
 }
+// Facets the way Langfuse's filter sidebar groups them; each is the set of values present in the listed traces.
+const LANGFUSE_FACETS = [["environment", "Environment", t => [t.environment]], ["tag", "Tags", t => t.tags || []], ["name", "Name", t => [t.name]], ["user", "User", t => [t.user_id]]];
+function langfuseVisible(lf) {
+  const view = lf.view || (lf.view = { search: "", facets: {} }), needle = (view.search || "").trim().toLowerCase();
+  return lf.result.traces.filter(trace => {
+    for (const [key, , getter] of LANGFUSE_FACETS) { const chosen = view.facets[key]; if (chosen && chosen.size && ![].concat(getter(trace)).some(v => chosen.has(v))) return false; }
+    if (!needle) return true;
+    const haystack = [trace.trace_id, trace.name, trace.user_id, trace.session_id, trace.environment, trace.release, trace.version, (trace.tags || []).join(" "), trace.input_preview, trace.output_preview, Object.entries(trace.metadata || {}).map(([k, v]) => k + " " + v).join(" ")].join(" ").toLowerCase();
+    return haystack.includes(needle);
+  });
+}
 function renderLangfuseResults(host, lf) {
-  const ws = state.workspace, traces = lf.result.traces;
-  const card = el("div", "engineer-card"); card.append(el("h3", null, "3. Choose traces to preview"));
-  if (!traces.length) { card.append(el("p", null, "No traces matched. Widen the time range or clear a filter. Only traces whose root observation started in the range are listed, and a filter only matches traces that report that field.")); host.append(card); return; }
-  card.append(el("p", "engineer-hint", traces.length + " traces" + (lf.result.scan_capped ? " (the search stopped before the end of the time range; narrow the range or filters)" : lf.result.truncated ? " (more exist; raise the maximum or narrow the filters)" : "") + ". Up to 100 can be previewed at once. Traces already in this project start unchecked."));
-  const tools = el("div", "engineer-actions");
-  tools.append(workspaceButton("Select first 100 new", () => { lf.picked = new Set(traces.filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); render(); }), workspaceButton("Select none", () => { lf.picked = new Set(); render(); }));
-  card.append(tools);
-  const list = el("div", "selected-file-list");
-  for (const trace of traces) {
-    const label = el("label", "file-selection"); const check = el("input"); check.type = "checkbox"; check.checked = lf.picked.has(trace.trace_id); check.setAttribute("aria-label", "Select trace " + trace.name + " " + trace.trace_id);
-    check.addEventListener("change", () => { check.checked ? lf.picked.add(trace.trace_id) : lf.picked.delete(trace.trace_id); refresh(); });
-    const detail = [typeof trace.started_at === "string" && trace.started_at.replace("T", " ").slice(0, 19) + " UTC", trace.user_id && "user " + trace.user_id, trace.session_id && "session " + trace.session_id, trace.tags.length && trace.tags.join(", "), trace.level && trace.level !== "DEFAULT" && trace.level].filter(Boolean).join(" · ");
-    const copy = el("span"); copy.append(el("strong", null, trace.name), document.createElement("br"), el("span", "engineer-hint", detail + (detail ? " · " : "") + trace.trace_id));
-    label.append(check, copy, el("span", "engineer-hint", trace.already_imported ? "already imported" : "")); list.append(label);
+  const ws = state.workspace, traces = lf.result.traces, view = lf.view || (lf.view = { search: "", facets: {} });
+  const card = el("div", "engineer-card lf-results"); card.append(el("h3", null, "3. Choose traces to preview"));
+  const project = (ws.connections.find(c => c.id === ws.connectionId) || {}).langfuse_project;
+  if (!traces.length) { card.append(el("p", null, lf.filters.trace_id ? "No trace in this project has an ID containing that text. Check the ID, and that you are connected to the project the trace was sent to." : "No traces matched. Widen the time range or clear a filter. Only traces whose root observation started in the range are listed, and a filter only matches traces that report that field.")); host.append(card); return; }
+  const scanNote = lf.result.scan_capped ? " (the search stopped before the end of the time range; narrow the range or filters)" : lf.result.truncated ? " (more exist; raise the maximum or narrow the filters)" : "";
+  card.append(el("p", "engineer-hint", traces.length + " traces" + (project ? " in " + project.name : "") + scanNote + ". Up to 100 can be previewed at once. Traces already in this project start unchecked."));
+  // Narrow what is shown without asking Langfuse again.
+  const quick = el("div", "lf-quick"); const search = el("input"); search.type = "search"; search.placeholder = "Filter these traces: ID, name, user, session, tag, metadata, input or output";
+  search.setAttribute("aria-label", "Filter the listed traces"); search.value = view.search || ""; quick.append(search); card.append(quick);
+  const facetBox = el("div", "lf-facets");
+  for (const [key, label, getter] of LANGFUSE_FACETS) {
+    const counts = new Map(); for (const trace of traces) for (const value of new Set([].concat(getter(trace)))) if (value) counts.set(value, (counts.get(value) || 0) + 1);
+    if (counts.size < 2 && !(view.facets[key] && view.facets[key].size)) continue;
+    const group = el("div", "lf-facet"); group.append(el("span", "lf-facet-label", label));
+    for (const [value, count] of [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 12)) {
+      const chip = el("button", "fchip" + (view.facets[key] && view.facets[key].has(value) ? " on" : "")); chip.type = "button"; chip.setAttribute("aria-pressed", chip.classList.contains("on") ? "true" : "false");
+      chip.append(el("span", "fchip-label", value), el("span", "fchip-count", String(count)));
+      chip.addEventListener("click", () => { const set = view.facets[key] || (view.facets[key] = new Set()); set.has(value) ? set.delete(value) : set.add(value); paintRows(); renderFacetState(); });
+      chip.dataset.facet = key; chip.dataset.value = value; group.append(chip);
+    }
+    facetBox.append(group);
   }
-  card.append(list);
-  // Toggling a box updates these in place; rebuilding the list would drop keyboard focus on every change.
+  card.append(facetBox);
+  function renderFacetState() { facetBox.querySelectorAll("button[data-facet]").forEach(chip => { const on = !!(view.facets[chip.dataset.facet] && view.facets[chip.dataset.facet].has(chip.dataset.value)); chip.classList.toggle("on", on); chip.setAttribute("aria-pressed", on ? "true" : "false"); }); }
+  const tools = el("div", "engineer-actions"), shown = el("span", "engineer-hint");
+  tools.append(workspaceButton("Select first 100 new", () => { lf.picked = new Set(langfuseVisible(lf).filter(t => !t.already_imported).slice(0, 100).map(t => t.trace_id)); paintRows(); refresh(); }), workspaceButton("Select none", () => { lf.picked = new Set(); paintRows(); refresh(); }), shown);
+  card.append(tools);
+  const scroll = el("div", "table-scroll lf-table-scroll"), table = el("table", "vs-table lf-table"), head = el("tr");
+  // Langfuse 4 lists a trace by its root observation. Cost is summed over the whole trace when the server's metrics API
+  // answers; when it does not, the root observation's cost is shown and the header says so. Latency is always the root's.
+  const rootCost = traces.some(t => t.cost_scope === "root"), rootLatency = ((ws.connections.find(c => c.id === ws.connectionId) || {}).api) === "v2";
+  const headNotes = { Cost: rootCost && "Cost of the trace's root observation. This server did not give the whole-trace total for some traces; the imported trace carries every observation.",
+    Latency: rootLatency && "Latency of the trace's root observation, which is what Langfuse 4 lists." };
+  for (const label of ["", "Timestamp (UTC)", "Name", "Trace ID", "User", "Session", "Environment", "Tags", "Latency", "Cost", ""]) {
+    const cell = el("th", null, label);
+    if (headNotes[label]) cell.title = headNotes[label];
+    head.append(cell);
+  }
+  const thead = el("thead"); thead.append(head); const body = el("tbody"); table.append(thead, body); scroll.append(table); card.append(scroll);
+  function paintRows() {
+    body.textContent = ""; const visible = langfuseVisible(lf); refresh();
+    shown.textContent = visible.length === traces.length ? "" : visible.length + " of " + traces.length + " shown";
+    if (!visible.length) { const row = el("tr"), cell = el("td", "engineer-hint", "No listed trace matches these filters."); cell.colSpan = 11; row.append(cell); body.append(row); return; }
+    for (const trace of visible) {
+      const row = el("tr", "lf-row" + (lf.picked.has(trace.trace_id) ? " picked" : "")), open = !!(lf.view.open && lf.view.open.has(trace.trace_id));
+      const pick = el("td"), check = el("input"); check.type = "checkbox"; check.checked = lf.picked.has(trace.trace_id); check.setAttribute("aria-label", "Select trace " + trace.name + " " + trace.trace_id);
+      check.addEventListener("change", () => { check.checked ? lf.picked.add(trace.trace_id) : lf.picked.delete(trace.trace_id); row.classList.toggle("picked", check.checked); refresh(); });
+      pick.append(check); row.append(pick);
+      row.append(el("td", "mono nowrap", langfuseWhen(trace.started_at)));
+      const nameCell = el("td"); nameCell.append(el("strong", null, trace.name)); if (trace.already_imported) nameCell.append(document.createTextNode(" "), el("span", "ai-chip ai-reviewed lf-imported", "already imported")); row.append(nameCell);
+      const idCell = el("td", "lf-id"); idCell.append(el("code", null, trace.trace_id));
+      const copy = el("button", "lf-copy", "Copy"); copy.type = "button"; copy.setAttribute("aria-label", "Copy trace ID " + trace.trace_id);
+      copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(trace.trace_id); toast("Trace ID copied"); } catch (_) { toast("Copy is not available here; select the ID instead."); } });
+      idCell.append(copy); row.append(idCell);
+      row.append(el("td", null, trace.user_id || "—"), el("td", "mono", trace.session_id || "—"), el("td", null, trace.environment || "—"));
+      const tagCell = el("td"); for (const tag of trace.tags || []) tagCell.append(el("span", "lf-tag", tag)); if (!(trace.tags || []).length) tagCell.textContent = "—"; row.append(tagCell);
+      row.append(el("td", "num", langfuseDuration(trace.latency_s)), el("td", "num", langfuseMoney(trace.cost)));
+      const more = el("td"), toggle = el("button", "lf-toggle", open ? "Hide" : "Details"); toggle.type = "button"; toggle.setAttribute("aria-expanded", open ? "true" : "false"); toggle.setAttribute("aria-label", "Details for trace " + trace.trace_id);
+      toggle.addEventListener("click", () => { const set = lf.view.open || (lf.view.open = new Set()); set.has(trace.trace_id) ? set.delete(trace.trace_id) : set.add(trace.trace_id); paintRows(); });
+      more.append(toggle); row.append(more); body.append(row);
+      if (open) {
+        const detail = el("tr", "lf-detail"), cell = el("td"); cell.colSpan = 11; const dl = el("dl", "lf-detail-list");
+        const entries = [["Input", trace.input_preview], ["Output", trace.output_preview], ["Release", trace.release], ["Version", trace.version], ["Level", trace.level]];
+        for (const [term, value] of entries) { if (!value) continue; const item = el("div"); item.append(el("dt", null, term), el("dd", term === "Input" || term === "Output" ? "mono" : null, value)); dl.append(item); }
+        const metadata = Object.entries(trace.metadata || {});
+        const metaItem = el("div"); metaItem.append(el("dt", null, "Metadata"));
+        if (metadata.length) { const list = el("dd", "lf-metadata"); for (const [k, v] of metadata) { const pair = el("span", "lf-meta-pair"); pair.append(el("b", null, k), document.createTextNode(" " + v)); list.append(pair); } metaItem.append(list); } else metaItem.append(el("dd", "engineer-hint", "No metadata returned for this trace."));
+        dl.append(metaItem); cell.append(dl); detail.append(cell); body.append(detail);
+      }
+    }
+  }
+  search.addEventListener("input", () => { view.search = search.value; paintRows(); });
   const preview = workspaceButton("", () => workspaceAction(async () => {
     const projectId = state.projectId;
-    if (!lf.picked.size) throw new Error("Select at least one trace.");
-    const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/trace-previews"), Object.assign({ trace_ids: [...lf.picked] }, lf.searched));
+    // Only the traces on screen are previewed: one the filter has hidden is not something the engineer chose to bring in.
+    const chosen = chosenTraces();
+    if (!chosen.length) throw new Error("Select at least one trace.");
+    const result = await apiPost(projectPath("/connections/" + ws.connectionId + "/trace-previews"), Object.assign({ trace_ids: chosen }, lf.searched));
     if (projectId !== state.projectId) return;
     ws.preview = result; ws.selected = new Set(result.items.filter(i => i.status !== "invalid").map(i => i.id)); ws.batchLabel = "Langfuse · " + result.items.length + " traces";
   }), true);
   const limitNote = el("p", "engineer-hint");
+  // Toggling a box updates these in place; rebuilding the list would drop keyboard focus on every change.
+  function chosenTraces() { const shown = new Set(langfuseVisible(lf).map(t => t.trace_id)); return [...lf.picked].filter(id => shown.has(id)); }
   function refresh() {
-    const count = lf.picked.size;
+    const count = chosenTraces().length, hidden = lf.picked.size - count;
     preview.textContent = "Preview " + count + " selected trace" + (count === 1 ? "" : "s"); preview.disabled = !count || count > 100;
-    limitNote.textContent = count > 100 ? "Preview up to 100 traces at a time. Uncheck " + (count - 100) + " to continue." : ""; limitNote.hidden = count <= 100;
+    const notes = [count > 100 ? "Preview up to 100 traces at a time. Uncheck " + (count - 100) + " to continue." : "", hidden > 0 ? hidden + " selected trace" + (hidden === 1 ? " is" : "s are") + " hidden by the filter above and will not be previewed." : ""].filter(Boolean);
+    limitNote.textContent = notes.join(" "); limitNote.hidden = !notes.length;
   }
-  refresh(); card.append(preview, limitNote);
+  paintRows(); refresh(); card.append(preview, limitNote);
   host.append(card);
 }
 function renderLangfuseTraceId(host, lf) {
@@ -530,6 +632,7 @@ function renderInvestigationComposer(host) {
   $("#project-switcher").addEventListener("change", e => { if (e.target.value === "new") goEngineer("welcome").catch(e => toast(e.message)); else switchProject(e.target.value).catch(e => toast(e.message)); });
 $("#add-runs-button").addEventListener("click", () => startAddingRuns().catch(e => toast(e.message)));
 for (const view of ["home", "sources", "investigations", "settings"]) $("#" + view + "-button").addEventListener("click", () => goEngineer(view).catch(e => toast(e.message)));
+$("#ai-review-button").addEventListener("click", () => { state.ai.job = null; goEngineer("ai-review").catch(e => toast(e.message)); });
 $("#reviewer-avatar").addEventListener("click", () => goEngineer("settings").catch(e => toast(e.message)));
 
 function renderDemoStartHere(host, guide) {

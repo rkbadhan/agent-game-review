@@ -3,7 +3,96 @@
 // Settings are user defaults; review selections and jobs belong to one project.
 // Keys live only in this form until transmitted to the server session.
 state.ai = { settings: null, draft: null, error: null, selected: new Set(),
-  plan: null, job: null, jobs: [], force: false, token: 0, requestId: null };
+  plan: null, job: null, jobs: [], force: false, token: 0, requestId: null, filter: "", pollToken: 0, watching: new Set() };
+
+// ---- Where AI review stands: one source of truth for the sidebar badge, the Runs page and the AI review page ----
+const AI_ACTIVE = ["queued", "running", "cancelling"];
+const aiJobActive = job => AI_ACTIVE.includes(job.status);
+const AI_STRIP_LABELS = { reviewing: "reviewing", queued: "queued", reviewed: "AI reviewed", failed: "review failed", none: "not reviewed" };
+const AI_STATES = { reviewing: "Reviewing", queued: "Queued", reviewed: "AI reviewed", failed: "Review failed", none: "Not reviewed" };
+function activeAIJob() { return state.ai.jobs.find(aiJobActive) || null; }
+// Jobs seen working stay in state.ai.watching until a load shows them settled, so a job that finishes between two
+// polls is announced by whichever loader notices it first, not missed because another loader replaced the list.
+function settleAIJobs() {
+  const active = new Set(state.ai.jobs.filter(aiJobActive).map(j => j.id));
+  const finished = state.ai.jobs.filter(j => state.ai.watching.has(j.id) && !active.has(j.id));
+  state.ai.watching = active;
+  return finished;
+}
+async function announceAIFinished(finished) {
+  if (!finished.length) return;
+  toast("AI review finished · " + finished.map(aiJobSummary).join("; "));
+  await loadInbox();
+  if (state.view === "review") await refreshRun(); else if (state.view === "runs") render();
+}
+// Rebuilds a host only when what it shows changed, and gives focus back to the same control afterwards, so a poll
+// never drops the keyboard focus from a button or makes a screen reader read an unchanged status again.
+function aiPaint(host, signature, build) {
+  if (host._aiSignature === signature) return;
+  const focused = host.contains(document.activeElement) && document.activeElement !== host ? document.activeElement : null;
+  const key = focused && focused.dataset.aiKey;
+  host._aiSignature = signature; build();
+  // Only a control with a stable key gets focus back, and always the same one: its label or its position may have changed.
+  if (key) {
+    const again = Array.from(host.querySelectorAll("[data-ai-key]")).find(e => e.dataset.aiKey === key);
+    if (again) again.focus();
+  }
+}
+function aiKeyed(button, key) { button.dataset.aiKey = key; return button; }
+// What AI review has done for one run: the active job wins, then the newest job that touched it.
+function aiRunState(runId, run) {
+  for (const job of state.ai.jobs) {
+    if (!(job.run_ids || []).includes(runId)) continue;
+    const result = (job.results || []).find(r => r.run_id === runId);
+    if (!result && aiJobActive(job)) return job.current_run === runId ? "reviewing" : "queued";
+    if (result) return ["completed", "skipped"].includes(result.status) ? "reviewed" : "failed";
+  }
+  return run && run.review_mode === "model_enriched" ? "reviewed" : "none";
+}
+function aiChip(runId, run) {
+  const chip = el("span"); chip.dataset.aiRun = runId; paintAIChip(chip, aiRunState(runId, run), run); return chip;
+}
+function paintAIChip(chip, status, run) {
+  chip.className = "ai-chip ai-" + status;
+  chip.textContent = "";
+  if (status === "reviewing") chip.append(el("span", "ai-dot"));
+  chip.append(document.createTextNode(AI_STATES[status]));
+  chip.title = status === "reviewed" ? "Reviewed by the configured model" : status === "failed" ? "The last AI review of this run did not finish" : AI_STATES[status];
+}
+function aiCounts(runs) {
+  const counts = { reviewing: 0, queued: 0, reviewed: 0, failed: 0, none: 0 };
+  for (const run of runs) counts[aiRunState(run.run_id, run)]++;
+  return counts;
+}
+function aiProgressBar(job) {
+  const bar = el("progress", "ai-progress"); bar.max = job.total || 1; bar.value = (job.results || []).length;
+  bar.setAttribute("aria-label", "AI review progress"); bar.title = (job.results || []).length + " of " + job.total + " runs processed"; return bar;
+}
+function renderAIBadge() {
+  const badge = $("#ai-review-badge"), button = $("#ai-review-button");
+  if (!badge || !button) return;
+  button.hidden = aiReadOnly() || !!state.workspace.unavailable;
+  const active = activeAIJob(), failed = state.ai.jobs.some(j => !aiJobActive(j) && ["failed", "completed_with_errors", "interrupted"].includes(j.status));
+  badge.hidden = !active && !failed;
+  badge.className = "sidebar-badge" + (active ? " running" : " attention");
+  badge.textContent = active ? (active.results || []).length + "/" + active.total : "!";
+  button.setAttribute("aria-label", "AI review" + (active ? ", running, " + (active.results || []).length + " of " + active.total + " runs done" : failed ? ", some reviews need attention" : ""));
+  button.title = active ? "AI review is running: " + (active.results || []).length + " of " + active.total + " runs" : "Track AI reviews";
+}
+// In-place updates for everything that shows AI state, so polling never rebuilds a page the reader is using.
+function refreshAIViews() {
+  renderAIBadge();
+  document.querySelectorAll("[data-ai-run]").forEach(chip => paintAIChip(chip, aiRunState(chip.dataset.aiRun, ((state.queue && state.queue.runs) || []).find(r => r.run_id === chip.dataset.aiRun)), null));
+  document.querySelectorAll(".ai-strip-host").forEach(renderAIStrip);
+  const activity = $("#ai-activity"); if (activity) renderAIActivity(activity);
+  const job = $("#ai-job"); if (job && state.ai.job) renderAIJob(job, state.ai.job);
+}
+function aiWhen(iso) { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""; }
+function aiJobSummary(job) {
+  const results = job.results || [], reviewed = results.filter(r => ["completed", "skipped"].includes(r.status)).length, failed = results.filter(r => ["failed", "incomplete"].includes(r.status)).length;
+  const waiting = aiJobActive(job) ? Math.max(0, job.total - results.length) : 0;
+  return [reviewed + " reviewed", failed && failed + " failed", waiting && waiting + " waiting"].filter(Boolean).join(" · ");
+}
 
 async function loadAIReviewData() {
   const project = state.projectId, token = ++state.ai.token;
@@ -12,16 +101,35 @@ async function loadAIReviewData() {
       api("/workspace/ai-review"), api(projectPath("/ai-reviews"))
     ]);
     if (project !== state.projectId || token !== state.ai.token) return;
-    state.ai.settings = settings; state.ai.jobs = jobs.jobs; state.ai.error = null;
+    state.ai.settings = settings; state.ai.jobs = sortAIJobs(jobs.jobs); state.ai.error = null;
     if (!state.ai.draft && !settings.read_only) {
       state.ai.draft = Object.fromEntries(["provider", "model", "base_url", "cost_budget_usd", "time_budget_s", "request_timeout_s"].map(k => [k, settings[k]]));
     }
     const jobId = new URLSearchParams(location.search).get("review_job");
     if (jobId && !state.ai.job) state.ai.job = jobs.jobs.find(j => j.id === jobId) || null;
-    if (state.ai.job && ["queued", "running", "cancelling"].includes(state.ai.job.status)) pollAIReview();
+    const finished = settleAIJobs();
+    refreshAIViews();
+    if (state.ai.jobs.some(aiJobActive)) pollAIReview();
+    announceAIFinished(finished);
   } catch (error) {
     if (project === state.projectId && token === state.ai.token) state.ai.error = error.message;
   }
+}
+function sortAIJobs(jobs) { return jobs.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")); }
+// Loads the project's jobs for the badge and the Runs page without touching settings; safe to call on any view.
+async function loadAIJobs() {
+  if (aiReadOnly() || (state.workspace && state.workspace.unavailable) || !state.projectId) return;
+  const project = state.projectId, token = ++state.ai.pollToken;
+  try {
+    const data = await api("/projects/" + encodeURIComponent(project) + "/ai-reviews");
+    if (project !== state.projectId || token !== state.ai.pollToken) return;
+    state.ai.jobs = sortAIJobs(data.jobs);
+    if (state.ai.job) state.ai.job = state.ai.jobs.find(j => j.id === state.ai.job.id) || state.ai.job;
+    const finished = settleAIJobs();
+    refreshAIViews();
+    if (state.ai.jobs.some(aiJobActive)) pollAIReview();
+    announceAIFinished(finished);
+  } catch (_) { /* the badge and chips simply keep what they had */ }
 }
 // Settings are shared defaults and reviews only add snapshots, so every project
 // of a writable local server can configure and run AI review.
@@ -152,7 +260,8 @@ function renderAIReview(host) {
     host.append(el("p", null, "AI review is unavailable on a read-only server.")); return;
   }
   aiError(host);
-  if (ai.job) { renderAIJob(host, ai.job); return; }
+  if (ai.job) { const box = el("div"); box.id = "ai-job"; host.append(box); renderAIJob(box, ai.job); return; }
+  const activity = el("section"); activity.id = "ai-activity"; host.append(activity); renderAIActivity(activity);
   host.append(workspaceButton("Configure AI review", () => goEngineer("settings")));
   const settings = ai.settings;
   if (!settings || settings.read_only) { host.append(el("p", null, "Configure AI settings before starting a review.")); return; }
@@ -206,58 +315,112 @@ function renderAIReview(host) {
       ai.job = job; ai.plan = null; pollAIReview();
     }), true)); host.append(card);
   }
-  if (ai.jobs.length) {
-    host.append(el("h2", "engineer-section-title", "Review history"));
-    for (const job of ai.jobs) {
-      const row = el("div", "engineer-list-row");
-      row.append(el("span", null, job.settings.model + " · " + job.status.replaceAll("_", " ") + " · " + job.results.length + "/" + job.total),
-        workspaceButton("Open review job", () => { ai.job = job; pollAIReview(); render(); }));
-      host.append(row);
-    }
+}
+function renderAIActivity(host) {
+  const jobs = state.ai.jobs;
+  aiPaint(host, JSON.stringify(jobs.slice(0, 9)), () => paintAIActivity(host, jobs));
+}
+function paintAIActivity(host, jobs) {
+  host.textContent = "";
+  host.append(el("h2", "engineer-section-title", "Activity"));
+  if (!jobs.length) { host.append(el("p", "engineer-hint", "No AI reviews yet. Select runs below, or use Review with AI on the Runs page, to start one. Reviews run in the background and show up here.")); return; }
+  for (const job of jobs.slice(0, 8)) {
+    const active = aiJobActive(job), card = el("div", "ai-job-card" + (active ? " active" : ""));
+    const top = el("div", "ai-job-top");
+    top.append(el("span", "ai-job-status ai-job-" + job.status, job.status.replaceAll("_", " ")), el("strong", null, (job.results || []).length + " of " + job.total + " runs"), el("span", "engineer-hint", aiJobSummary(job)));
+    const open = aiKeyed(workspaceButton(active ? "Watch progress" : "View details", () => { state.ai.job = job; pollAIReview(); render(); }, active), "activity:" + job.id);
+    top.append(open); card.append(top, aiProgressBar(job));
+    const meta = [job.settings && job.settings.model, aiWhen(job.created_at)].filter(Boolean).join(" · ");
+    card.append(el("p", "engineer-hint", meta + (active && job.current_run ? " · reviewing " + job.current_run : "")));
+    if (job.error) card.append(el("p", "engineer-error", job.error));
+    host.append(card);
   }
+  if (jobs.length > 8) host.append(el("p", "engineer-hint", "Showing the 8 most recent reviews."));
 }
 function renderAIJob(host, job) {
-  const active = ["queued", "running", "cancelling"].includes(job.status);
-  const status = el("p", "engineer-status", job.status.replaceAll("_", " ") + " · " + job.results.length + "/" + job.total + " runs processed");
+  aiPaint(host, JSON.stringify(job), () => paintAIJob(host, job));
+}
+function paintAIJob(host, job) {
+  host.textContent = "";
+  const active = aiJobActive(job), results = job.results || [], byRun = new Map(results.map(r => [r.run_id, r]));
+  host.append(aiKeyed(workspaceButton("All AI reviews", () => { state.ai.job = null; render(); }), "job:back"));
+  const status = el("p", "engineer-status", job.status.replaceAll("_", " ") + " · " + results.length + "/" + job.total + " runs processed" + (aiJobSummary(job) ? " · " + aiJobSummary(job) : ""));
   status.setAttribute("role", "status"); host.append(status);
-  host.append(el("p", "ai-effective", job.settings.model + " · " + job.settings.base_url));
-  if (job.current_run) host.append(el("p", null, "Reviewing " + job.current_run));
-  const progress = el("progress"); progress.max = job.total; progress.value = job.results.length;
-  progress.setAttribute("aria-label", "AI review progress"); host.append(progress);
+  host.append(el("p", "ai-effective", (job.settings && job.settings.model) + " · " + (job.settings && job.settings.base_url) + (job.created_at ? " · started " + aiWhen(job.created_at) : "")));
+  if (job.current_run) host.append(el("p", "ai-now", "Reviewing now: " + job.current_run));
+  host.append(aiProgressBar(job));
   if (job.error) host.append(el("p", "engineer-error", job.error));
   const actions = el("div", "engineer-actions");
-  if (active) actions.append(workspaceButton("Cancel remaining reviews", () => aiAction(async () => {
+  if (active) actions.append(aiKeyed(workspaceButton("Cancel remaining reviews", () => aiAction(async () => {
     state.ai.job = await apiPost(projectPath("/ai-reviews/" + job.id + "/cancel")); pollAIReview();
-  })));
-  if (["failed", "completed_with_errors", "cancelled", "interrupted"].includes(job.status)) actions.append(workspaceButton("Retry unfinished reviews", () => aiAction(async () => {
+  })), "job:cancel"));
+  if (["failed", "completed_with_errors", "cancelled", "interrupted"].includes(job.status)) actions.append(aiKeyed(workspaceButton("Retry unfinished reviews", () => aiAction(async () => {
     state.ai.job = await apiPost(projectPath("/ai-reviews/" + job.id + "/retry")); pollAIReview();
-  })));
-  actions.append(workspaceButton("Choose other runs", () => openAIReview()));
-  actions.append(workspaceButton("AI settings", () => goEngineer("settings"))); host.append(actions);
-  if (active) host.append(el("p", "engineer-hint", "Cancelling stops between runs; a provider request already in progress may finish and incur cost. You can leave this page and return through review history."));
-  for (const result of job.results) {
-    const row = el("div", "engineer-list-row"); row.append(el("span", null, result.run_id),
-      el("span", ["failed", "incomplete"].includes(result.status) ? "engineer-error" : "engineer-hint", result.error || result.status),
-      workspaceButton("Open run", () => selectRun(result.run_id)));
-    host.append(row);
+  })), "job:retry"));
+  actions.append(aiKeyed(workspaceButton("Choose other runs", () => openAIReview()), "job:choose"));
+  actions.append(aiKeyed(workspaceButton("AI settings", () => goEngineer("settings")), "job:settings")); host.append(actions);
+  if (active) host.append(el("p", "engineer-hint", "Cancelling stops between runs; a provider request already in progress may finish and incur cost. You can leave this page; progress stays in the sidebar and on the Runs page."));
+  // Every run of the job, including the ones still waiting, so it is clear what is being done where.
+  const list = el("div", "ai-run-states"); list.setAttribute("role", "list");
+  for (const runId of job.run_ids || []) {
+    const result = byRun.get(runId);
+    const status = result ? (["completed", "skipped"].includes(result.status) ? "reviewed" : "failed") : active ? (job.current_run === runId ? "reviewing" : "queued") : "none";
+    const row = el("div", "engineer-list-row ai-run-row"); row.setAttribute("role", "listitem");
+    const chip = el("span"); paintAIChip(chip, status, null); if (!result && !active) chip.textContent = "Not run";
+    row.append(chip, el("span", "ai-run-id", runId));
+    if (result && result.error) row.append(el("span", "engineer-error", result.error));
+    else if (result && result.status === "skipped") row.append(el("span", "engineer-hint", "already reviewed with this configuration"));
+    row.append(aiKeyed(workspaceButton("Open run", () => selectRun(runId)), "run:" + runId));
+    list.append(row);
   }
+  host.append(list);
+}
+// The Runs page's AI review summary: counts, the running job, and a button scoped to the runs on screen.
+function renderAIStrip(host) {
+  if (aiReadOnly() || (state.workspace && state.workspace.unavailable)) { aiPaint(host, "hidden", () => { host.textContent = ""; }); return; }
+  const runs = ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
+  const counts = aiCounts(runs), active = activeAIJob();
+  const todo = runs.filter(r => ["none", "failed"].includes(aiRunState(r.run_id, r)));
+  const signature = JSON.stringify([counts, active && [active.id, active.total, (active.results || []).length, active.current_run], todo.map(r => r.run_id)]);
+  aiPaint(host, signature, () => paintAIStrip(host, runs, counts, active, todo));
+}
+function paintAIStrip(host, runs, counts, active, todo) {
+  host.textContent = "";
+  if (!runs.length) return;
+  const strip = el("div", "ai-strip");
+  const head = el("div", "ai-strip-head"); head.append(el("strong", null, "AI review"));
+  const parts = [["reviewed", counts.reviewed], ["reviewing", counts.reviewing], ["queued", counts.queued], ["failed", counts.failed], ["none", counts.none]].filter(([, n]) => n);
+  for (const [status, n] of parts) { const chip = el("span", "ai-chip ai-" + status); chip.append(document.createTextNode(n.toLocaleString() + " " + AI_STRIP_LABELS[status])); head.append(chip); }
+  strip.append(head);
+  if (active) {
+    const line = el("div", "ai-strip-active");
+    line.append(el("span", null, (active.results || []).length + " of " + active.total + " runs" + (active.current_run ? " · reviewing " + active.current_run : "")), aiProgressBar(active),
+      aiKeyed(workspaceButton("View progress", () => { state.ai.job = active; goEngineer("ai-review"); }), "strip:progress"));
+    strip.append(line);
+  }
+  const actions = el("div", "ai-strip-actions");
+  if (todo.length) actions.append(aiKeyed(workspaceButton("Review " + todo.length.toLocaleString() + " not yet reviewed with AI", () => openAIReview(todo.map(r => r.run_id).slice(0, 1000)), !active), "strip:review"));
+  actions.append(aiKeyed(workspaceButton("AI review activity", () => { state.ai.job = null; goEngineer("ai-review"); }), "strip:activity"));
+  strip.append(actions); host.append(strip);
 }
 let aiPollTimer;
+// Starts (or restarts) tracking: reload the project's jobs now, keep reloading while any is working, and refresh
+// everything that shows AI state in place. When a job finishes, the runs are reloaded so findings appear.
 async function pollAIReview() {
   clearTimeout(aiPollTimer);
-  const project = state.projectId, job = state.ai.job;
-  if (!job) return;
+  const project = state.projectId, token = ++state.ai.pollToken;
+  // The job in hand is the newest copy the server returned (a retry or cancel answer); it wins over the list's older one.
+  if (state.ai.job) state.ai.jobs = sortAIJobs([state.ai.job, ...state.ai.jobs.filter(j => j.id !== state.ai.job.id)]);
+  state.ai.jobs.filter(aiJobActive).forEach(j => state.ai.watching.add(j.id));
   try {
-    const result = await api("/projects/" + encodeURIComponent(project) + "/ai-reviews/" + job.id);
-    if (project !== state.projectId || !state.ai.job || state.ai.job.id !== job.id) return;
-    const wasActive = ["queued", "running", "cancelling"].includes(job.status);
-    state.ai.job = result;
-    if (state.view === "ai-review") render();
-    if (["queued", "running", "cancelling"].includes(result.status)) aiPollTimer = setTimeout(pollAIReview, 1200);
-    else if (wasActive) {
-      await loadInbox();
-      if (state.view === "review") await refreshRun();
-    }
+    const data = await api("/projects/" + encodeURIComponent(project) + "/ai-reviews");
+    if (project !== state.projectId || token !== state.ai.pollToken) return;
+    state.ai.jobs = sortAIJobs(data.jobs); state.ai.error = null;
+    if (state.ai.job) state.ai.job = state.ai.jobs.find(j => j.id === state.ai.job.id) || state.ai.job;
+    const finished = settleAIJobs(), stillActive = new Set(state.ai.watching);
+    refreshAIViews();
+    await announceAIFinished(finished);
+    if (stillActive.size) aiPollTimer = setTimeout(pollAIReview, 1500);
   } catch (error) {
     if (project !== state.projectId) return;
     state.ai.error = error.message;
@@ -265,4 +428,3 @@ async function pollAIReview() {
     aiPollTimer = setTimeout(pollAIReview, 3000);
   }
 }
-
