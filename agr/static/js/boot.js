@@ -133,6 +133,7 @@ async function boot() {
     // if the reader opens Runs or a review, avoiding transcript I/O here.
     if (want.view === "fleet") { await dispatchLocation(want, true); return; }
     await loadInbox();
+    loadAIJobs();
     // T1: first use opens straight into the review — no blocking terminology
     // modal. The same orientation content stays reachable on demand from Help
     // ("What do these terms mean?") and from Glossary.

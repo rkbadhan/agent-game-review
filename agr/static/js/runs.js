@@ -87,10 +87,10 @@ function renderRunsSurface(main) {
     back.addEventListener("click", () => { state.view = "review"; render(); });
     util.append(back);
   }
-  if (!aiReadOnly() && !state.workspace.unavailable)
-    util.append(workspaceButton("Review runs with AI", () => openAIReview()));
   nav.append(util);
   main.append(nav);
+  // AI review: where it stands, what is running, and a button scoped to these runs (not an empty selection).
+  const aiHost = el("div", "ai-strip-host"); main.append(aiHost); renderAIStrip(aiHost);
 
   const stat = renderRunsStatLine();
   if (stat) main.append(stat);
@@ -133,7 +133,7 @@ function renderRunsControls(host) {
   search.setAttribute("aria-label", "Search runs by task name or run ID");
   search.addEventListener("input", () => {
     state.runsSearch = search.value;
-    if (clear) clear.hidden = !(state.filters.size || state.runsSearch);
+    if (clear) clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter);
     renderRunsTable($("#runs-table-host"));
     syncUrl();
   });
@@ -143,16 +143,33 @@ function renderRunsControls(host) {
   host.append(buildFilterChipsRow(refresh));
   const actions = el("div", "runs-toolbar-actions");
   actions.append(buildSortRow(refresh));
+  if (!aiReadOnly() && !state.workspace.unavailable) {
+    const wrap = el("label", "runs-ai-filter"); wrap.append(el("span", null, "AI review"));
+    const select = el("select"); select.setAttribute("aria-label", "Filter runs by AI review status");
+    for (const [value, label] of [["", "All"], ["none", "Not reviewed"], ["active", "Queued or reviewing"], ["reviewed", "AI reviewed"], ["failed", "Review failed"]]) { const option = el("option", null, label); option.value = value; select.append(option); }
+    select.value = state.ai.filter || "";
+    select.addEventListener("change", () => { state.ai.filter = select.value; if (clear) clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter); renderRunsTable($("#runs-table-host")); });
+    wrap.append(select); actions.append(wrap);
+  }
   clear = el("button", "runs-clear", "Clear all");
   clear.type = "button";
-  clear.hidden = !(state.filters.size || state.runsSearch);
+  clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter);
   clear.addEventListener("click", () => {
     state.filters.clear();
     state.runsSearch = "";
+    state.ai.filter = "";
     refresh();
   });
   actions.append(clear);
   host.append(actions);
+}
+
+// The AI review filter is client-side: job state lives with the project's AI jobs, not in the queue.
+function aiFilterMatches(run) {
+  const want = state.ai.filter;
+  if (!want) return true;
+  const status = aiRunState(run.run_id, run);
+  return want === "active" ? status === "queued" || status === "reviewing" : status === want;
 }
 
 function runsOutcomeBadgeClass(status) {
@@ -195,7 +212,7 @@ function runsIdentityCell(r) {
 function renderRunsTable(host) {
   host.textContent = "";
   const all = (state.queue && state.queue.runs) || [];
-  const runs = all.filter(r => (!state.patternRunIds || state.patternRunIds.has(r.run_id)) && (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch));
+  const runs = all.filter(r => (!state.patternRunIds || state.patternRunIds.has(r.run_id)) && (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch) && aiFilterMatches(r));
   const card = el("div", "card card-pad runs-table-card");
   // Coordinator review 2, item 7: this used to always repeat "N runs ·
   // Sorted by …" — a duplicate of the page's own stat line above whenever
@@ -203,7 +220,7 @@ function renderRunsTable(host) {
   // case), and "Sorted by" duplicates what the Sort control's own selected
   // option already says. It's worth a line only when a search or a filter
   // has made this table's count differ from the sweep's total.
-  if (state.runsSearch || state.filters.size) {
+  if (state.runsSearch || state.filters.size || state.ai.filter) {
     const tableMeta = el("div", "runs-table-meta");
     // `all` is already filter-narrowed (state.queue.runs, loaded with the
     // active filters applied server-side) — only the client-side search
@@ -219,10 +236,10 @@ function renderRunsTable(host) {
     empty.append(icon("search", "runs-empty-icon"));
     empty.append(el("strong", null, state.runsSearch
       ? "No runs match that search"
-      : state.filters.size ? "No runs match the selected filters" : "No runs in this sweep"));
+      : state.filters.size || state.ai.filter ? "No runs match the selected filters" : "No runs in this sweep"));
     empty.append(el("p", null, state.runsSearch
       ? "Try a task name, run ID, or clear the search."
-      : state.filters.size
+      : state.filters.size || state.ai.filter
         ? "Clear the filters to return to the full triage queue."
         : "Ingest a run to begin reviewing this sweep."));
     const emptyActions = el("div", "runs-empty-actions");
@@ -237,11 +254,11 @@ function renderRunsTable(host) {
       });
       emptyActions.append(clearSearch);
     }
-    if (state.filters.size) {
+    if (state.filters.size || state.ai.filter) {
       const clearFilters = el("button", "button", "Show all runs");
       clearFilters.type = "button";
       clearFilters.addEventListener("click", () => {
-        state.filters.clear();
+        state.filters.clear(); state.ai.filter = "";
         loadInbox().then(render).catch(showInboxError);
       });
       emptyActions.append(clearFilters);
@@ -261,8 +278,10 @@ function renderRunsTable(host) {
   // columns (.col-compact, width:1% in app.css) replaces the old ~20 lines
   // of has-duration/has-cost nth-child width percentages — Session and Main
   // finding (no compact class) simply take whatever space is left over.
+  const showAI = !aiReadOnly() && !state.workspace.unavailable;
   const headerDefs = [["Session", null], ["Outcome", "col-compact"],
     ["Main finding", null], ["Review status", "col-compact"]];
+  if (showAI) headerDefs.push(["AI review", "col-compact"]);
   if (showDuration) headerDefs.push(["Duration", "col-compact num"]);
   if (showCost) headerDefs.push(["Cost", "col-compact num"]);
   const headRow = el("tr");
@@ -336,6 +355,8 @@ function renderRunsTable(host) {
       rsTd.append(rs);
     }
     tr.append(rsTd);
+
+    if (showAI) { const aiTd = el("td"); aiTd.append(aiChip(r.run_id, r)); tr.append(aiTd); }
 
     if (showDuration) tr.append(td(fmtDuration(r.duration_s) || "—", "vs-rate num"));
     if (showCost) tr.append(td(fmtCost(r.cost) || "—", "vs-rate num"));

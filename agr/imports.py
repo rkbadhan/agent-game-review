@@ -27,7 +27,7 @@ CATALOG = [
     {"id": "claude", "name": "Claude Code", "help": "Select saved session JSONL files, stream-json output, or final-result JSON. Saved sessions usually live under ~/.claude/projects; choose that directory explicitly.", "formats": ".jsonl, .json", "methods": ["files", "folder"]},
     {"id": "pi", "name": "pi", "help": "Choose session JSONL files, or select your ~/.pi/agent/sessions directory. Only the selected files are transferred.", "formats": ".jsonl", "methods": ["files", "folder"]},
     {"id": "otel", "name": "OpenTelemetry", "help": "Upload OTLP JSON with resourceSpans. Each trace is imported separately. This is a file importer, not a collector receiver.", "formats": "OTLP .json", "methods": ["files"]},
-    {"id": "langfuse", "name": "Langfuse", "help": "Connect with project keys, browse recent traces by time, name, tag, user or session, and import a selection. Or import a trace JSON export.", "formats": "trace .json", "methods": ["files", "trace"]},
+    {"id": "langfuse", "name": "Langfuse", "help": "Connect with project keys (Langfuse 3 or 4), browse recent traces by time, name, tag, user or session, and import a selection. Or import a trace JSON export.", "formats": "trace .json", "methods": ["files", "trace"]},
     {"id": "langsmith", "name": "LangSmith", "help": "Upload a JSON list of run records, or {runs: [...], feedback: [...]}. Each trace is imported separately. Live API connection is not available.", "formats": "run-tree .json", "methods": ["files"]},
     {"id": "atif", "name": "Custom ATIF", "help": "Upload a document matching AGR's ATIF-shaped contract: atif_version, run, task, and steps. Arbitrary JSON is not supported.", "formats": "ATIF .json", "methods": ["files"]},
 ]

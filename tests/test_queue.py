@@ -302,3 +302,25 @@ def test_next_unhandled_walks_frozen_order(tmp_path):
     workflow.set_workflow(store, second, actor="a", base_version=0,
                           disposition="no_action", progress="handled")
     assert queue.next_unhandled(store, first, sort="triage") == order[2]
+
+
+def test_chips_in_one_group_widen_and_groups_narrow(tmp_path):
+    """Failed + Passed is "either": the old all-chips AND made two outcomes always empty."""
+    store = _store(tmp_path)
+    ids = lambda *filters: set(queue.queue_view(store, filters=list(filters))["run_ids"])
+    failed, passed = ids("failed"), ids("passed")
+    assert failed and passed and not (failed & passed)
+    assert ids("failed", "passed") == failed | passed
+    assert ids("failed", "passed", "undetermined", "unverified", "operational_error") == ids()
+    # A different group narrows: failed-or-passed AND unreviewed (nothing is reviewed yet) is unchanged,
+    # and a review state nobody has reached empties it.
+    assert ids("failed", "passed", "unreviewed") == failed | passed
+    assert ids("failed", "passed", "handled") == set()
+    # Behavioural chips are their own groups, so they narrow.
+    with_truth = ids("ground_truth")
+    assert ids("failed", "ground_truth") == failed & with_truth
+    # Ground truth and analysis-only are two answers to one question, so choosing both means either.
+    assert ids("ground_truth", "analysis_only") == ids()
+    # The echoed definition and the counts do not depend on grouping.
+    view = queue.queue_view(store, filters=["passed", "failed"])
+    assert view["filters"] == ["failed", "passed"] and view["filter_counts"] == queue.queue_view(store)["filter_counts"]

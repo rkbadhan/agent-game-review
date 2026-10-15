@@ -12,6 +12,56 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Added
 
+- **AI review is trackable.** The sidebar has an **AI review** entry with a live
+  `done/total` badge, and the Runs page shows a summary strip (reviewed,
+  reviewing, queued, failed, not reviewed), an **AI review** column with a
+  status chip per run, a filter for it, and a button that reviews the runs
+  listed there instead of opening an empty selection. The AI review page opens
+  on an activity list of every job with progress bars, and a job shows every run
+  with its own state, including the ones still waiting. Everything updates in
+  place while a job runs, and finishing a job reloads the runs and says so.
+- **The Langfuse browser mirrors Langfuse's own presentation.** The connection
+  shows the Langfuse project name and ID, the server and its version. Listed
+  traces carry what Langfuse's trace table shows: timestamp, name, trace ID
+  (with a copy button), user, session, environment, tags, latency, cost, and a
+  details row with input, output, release, version and metadata. You can search
+  by trace ID (over the last 400 days, ignoring the time range) and by a
+  metadata key and value, and narrow the listed traces in the page by text or by
+  environment, tag, name and user without asking Langfuse again.
+
+### Fixed
+
+- **Review follow-ups (PR 118).** A failed retry on the other Langfuse API now
+  reports its own error (bad keys, a rate limit, a timeout) instead of the first
+  404, and a rate limit no longer marks a connection unusable. A trace ID that
+  does not exist on a 3.x server says so instead of blaming the host. Version 4
+  listings sort by instant, as version 3 does. The AI review panels keep
+  keyboard focus and are not rebuilt when a poll finds nothing new; a job that
+  finishes between polls is still announced. The Runs strip reads "AI reviewed",
+  not "ai reviewed". Choosing both Ground truth and Analysis only lists both
+  instead of nothing. Preview acts only on selected traces still shown after
+  filtering the list, and says how many are hidden. The batch picks the API once
+  before its workers start. The trace ID hint says 400 days. On Langfuse 4 the
+  listed cost is now the whole trace's, summed by the metrics API in batches of
+  50 trace IDs; when a server does not answer it, the root observation's cost
+  is shown and the Cost header says so. Latency stays the root observation's and
+  its header says so.
+- **Run filters combine sensibly.** Chips in one group (the outcome buckets,
+  the review states) are alternatives, so Failed plus Passed lists both instead
+  of nothing; groups and the behavioural chips still narrow.
+- **Selected filter chips with no runs were unreadable** (grey text on the
+  accent fill). Contrast for chips, the AI review labels and the Langfuse table
+  is now checked in light and dark by tests.
+
+- **Langfuse 3.x servers work in the browser connector.** The connector reads
+  the server's version from `/api/public/health` and uses the v1 trace
+  endpoints (`/api/public/traces` to list, `/api/public/traces/{id}` to fetch)
+  for version 3 and earlier, and the existing observations v2 path for version
+  4 and later. If the version cannot be read, v2 is tried first. A 404 from the
+  chosen API is retried once on the other one, so a server whose version does
+  not match the endpoints it serves still works. The connection shows which
+  version and API were found. A v1 fetch returns the whole trace, so it has no
+  time-window note.
 - **Browse and batch-import Langfuse traces from the browser.** After
   connecting with a project key pair (access is tested first), engineers list
   recent traces by time range, name, tag, user, session or environment, select
