@@ -39,12 +39,11 @@ Two things this adapter gets right that a naive mapping would not:
    ``agr.ingest_harbor._parse_returncode`` directly rather than re-deriving a
    second, divergent copy of that decoder. A decoded non-zero/zero return
    code always wins over an ambiguous or absent ``level``.
-2. **``scores`` are the first external verifier signal any adapter carries.**
-   A Langfuse trace's ``scores`` (from a Langfuse-run evaluator, a human
-   annotation queue, or the SDK's own ``score()`` call) map into
-   ``verifier.checks[]`` with ``source: instrumented_assertion`` — stronger
-   evidence than the reward-only Harbor path, and exactly the shape
-   ``agr.verifier_synth`` already targets for in-session test results.
+2. **Scores retain their evaluator-defined meaning.** Original values, types,
+   subjects and provenance are kept in ``source_scores``. Only an explicit
+   verifier sidecar establishes whole-task checks; metric polarity, thresholds
+   and coverage are never guessed.
+
 
 The actual span-tree flattening (ordering, tool-call/result fan-out, subagent
 attribution, retry recognition, terminal-event selection, capability
@@ -61,7 +60,6 @@ from typing import Any, Optional, Union
 
 from .adapter import AdapterResult
 from .ingest_harbor import _parse_returncode  # reused, not re-derived (see module docstring)
-from .schema import CHECK_STATUSES
 from .span_tree import NormalizedSpan, flatten_span_tree
 
 # Provenance stamp written into every document this adapter emits. Bump when
@@ -88,7 +86,8 @@ from .span_tree import NormalizedSpan, flatten_span_tree
 #      Re-ingest is recommended for any store populated from adapter 0.1:
 #      previously-ingested Langfuse runs may have zero observations and/or
 #      categorical checks stuck at "unknown" that a re-run now resolves.
-LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.3"
+# 0.4: preserve trace display identity and keep scores as metrics; explicit verifier required.
+LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.4"
 
 # Langfuse observation ``type`` -> normalized span kind (case-insensitive:
 # the SDKs and the API have varied in casing across versions).
@@ -105,9 +104,7 @@ _TYPE_TO_KIND = {
     "embedding": "model",
 }
 
-# A small, closed set of dataType-appropriate strings/values a Langfuse score
-# maps onto passed/failed. Anything outside this set is "unknown" — never a
-# guessed threshold on an arbitrary numeric scale (see _score_status).
+# Shared categorical labels retained for the LangSmith feedback adapter.
 _CATEGORICAL_PASS = {"true", "pass", "passed", "correct", "good"}
 _CATEGORICAL_FAIL = {"false", "fail", "failed", "incorrect", "bad"}
 
@@ -153,108 +150,6 @@ def _resolve_status(level: Optional[str], output: Any) -> tuple[str, Optional[in
     if level_norm in ("DEFAULT", "DEBUG"):
         return "ok", None
     return "unknown", None  # WARNING, or no level recorded at all
-
-
-def _score_status(score: dict) -> str:
-    """Map one Langfuse score to a verifier check status.
-
-    Deliberately narrow: a boolean score maps directly; a categorical score
-    maps only through the small closed vocabulary above; a numeric score maps
-    only at its two unambiguous endpoints (0 or 1) — Langfuse numeric scores
-    are on an arbitrary, evaluator-defined scale, so anywhere in between has
-    no universal pass/fail meaning and is reported "unknown" rather than a
-    guessed threshold.
-
-    BOOLEAN vs. CATEGORICAL read DIFFERENT fields for their label, per
-    Langfuse's ``ScoreV1`` schema — this split is not cosmetic:
-
-    * BOOLEAN: ``value`` is the primary encoding (0 or 1); ``stringValue``
-      ("True"/"False") is a convenience mirror of the same fact. ``value``
-      is preferred, ``stringValue`` is the fallback.
-    * CATEGORICAL: ``value`` is a NUMERIC category-INDEX the UI uses for
-      sorting/charting, not a pass/fail signal at all — the human-readable
-      label an evaluator or annotator actually chose ("pass", "correct", …)
-      lives in ``stringValue``. Reading ``value`` here (a natural but wrong
-      guess) means every categorical score silently falls through to
-      "unknown" forever. ``value`` is consulted only as a last resort, and
-      only when it happens to already be a string (a non-conformant source).
-    """
-    dtype = str(score.get("dataType") or "").strip().upper()
-    value = score.get("value")
-    string_value = score.get("stringValue")
-    if dtype == "BOOLEAN":
-        if isinstance(value, bool):
-            return "passed" if value else "failed"
-        if isinstance(value, (int, float)):
-            return "passed" if value >= 1 else "failed"
-        for candidate in (string_value, value):
-            if isinstance(candidate, str):
-                low = candidate.strip().lower()
-                if low in ("true", "1"):
-                    return "passed"
-                if low in ("false", "0"):
-                    return "failed"
-        return "unknown"
-    if dtype == "CATEGORICAL":
-        label = string_value if isinstance(string_value, str) else value if isinstance(value, str) else None
-        if isinstance(label, str):
-            low = label.strip().lower()
-            if low in _CATEGORICAL_PASS:
-                return "passed"
-            if low in _CATEGORICAL_FAIL:
-                return "failed"
-        return "unknown"
-    if dtype == "NUMERIC" and isinstance(value, (int, float)) and not isinstance(value, bool):
-        if value == 1 or value == 1.0:
-            return "passed"
-        if value == 0 or value == 0.0:
-            return "failed"
-        return "unknown"
-    return "unknown"
-
-
-def _scores_to_verifier(scores: list, warnings: list[str]) -> Optional[dict]:
-    """Langfuse ``scores`` -> a ``verifier.checks[]`` sidecar.
-
-    Every score becomes its own atomic check, ``source:
-    instrumented_assertion`` (the score is external verifier evidence, not
-    something the deterministic core inferred from prose). Returns ``None``
-    when there are no scores — the caller keeps the run with no verifier
-    evidence rather than writing an empty, misleading sidecar.
-    """
-    if not scores:
-        return None
-    checks: list[dict] = []
-    for i, score in enumerate(scores):
-        if not isinstance(score, dict) or not (score.get("name") or score.get("id")):
-            warnings.append(f"score {i} has no name/id; skipped, not dropped silently")
-            continue
-        status = _score_status(score)
-        if status == "unknown":
-            warnings.append(
-                f"score {score.get('name') or score.get('id')!r} (dataType="
-                f"{score.get('dataType')!r}, value={score.get('value')!r}) has no clear "
-                f"pass/fail mapping; recorded as 'unknown', not guessed"
-            )
-        check: dict[str, Any] = {
-            "check_id": str(score.get("id") or f"langfuse_score_{i}"),
-            "name": str(score.get("name") or f"score_{i}"),
-            "status": status if status in CHECK_STATUSES else "unknown",
-            "source": "instrumented_assertion",
-            # Post-run is the conservative default: most Langfuse scores come
-            # from an evaluator or human queue that runs AFTER the trace
-            # completes, so this is never presented as information the agent
-            # had during the run.
-            "timing": "post_run",
-            "source_pointers": [f"scores[{i}]"],
-        }
-        if score.get("comment"):
-            check["comment"] = score["comment"]
-        checks.append(check)
-    if not checks:
-        return None
-    raw = json.dumps({"scores": scores}, ensure_ascii=False)
-    return {"raw_output": raw, "checks": checks}
 
 
 def _is_flat_trace_shape(data: dict) -> bool:
@@ -459,33 +354,44 @@ def convert(
 
     capabilities = dict(result.capabilities)
 
-    # --- verifier: explicit sidecar wins; else the trace's own scores --------
-    if verifier is None:
-        score_warnings: list[str] = []
-        verifier = _scores_to_verifier(export.get("scores") or [], score_warnings)
-        warnings.extend(score_warnings)
-        if verifier:
-            capabilities["verifier_results"] = "complete"
-            warnings.append(
-                f"verifier synthesised from {len(verifier['checks'])} Langfuse score(s) "
-                f"(source: instrumented_assertion)"
-            )
+    # Scores have evaluator-defined polarity and scope. Retain them as metrics;
+    # only an explicit verifier can establish a whole-task pass/fail contract.
+    scores = sorted(export.get("scores") or [], key=lambda score: json.dumps(score, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    summary = export.get("scores_fetch") or {"status": "available" if scores else "none"}
+    run["evaluation_summary"] = {"score_status": summary["status"], "score_count": len(scores), "checks_available": bool((verifier or {}).get("checks"))}
+    trace = export.get("trace") or export
+    run["display_name"] = str(trace.get("name") or derived_task_id)
+    source_context = export.get("source_context")
+    context = {k: v for k, v in source_context.items() if k in ("host", "project_id") and isinstance(v, str)} if isinstance(source_context, dict) else {}
+    # The source document is hashed to identify a capture, so only what identifies the trace may go in it. The search
+    # window (`fetch_limits`) differs on every search and a project label can be renamed; neither describes the trace,
+    # and either would turn an unchanged re-import into a new capture.
+    context.update(trace_id=trace_id, retrieval="bounded" if export.get("fetch_limits") else "export")
+    for key in ("environment", "tags", "release", "version", "sessionId"):
+        if key in trace:
+            context[key] = trace[key]
+    run["source_context"] = context
+    if trace.get("timestamp"):
+        run["started_at"] = trace["timestamp"]
+    if scores and verifier is None:
+        warnings.append("Langfuse scores are retained as metrics. Provide explicit evaluation checks to define task success; score polarity and observation scope are not inferred.")
 
     doc: dict[str, Any] = {
         "atif_version": LANGFUSE_ADAPTER_VERSION,
         "source_type": "langfuse",
         "adapter_version": LANGFUSE_ADAPTER_VERSION,
-        "capture_completeness": "complete" if verifier else "partial",
+        "capture_completeness": "partial" if export.get("fetch_limits") or any(v == "partial" for v in result.capabilities.values()) else "complete",
         "run": run,
         "capabilities": capabilities,
         "task": {"instruction": resolved_instruction, "artifacts": [], "requirements": []},
         "steps": result.steps,
     }
+    doc["source_scores"] = scores
     if verifier:
         doc["verifier"] = verifier
     else:
         warnings.append(
-            "no verifier supplied and no scores on the trace: run ingests with no "
+            "no explicit verifier supplied: run ingests with no "
             "verifier evidence (§7.2)"
         )
 

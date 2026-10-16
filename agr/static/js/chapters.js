@@ -59,7 +59,8 @@ function chapterMeta() {
 }
 function setChapter(id) { state.view = "review"; state.chapter = id; state.viewed.add(id);
   track("review_chapter_viewed", { run_id: state.runId, chapter: id }); render();
-  $("#main").scrollTo({ top: 0, behavior: "smooth" }); }
+  $("#main").scrollTo({ top: 0, behavior: "smooth" });
+  focusWorkspace("#review-tab-" + id); }
 function moveChapter(dir) {
   const ids = CHAPTERS.map(c => c[0]); let i = ids.indexOf(state.chapter);
   // From a "More analysis" chapter (not in this primary list), both directions
@@ -71,9 +72,14 @@ function moveChapter(dir) {
 }
 function renderChapter(main) {
   state.viewed.add(state.chapter);
+  const panel = el("section"); panel.id = "review-panel";
+  if (CHAPTERS.some(([id]) => id === state.chapter)) {
+    panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", "review-tab-" + state.chapter); panel.tabIndex = 0;
+  }
+  main.append(panel);
   ({ overview: renderOverviewChapter, opportunities: renderOpportunitiesChapter,
      moments: renderMomentsChapter, checks: renderChecksChapter,
-     signature: renderSignatureChapter }[state.chapter] || renderMomentsChapter)(main);
+     signature: renderSignatureChapter }[state.chapter] || renderMomentsChapter)(panel);
 }
 function renderChapterFooter(main) {
   const ids = CHAPTERS.map(c => c[0]), i = ids.indexOf(state.chapter);
@@ -279,7 +285,7 @@ function renderOverviewChapter(main) {
   outLine.append(el("strong", null, "Task outcome: "));
   outLine.append(el("span", "run-verdict-key " + narrative.tone, narrative.headline.replace(/\s*—$/, "")));
   outLine.append(document.createTextNode(" (" + outcomeCounts(o) + ") — " + narrative.detail));
-  card.append(outLine);
+  if (!langfuseNeedsEvaluation(rv)) card.append(outLine);
 
   const vm = vocab("review_mode", rv.review_mode);
   const modeNote = el("p", "finding-line finding-mode" + (rv.review_mode === "not_reviewable" ? " not-reviewable" : ""));

@@ -153,10 +153,40 @@ async function saveCorrection(moment, draft, evInput) {
     $("#correction-error").textContent = typeof detail === "string" ? detail : "Save failed";
   }
 }
-function openModal(sel) { const m = $(sel); m.classList.add("open"); m.setAttribute("aria-hidden", "false"); }
-function closeModals() { for (const id of ["#correct-modal", "#help-modal", "#correction-modal", "#intro-modal"]) {
-  const m = $(id); m.classList.remove("open"); m.setAttribute("aria-hidden", "true"); }
-  const err = $("#correction-error"); if (err) err.textContent = ""; }
+let modalReturnFocus;
+function openModal(sel) {
+  if (!document.querySelector(".modal-shade.open")) {
+    modalReturnFocus = window.innerWidth <= 820 && $("#sidebar").contains(document.activeElement) ? $("#queue-toggle") : document.activeElement;
+    if (!modalReturnFocus || modalReturnFocus === document.body) modalReturnFocus = window.innerWidth <= 820 ? $("#queue-toggle") : $("#help-button");
+  }
+  const shade = $(sel), modal = shade.querySelector(".modal");
+  shade.classList.add("open"); shade.setAttribute("aria-hidden", "false");
+  modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", sel === "#help-modal" ? "Help" : modal.querySelector("h2")?.textContent || "Dialog");
+  $("#workspace").inert = true;
+  const first = [...modal.querySelectorAll("button, input, select, textarea, a[href]")].find(n => !n.disabled && n.getClientRects().length);
+  if (first) first.focus(); else { modal.tabIndex = -1; modal.focus(); }
+}
+function closeModals() {
+  const wasOpen = !!document.querySelector(".modal-shade.open");
+  for (const id of ["#correct-modal", "#help-modal", "#correction-modal", "#intro-modal"]) {
+    const m = $(id); m.classList.remove("open"); m.setAttribute("aria-hidden", "true");
+  }
+  $("#workspace").inert = false;
+  if (wasOpen && modalReturnFocus?.isConnected && !modalReturnFocus.closest("[inert]")) modalReturnFocus.focus({ preventScroll: true });
+  const err = $("#correction-error"); if (err) err.textContent = "";
+}
+document.addEventListener("keydown", e => {
+  const modal = document.querySelector(".modal-shade.open .modal");
+  if (!modal) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeModals(); return; }
+  if (e.key !== "Tab") return;
+  const items = [...modal.querySelectorAll("button, input, select, textarea, a[href], summary, [tabindex]")].filter(n => !n.disabled && n.tabIndex >= 0 && n.getClientRects().length);
+  const first = items[0], last = items[items.length - 1];
+  if (!first) { e.preventDefault(); return; }
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 document.querySelectorAll("[data-close-modal]").forEach(b => b.addEventListener("click", closeModals));
 document.querySelectorAll(".modal-shade").forEach(s => s.addEventListener("click", e => { if (e.target === s) closeModals(); }));
 

@@ -78,7 +78,7 @@ class FakeLangfuse:
     def v1_trace(self, trace_id):
         rows = [dict(o, id=f"{trace_id}-{o['id']}") for o in FIXTURE["observations"]]
         base = next((t for t in self.traces if t["id"] == trace_id), None)
-        return {"id": trace_id, "name": base["name"] if base else "trace", "timestamp": base["start"] if base else "2026-09-01T10:00:00.000Z", "sessionId": "s-" + trace_id, "userId": "ana",
+        return {"id": trace_id, "projectId": (self.project or {}).get("id") or "proj-prod-1", "name": base["name"] if base else "trace", "timestamp": base["start"] if base else "2026-09-01T10:00:00.000Z", "sessionId": "s-" + trace_id, "userId": "ana",
                 "tags": base["tags"] if base else [], "input": FIXTURE["input"], "output": FIXTURE["output"], "observations": rows, "scores": []}
 
     def v1_get(self, path, params):
@@ -140,6 +140,10 @@ class FakeLangfuse:
                 return {"data": [], "meta": {}}
             rows = [dict(o, traceId=params["traceId"], id=f"{params['traceId']}-{o['id']}") for o in FIXTURE["observations"]]
             rows[0]["isRootObservation"] = True
+            original = next((t for t in self.traces if t["id"] == params["traceId"]), None)
+            if original:
+                rows[0]["traceName"] = original["name"]
+                rows[0]["projectId"] = (self.project or {}).get("id")
             for row in rows:
                 row.pop("parentObservationId", None)
             return {"data": rows, "meta": {}}
@@ -276,6 +280,40 @@ def test_browse_batch_preview_and_import(client, project, connection, langfuse):
     assert {t["trace_id"]: t["already_imported"] for t in again} == {"trace-05": True, "trace-03": False, "trace-01": True}
     runs = {r["run_id"] for r in client.get("/queue", headers={"x-agr-project": project}).json()["runs"]}
     assert len(runs) == 2
+
+
+def _import_manifest(client, project, manifest, key):
+    job = client.post(f"/projects/{project}/imports", json={"preview_id": manifest["id"], "manifest_hash": manifest["manifest_hash"], "selected": [i["id"] for i in manifest["items"]], "idempotency_key": key, "label": key}).json()
+    deadline = time.monotonic() + 15
+    while job["status"] in ("queued", "importing") and time.monotonic() < deadline:
+        time.sleep(0.02)
+        job = client.get(f"/projects/{project}/imports/{job['id']}").json()
+    assert job["status"] == "completed", job
+    return job
+
+
+@pytest.mark.parametrize("version", ["3.12.0", "4.0.0"])
+def test_reimporting_an_unchanged_trace_is_a_duplicate_however_it_was_searched(client, project, connection, langfuse, version):
+    """A capture's identity is the trace's content, not the time range or the project label it was found under."""
+    langfuse.version = version
+    first = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    assert [i["status"] for i in first["items"]] == ["new"]
+    imported = _import_manifest(client, project, first, "window-1")
+    capture = [r["capture_id"] for r in imported["results"]][0]
+
+    # The presets are measured from "now", so every search has a different window.
+    shifted = {"from_time": "2026-09-01T01:00:00Z", "to_time": "2026-09-02T01:00:00Z"}
+    second = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **shifted}).json()
+    assert [i["status"] for i in second["items"]] == ["duplicate"]
+
+    # Renaming the Langfuse project does not change the trace either.
+    langfuse.project["name"] = "Production agent (renamed)"
+    assert client.post(route(project, connection, "test")).json()["langfuse_project"]["name"] == "Production agent (renamed)"
+    third = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    assert [i["status"] for i in third["items"]] == ["duplicate"]
+
+    again = _import_manifest(client, project, second, "window-2")
+    assert [(r["status"], r["capture_id"]) for r in again["results"]] == [("duplicate", capture)]
 
 
 def test_credentials_never_appear_in_responses(client, project, connection, langfuse):
@@ -1468,7 +1506,7 @@ def test_the_connection_records_the_langfuse_project(client, project, langfuse):
     assert tested["langfuse_project"] == {"id": "proj-prod-1", "name": "Production agent"}
     assert "sk-lf-hidden" not in json.dumps(tested)
     langfuse.project = None
-    assert client.post(route(project, created["id"], "test")).json()["langfuse_project"] is None
+    assert client.post(route(project, created["id"], "test")).json()["langfuse_project"] == tested["langfuse_project"]
 
 
 @pytest.mark.parametrize("payload", [{"data": []}, {"data": [{"id": "x"}]}, {"data": "nope"}, [], {"data": [None]}])
@@ -1861,3 +1899,168 @@ def test_the_cost_requests_share_one_budget(monkeypatch):
     monkeypatch.setattr(langfuse_v2, "_get", get)
     langfuse_v2.trace_costs(HOST, "Basic x", [f"t{n}" for n in range(120)], "2026-09-01T00:00:00.000Z", "2026-09-02T00:00:00.000Z")
     assert len(seen) == 3 and all(end is not None for end in seen) and len(set(seen)) == 1
+
+
+def test_saved_connection_needs_keys_after_restart(client, project, connection, langfuse):
+    from agr.workspace import Workspace
+    client.post(route(project, connection, "test"))
+    restarted = Workspace(client.app.state.workspace.default_root)
+    try:
+        saved = restarted.records("connections", project)
+        assert len(saved) == 1 and saved[0]["status"] == "needs_keys"
+        assert saved[0]["credentials_available"] is False
+    finally:
+        restarted.executor.shutdown(wait=True)
+        restarted.review_executor.shutdown(wait=True)
+
+
+def test_reconnect_updates_same_connection_without_writing_keys(client, project, connection, langfuse):
+    client.post(route(project, connection, "test"))
+    workspace = client.app.state.workspace
+    workspace.secrets.clear()
+    response = client.patch(route(project, connection, "credentials"), json={"public_key": "replacement-public", "secret_key": "replacement-secret"})
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == connection
+    assert response.json()["status"] == "accessible"
+    assert len(workspace.records("connections", project)) == 1
+    assert workspace.secrets[connection] == ("replacement-public", "replacement-secret")
+    assert "replacement" not in response.text
+    assert "replacement" not in workspace._path("connections", connection).read_text()
+    assert client.post(route(project, connection, "traces"), json=WINDOW).status_code == 200
+
+
+def test_reconnect_rejects_another_project_and_preserves_existing_keys(client, project, connection, langfuse):
+    client.post(route(project, connection, "test"))
+    previous = client.app.state.workspace.secrets[connection]
+    langfuse.project = {"id": "other-project", "name": "Other"}
+    response = client.patch(route(project, connection, "credentials"), json={"public_key": "other-pk", "secret_key": "other-sk"})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "project_mismatch"
+    assert client.app.state.workspace.secrets[connection] == previous
+
+
+def test_reconnect_requires_both_keys_and_project_scope(client, project, connection, langfuse):
+    assert client.patch(route(project, connection, "credentials"), json={"public_key": "pk"}).status_code == 422
+    other = client.post("/projects", json={"name": "Other"}).json()["id"]
+    assert client.patch(route(other, connection, "credentials"), json={"public_key": "pk", "secret_key": "sk"}).status_code == 404
+
+
+def test_fetch_omits_unused_metadata_and_keeps_telemetry_coverage(client, project, connection, langfuse):
+    manifest = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    item = manifest["items"][0]
+    assert item["coverage"]["generation_usage"] == "complete"
+    params = next(params for path, params in langfuse.calls if "observations" in path and params.get("traceId"))
+    assert "metadata" not in params["fields"].split(",")
+
+
+@pytest.mark.parametrize("version", ["3.12.0", "4.0.0"])
+def test_score_order_is_a_duplicate_but_changed_scores_are_new_captures(client, project, connection, langfuse, monkeypatch, version):
+    langfuse.version = version
+    original = langfuse.get
+    scores = [{"id": "z", "name": "quality", "dataType": "NUMERIC", "value": 0.9, "subject": {"kind": "trace", "id": "trace-01"}},
+              {"id": "a", "name": "cost", "dataType": "NUMERIC", "value": 0.1, "subject": {"kind": "trace", "id": "trace-01"}}]
+    def get(url, authorization):
+        response = original(url, authorization)
+        if "/v3/scores" in url:
+            response["data"] = copy.deepcopy(scores)
+        elif "/traces/trace-01" in url:
+            response["scores"] = copy.deepcopy(scores)
+        return response
+    monkeypatch.setattr(langfuse_v2, "_get", get)
+    def fetch():
+        result = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW})
+        assert result.status_code == 200, result.text
+        return result.json()
+    first = fetch()
+    _import_manifest(client, project, first, "ordered-scores")
+    scores.reverse()
+    assert fetch()["items"][0]["status"] == "duplicate"
+    scores[0]["value"] = 0.2
+    assert fetch()["items"][0]["status"] == "new_capture"
+
+
+@pytest.mark.parametrize("version", ["3.12.0", "4.0.0"])
+def test_failed_project_lookup_preserves_binding_and_capture_identity(client, project, connection, langfuse, version):
+    langfuse.version = version
+    bound = client.post(route(project, connection, "test")).json()["langfuse_project"]
+    first = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    _import_manifest(client, project, first, "before-lookup-failure")
+    langfuse.project = None
+    again = client.post(route(project, connection, "test"))
+    assert again.json()["langfuse_project"] == bound
+    second = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    assert second["items"][0]["status"] == "duplicate"
+    langfuse.project = {"id": "other", "name": "Other"}
+    assert client.patch(route(project, connection, "credentials"), json={"public_key": "other-pk", "secret_key": "other-sk"}).status_code == 422
+
+
+@pytest.mark.parametrize("remote", [None, {"id": "other", "name": "Other"}])
+def test_unknown_saved_project_cannot_be_rebound(client, project, connection, langfuse, remote):
+    before = client.app.state.workspace.secrets[connection]
+    langfuse.project = remote
+    result = client.patch(route(project, connection, "credentials"), json={"public_key": "new-pk", "secret_key": "new-sk"})
+    assert result.status_code == 422 and result.json()["detail"]["code"] == "project_mismatch"
+    assert client.app.state.workspace.secrets[connection] == before
+
+
+def test_v3_project_identity_comes_from_the_trace_when_lookup_is_unavailable(client, project, connection, langfuse):
+    langfuse.version = "3.12.0"
+    langfuse.project = None
+    manifest = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    record = client.app.state.workspace.preview(project, manifest["id"])
+    assert record["items"][0]["doc"]["run"]["source_context"]["project_id"] == "proj-prod-1"
+
+
+def test_degraded_refresh_is_not_selected_and_recovery_keeps_the_good_capture(client, project, connection, langfuse, monkeypatch):
+    first = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    job = _import_manifest(client, project, first, "good-capture")
+    original = langfuse.get
+    def unavailable(url, authorization):
+        if "/scores" in url:
+            raise ImportProblem("source_fetch_failed", "Scores unavailable", 502)
+        return original(url, authorization)
+    monkeypatch.setattr(langfuse_v2, "_get", unavailable)
+    degraded = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    assert degraded["items"][0]["selected_by_default"] is False
+    assert "Not selected by default" in " ".join(degraded["items"][0]["warnings"])
+    monkeypatch.setattr(langfuse_v2, "_get", original)
+    restored = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    assert restored["items"][0]["status"] == "duplicate"
+    store = client.app.state.workspace.store(project)
+    assert store.read_index(job["results"][0]["run_id"])[-1]["capture_id"] == job["results"][0]["capture_id"]
+
+
+def test_capture_fetch_drops_unused_personal_metadata(client, project, connection, langfuse, monkeypatch):
+    original = langfuse.get
+    def extra(url, authorization):
+        result = original(url, authorization)
+        if "/observations" in url and "traceId=" in url:
+            for row in result["data"]:
+                row.update(metadata={"private": "unused"}, userId="private-user")
+        return result
+    monkeypatch.setattr(langfuse_v2, "_get", extra)
+    manifest = client.post(route(project, connection, "trace-previews"), json={"trace_ids": ["trace-01"], **WINDOW}).json()
+    preview = client.app.state.workspace.preview(project, manifest["id"])
+    files = client.app.state.workspace.root / "staging" / manifest["id"] / "files"
+    raw = json.loads(next(files.glob("*.json")).read_text())
+    assert all("metadata" not in o and "userId" not in o for o in raw["observations"])
+    assert "private-user" not in json.dumps(preview["items"][0]["doc"])
+
+
+def test_a_window_that_cuts_observations_creates_a_distinct_capture(client, project, connection, langfuse, monkeypatch):
+    from datetime import datetime
+    original = langfuse.get
+    def bounded(url, authorization):
+        result = original(url, authorization)
+        params = parse_qs(urlsplit(url).query)
+        if "/observations" in url and "traceId" in params:
+            start = datetime.fromisoformat(params["fromStartTime"][0].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(params["toStartTime"][0].replace("Z", "+00:00"))
+            result["data"] = [o for o in result["data"] if start <= datetime.fromisoformat(o["startTime"].replace("Z", "+00:00")) < end]
+        return result
+    monkeypatch.setattr(langfuse_v2, "_get", bounded)
+    full = client.post(route(project, connection, "trace-previews"), json={"trace_id": "trace-01", **WINDOW}).json()
+    _import_manifest(client, project, full, "full-window")
+    cut = client.post(route(project, connection, "trace-previews"), json={"trace_id": "trace-01", "from_time": "2026-09-01T10:00:03Z", "to_time": "2026-09-02T00:00:00Z"}).json()
+    assert cut["items"][0]["status"] == "new_capture"
+    assert cut["items"][0]["steps"] < full["items"][0]["steps"]

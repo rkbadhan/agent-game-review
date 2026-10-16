@@ -258,7 +258,40 @@ class Workspace:
 
     def records(self, kind, project_id):
         self.project(project_id)
-        return sorted([r for path in (self.root / kind).glob("*.json") if (r := self._read(path))["project_id"] == project_id], key=lambda r: r.get("created_at", ""), reverse=True)
+        rows = sorted([r for path in (self.root / kind).glob("*.json") if (r := self._read(path))["project_id"] == project_id], key=lambda r: r.get("created_at", ""), reverse=True)
+        return [self.connection_state(r) for r in rows] if kind == "connections" else rows
+
+    def connection_state(self, connection):
+        """Availability is current, not the result of a test before a server restart."""
+        keys = self.secrets.get(connection["id"]) or self.environment_keys(connection["host"])
+        return dict(connection, credentials_available=all(keys),
+                    status=connection["status"] if all(keys) else "needs_keys")
+
+    def reconnect(self, project_id, connection_id, payload):
+        self.writable_project(project_id)
+        connection = self.record("connections", connection_id, project_id)
+        # Keep host/project identity fixed; replacement keys must belong to it.
+        public, secret = payload.get("public_key"), payload.get("secret_key")
+        if not isinstance(public, str) or not isinstance(secret, str) or not public.strip() or not secret.strip():
+            raise ImportProblem("missing_credentials", "Enter both project keys to reconnect.")
+        from . import langfuse_source
+        # Authenticate first so revoked/wrong keys retain an actionable auth error.
+        from datetime import datetime, timedelta, timezone
+        end = datetime.now(timezone.utc)
+        langfuse_source.list_traces(host=connection["host"], public_key=public.strip(), secret_key=secret.strip(),
+                                   from_time=(end - timedelta(hours=1)).isoformat(), to_time=end.isoformat(), limit=1)
+        remote = langfuse_source.project(connection["host"], public.strip(), secret.strip())
+        expected = (connection.get("langfuse_project") or {}).get("id")
+        if not expected or not remote or remote.get("id") != expected:
+            raise ImportProblem("project_mismatch", "These keys could not be verified for this Langfuse project. Check the keys or add a separate connection. A saved connection without a known project ID cannot be rebound.")
+        with self.write_lock():
+            current = self.record("connections", connection_id, project_id)
+            current.update(status="accessible", last_test_at=now())
+            if remote:
+                current["langfuse_project"] = remote
+            self.secrets[connection_id] = (public.strip(), secret.strip())
+            atomic_json(self._path("connections", connection_id), current)
+        return self.connection_state(current)
 
     def _expire_previews(self):
         # Cheap checks first: only previews past their day are compared with job history, and each project's
@@ -354,10 +387,11 @@ class Workspace:
             atomic_json(self._path("previews", preview_id), preview)
             return self.public_preview(preview)
 
-    @staticmethod
-    def public_preview(preview):
+    def public_preview(self, preview):
         result = copy.deepcopy(preview)
         result.pop("options", None)
+        submitted = next((j for j in self.records("jobs", preview["project_id"]) if j.get("preview_id") == preview["id"]), None) if preview["status"] == "ready" else None
+        result["submitted_import"] = {"id": submitted["id"], "status": submitted["status"]} if submitted else None
         for item in result["items"]:
             item.pop("doc", None)
         return result
@@ -380,6 +414,11 @@ class Workspace:
             allowed = {i["id"] for i in preview["items"] if i["status"] != "invalid"}
             if not set(selected) <= allowed:
                 raise ImportProblem("invalid_selection", "The selection includes invalid or unavailable runs.")
+            submitted = next((j for j in self.records("jobs", project_id) if j.get("preview_id") == payload.get("preview_id")), None)
+            if submitted:
+                if submitted["selected"] == selected and submitted["manifest_hash"] == payload.get("manifest_hash"):
+                    return submitted
+                raise ImportProblem("preview_submitted", "This preview was already imported. Open its import to retry unfinished work, or create a new preview.", 409)
             job = {"id": identifier("import"), "project_id": project_id, "preview_id": preview["id"], "manifest_hash": preview["manifest_hash"], "idempotency_key": key, "selected": selected, "label": bounded_text(payload.get("label") or "Imported runs", "a batch label"), "status": "queued", **job_owner(), "created_at": now(), "updated_at": now(), "results": [], "total": len(selected)}
             atomic_json(self._path("jobs", job["id"]), job)
         self.futures[job["id"]] = self.executor.submit(self._run_job, project_id, job["id"])
@@ -412,6 +451,7 @@ class Workspace:
                 try:
                     result = publish_analysis(item["doc"], target_store, scratch)
                     result["item_id"] = item["id"]
+                    result["title"] = item.get("title")
                 except Exception:
                     result = {"item_id": item["id"], "status": "failed", "error": "Analysis or storage did not complete. Original selected files are retained; retry after checking disk space and the capture format."}
                 finally:
@@ -516,7 +556,7 @@ class Workspace:
         if not keys:
             keys = self.environment_keys(connection["host"])
         if not all(keys):
-            raise ImportProblem("missing_credentials", "Session credentials expired. Configure a new connection or server environment keys.")
+            raise ImportProblem("missing_credentials", "Connection needs keys after the AGR server restarted. Reconnect this connection to continue.")
         return connection, keys
 
     def _mark_connection(self, project_id, connection_id, status, must_exist=False, **details):
@@ -543,7 +583,7 @@ class Workspace:
             raise
         info = langfuse_source.detect(connection["host"])
         project = langfuse_source.project(connection["host"], keys[0], keys[1])
-        self._mark_connection(project_id, connection_id, "accessible", must_exist=True, api=info["api"], api_label=langfuse_source.LABELS.get(info["api"]), server_version=info["server_version"], langfuse_project=project)
+        self._mark_connection(project_id, connection_id, "accessible", must_exist=True, api=info["api"], api_label=langfuse_source.LABELS.get(info["api"]), server_version=info["server_version"], langfuse_project=project or connection.get("langfuse_project"))
         return self.record("connections", connection_id, project_id)
 
     def browse_connection(self, project_id, connection_id, payload):
@@ -630,7 +670,11 @@ class Workspace:
             if stop.is_set() or time.monotonic() > deadline:
                 return None
             try:
-                return fetch_trace(identifier_, host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=from_time, to_time=window_to, deadline=deadline)
+                result = fetch_trace(identifier_, host=connection["host"], public_key=keys[0], secret_key=keys[1], from_time=from_time, to_time=window_to, deadline=deadline)
+                observations = result.get("observations") or []
+                remote = connection.get("langfuse_project") or {}
+                result["source_context"] = {"host": connection["host"], "project_id": (result.get("trace") or result).get("projectId") or next((o.get("projectId") for o in observations if o.get("projectId")), None) or remote.get("id")}
+                return result
             except ImportProblem:
                 raise
             except Exception:

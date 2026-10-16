@@ -18,7 +18,7 @@ function sessionHeaders(headers = {}) {
   return Object.assign({}, headers, workspaceSession ? { authorization: "Bearer " + workspaceSession } : {});
 }
 
-const $ = (sel, root = document) => (sel[0] === "#" && root === document) ? document.getElementById(sel.slice(1)) : root.querySelector(sel);
+const $ = (sel, root = document) => (/^#[\w-]+$/.test(sel) && root === document) ? document.getElementById(sel.slice(1)) : root.querySelector(sel);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 function projectHeaders(path) {
   const headers = sessionHeaders(state.projectId ? { "x-agr-project": state.projectId } : {});

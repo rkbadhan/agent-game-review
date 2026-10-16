@@ -16,6 +16,7 @@ function openHelp(tab) {
   $("#help-panel-glossary").hidden = shortcuts;
   if (!shortcuts) buildGlossary();
   openModal("#help-modal");
+  $(shortcuts ? "#help-tab-shortcuts" : "#help-tab-glossary").focus();
 }
 $("#help-tab-shortcuts").addEventListener("click", () => openHelp("shortcuts"));
 $("#help-tab-glossary").addEventListener("click", () => openHelp("glossary"));
@@ -32,13 +33,51 @@ $("#intro-dismiss").addEventListener("click", dismissIntro);
 // run — the run queue) is a persistent column on desktop and an off-canvas
 // drawer on mobile, opened by the topbar's #queue-toggle and closed by its
 // own ×, an outside click on the shade, Escape, or choosing a destination.
-function openSidebarDrawer() { $("#sidebar").classList.add("open"); $("#sidebar-shade").classList.add("show"); }
-function closeSidebarDrawer() { $("#sidebar").classList.remove("open"); $("#sidebar-shade").classList.remove("show"); }
+const sidebarMobile = window.matchMedia("(max-width: 820px)");
+function syncSidebarDrawer() {
+  const sidebar = $("#sidebar"), open = sidebarMobile.matches && sidebar.classList.contains("open");
+  sidebar.inert = sidebarMobile.matches && !open;
+  $("#queue-toggle").setAttribute("aria-expanded", String(open));
+  $("#queue-toggle").setAttribute("aria-controls", "sidebar");
+  for (const selector of [".main-col", "#evidence-panel", "#queue-resizer", "#evidence-resizer"])
+    $(selector).inert = open;
+  if (open) { sidebar.setAttribute("role", "dialog"); sidebar.setAttribute("aria-modal", "true"); sidebar.setAttribute("aria-label", "Navigation"); }
+  else { sidebar.removeAttribute("role"); sidebar.removeAttribute("aria-modal"); sidebar.removeAttribute("aria-label"); }
+}
+function openSidebarDrawer() {
+  if (!sidebarMobile.matches) return;
+  $("#sidebar").classList.add("open"); $("#sidebar-shade").classList.add("show");
+  syncSidebarDrawer(); $("#sidebar-close").focus();
+}
+function closeSidebarDrawer(restoreFocus = true) {
+  const wasOpen = $("#sidebar").classList.contains("open");
+  $("#sidebar").classList.remove("open"); $("#sidebar-shade").classList.remove("show");
+  syncSidebarDrawer();
+  if (wasOpen && restoreFocus && sidebarMobile.matches) $("#queue-toggle").focus();
+}
 $("#queue-toggle").addEventListener("click", openSidebarDrawer);
-$("#sidebar-close").addEventListener("click", closeSidebarDrawer);
-$("#sidebar-shade").addEventListener("click", closeSidebarDrawer);
-for (const id of ["#runs-button", "#fleet-button", "#versions-button", "#glossary-button", "#help-button"])
-  $(id).addEventListener("click", closeSidebarDrawer);
+$("#sidebar-close").addEventListener("click", () => closeSidebarDrawer());
+$("#sidebar-shade").addEventListener("click", () => closeSidebarDrawer());
+// Close before the destination handler runs, including all project navigation.
+$("#sidebar").addEventListener("click", e => {
+  if (!sidebarMobile.matches || !e.target.closest(".sidebar-nav-item, #add-runs-button, #glossary-button, #help-button, #reviewer-avatar, .run")) return;
+  closeSidebarDrawer(false);
+  requestAnimationFrame(() => { if (!document.querySelector(".modal-shade.open")) focusWorkspace("#main h1, #main h2", true); });
+}, true);
+$("#project-switcher").addEventListener("change", () => closeSidebarDrawer(false));
+sidebarMobile.addEventListener("change", () => closeSidebarDrawer(false));
+syncSidebarDrawer();
+document.addEventListener("keydown", e => {
+  if (!sidebarMobile.matches || !$("#sidebar").classList.contains("open")) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeSidebarDrawer(); return; }
+  if (e.key !== "Tab") { e.stopImmediatePropagation(); return; }
+  e.stopImmediatePropagation();
+  const items = [...$("#sidebar").querySelectorAll("button, a[href], input, select, textarea, [tabindex]")]
+    .filter(n => !n.disabled && n.tabIndex >= 0 && n.getClientRects().length);
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 // Desktop-only collapse to a ~56px icon rail — remembered per browser like
 // the panel widths, and never left in a state that could strand a reader if
 // localStorage throws (a private window, blocked storage, …).
@@ -92,6 +131,7 @@ function goToRuns() {
 }
 document.addEventListener("click", e => { if (!e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
 document.addEventListener("keydown", e => {
+  if (document.querySelector(".modal-shade.open")) return;
   if (e.target.matches("input, select, textarea")) return;
   const k = e.key.toLowerCase();
   const onMoments = state.view === "review" && state.chapter === "moments";

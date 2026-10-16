@@ -28,7 +28,7 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
   evidenceFocus: null,
   sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "Local reviewer", dispOpen: false,
   projectId: null, projects: [], serverReadOnly: false, captureId: null, importRunIds: null,
-  workspace: { source: null, files: [], preview: null, job: null, busy: false, error: null, uploadProgress: null, selected: new Set(), connections: [], investigations: [], detail: null, token: 0 },
+  workspace: { source: null, files: [], preview: null, job: null, busy: false, error: null, uploadProgress: null, selected: new Set(), connections: [], connectionId: null, investigations: [], detail: null, token: 0 },
   // UX audit finding #2: bumped on every loadInbox() call, the same way F4's
   // state.loadToken guards a run selection — a filter/sort change (or the
   // initial boot load) starting a NEW /queue fetch while an earlier one is
@@ -95,16 +95,18 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
 let _lastMajorKey;
 function _majorDestinationKey() {
   const prefix = (state.projectId || "existing") + ":";
-  if (typeof isEngineerView === "function" && isEngineerView(state.view)) return (state.projectId || "existing") + ":" + state.view + ":" + (((state.view === "ai-review" ? state.ai.job : state.workspace.job) || {}).id || "");
+  if (state.view === "add-runs") return prefix + "add-runs:" + (state.workspace.source || "") + ":" + ((state.workspace.preview || {}).id || "");
+  if (typeof isEngineerView === "function" && isEngineerView(state.view)) return prefix + state.view + ":" + (((state.view === "ai-review" ? state.ai.job : state.workspace.job) || {}).id || "");
   if (state.view === "versions") return prefix + "versions:" + (state.versions.savedId || "");
   if (state.view === "fleet" || state.view === "runs") return prefix + state.view;
-  return prefix + (state.runId ? "run:" + state.runId : "runs");
+  return prefix + (state.runId ? "run:" + state.runId + ":" + state.view : "runs");
 }
 function _commitUrl(query) {
   const url = query ? location.pathname + "?" + query : location.pathname;
   const key = _majorDestinationKey();
-  if (state.__inPopstate || state.__booting || _lastMajorKey === undefined || key === _lastMajorKey) history.replaceState(null, "", url);
-  else history.pushState(null, "", url);
+  if (state.__inPopstate || state.__booting || _lastMajorKey === undefined || key === _lastMajorKey) history.replaceState(history.state, "", url);
+  else history.pushState({ agrPrevious: _lastMajorKey }, "", url);
+  if (key !== _lastMajorKey) state.navigationVersion = (state.navigationVersion || 0) + 1;
   _lastMajorKey = key;
 }
 function syncUrl() {
@@ -112,6 +114,11 @@ function syncUrl() {
   if (state.projectId && state.projectId !== "existing") p.set("project", state.projectId);
   if (typeof isEngineerView === "function" && isEngineerView(state.view)) {
     p.set("view", state.view);
+    if (state.view === "add-runs") {
+      if (state.workspace.source) p.set("source", state.workspace.source);
+      if (state.workspace.connectionId && state.workspace.source === "langfuse") p.set("connection", state.workspace.connectionId);
+      if (state.workspace.preview) p.set("preview", state.workspace.preview.id);
+    }
     if (state.view === "import" && state.workspace.job) p.set("import", state.workspace.job.id);
     if (state.view === "ai-review" && state.ai.job) p.set("review_job", state.ai.job.id);
     _commitUrl(p.toString()); return;
@@ -197,7 +204,7 @@ function readUrl() {
   if (p.get("axis")) v.axis = p.get("axis");
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
-  return { project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
+  return { source: p.get("source"), connection: p.get("connection"), previewId: p.get("preview"), project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
     testPattern, patternType: p.get("pattern_type"), testGroupBy: p.get("test_group_by"), left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

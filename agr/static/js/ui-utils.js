@@ -3,6 +3,7 @@
 function outcomeCounts(outcome, compact = false) {
   const o = outcome || {}, tests = o.test_results;
   if (compact) { const tally = tests || o; return (tally.passed ?? "?") + "/" + (tally.total ?? "?"); }
+  if (!tests && o.status === "UNVERIFIED" && !o.total && !compact) return "No task evaluation";
   return tests ? tests.passed + " of " + tests.total + " tests passed"
     : (o.passed ?? "?") + "/" + (o.total ?? "?") + " checks";
 }
@@ -257,3 +258,34 @@ function fmtCompact(n) {
 // wrapping; the full id stays reachable via title/tooltip wherever this is
 // used, never silently dropped.
 function shortModelName(m) { if (!m) return m; const parts = String(m).split("/"); return parts[parts.length - 1] || m; }
+
+// Display names are independent of immutable task/run identity.
+function runDisplayName(run) { return run.display_name || run.task_id || run.run_id || "Trace"; }
+function langfuseSourceLink(context) {
+  if (!context || !context.host || !context.project_id || !context.trace_id) return null;
+  try {
+    const host = new URL(context.host);
+    if (!["http:", "https:"].includes(host.protocol) || host.username || host.password || host.search || host.hash) return null;
+    return host.href.replace(/\/$/, "") + "/project/" + encodeURIComponent(context.project_id) + "/traces/" + encodeURIComponent(context.trace_id);
+  } catch (_) { return null; }
+}
+function langfuseEvaluationHelp(summary) {
+  if (!summary) return "No task-verification summary was recorded for this capture. Inspect Source for its original evaluation data.";
+  if (summary && summary.checks_available) return "Explicit evaluation checks are available; task outcome follows those checks.";
+  if (summary && summary.score_status === "unavailable") return "Langfuse scores could not be retrieved. Retry the trace fetch to recover them. Task outcome remains unverified.";
+  if (summary && summary.score_count) return summary.score_count + " Langfuse scores retained as metrics. Their polarity and scope do not automatically define task success.";
+  return "No Langfuse scores were found. Captured behavior can still be inspected.";
+}
+
+function langfuseNeedsEvaluation(rv) {
+  return !!(rv && (rv.run || {}).harness_version === "langfuse-export" && (rv.outcome || {}).status === "UNVERIFIED");
+}
+
+// Focus a freshly rendered destination without moving its reading position.
+function focusWorkspace(selector, scroll = false) {
+  const target = document.querySelector(selector);
+  if (!target) return;
+  if (!target.matches("button, input, select, textarea, a[href]")) target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+  if (scroll) target.scrollIntoView({ block: "start", behavior: "instant" });
+}

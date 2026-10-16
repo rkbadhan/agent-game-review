@@ -432,6 +432,8 @@ def _fetch_trace(trace_id, *, host, public_key, secret_key, from_time, to_time, 
         for observation in page["data"]:
             if not isinstance(observation, dict) or observation.get("traceId") != trace_id or not observation.get("id"):
                 raise ImportProblem("unsupported_response", "The response contains missing IDs or another trace.", 502)
+            observation.pop("metadata", None)
+            observation.pop("userId", None)
             observations.append(observation)
         size += len(json.dumps(page).encode())
         if len(observations) > MAX_SPANS or size > MAX_FILE:
@@ -465,7 +467,7 @@ def _fetch_trace(trace_id, *, host, public_key, secret_key, from_time, to_time, 
     # The wrapper is a structural source boundary, not a fabricated verifier.
     result = {"trace": {"id": trace_id, "name": root.get("traceName") or root.get("name") or "Langfuse trace", "timestamp": min(str(o.get("startTime") or "") for o in observations), "sessionId": root.get("sessionId")}, "observations": observations, "scores": [], "fetch_limits": {"from": from_time, "to": to_time, "root_observed": complete_root}}
     if complete_root:
-        for key in ("input", "output", "level"):
+        for key in ("input", "output", "level", "environment", "tags", "release", "version"):
             if key in root:
                 result["trace"][key] = root[key]
     # Scores are retrieved separately; failure to fetch them must not fabricate
@@ -521,5 +523,6 @@ def _fetch_trace(trace_id, *, host, public_key, secret_key, from_time, to_time, 
             raise
         result["scores"] = []
         warnings.append("Evaluation scores could not be retrieved. No task outcome is inferred from observation completion.")
+    result["scores_fetch"] = {"status": "unavailable" if any("scores could not be retrieved" in w for w in warnings) else "available" if result["scores"] else "none"}
     result["import_warnings"] = warnings
     return result

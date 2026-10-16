@@ -694,7 +694,7 @@ def test_environment_credentials_cannot_be_sent_to_other_hosts(client, monkeypat
     assert workspace.secrets[configured["id"]] == ("environment-public", "environment-secret")
     arbitrary = workspace.save_connection("existing", {"host": "https://attacker.test", "public_key": "explicit-pk", "secret_key": "explicit-sk"})
     workspace.secrets.clear()  # a new server/session must also check host binding
-    with pytest.raises(ImportProblem, match="Session credentials expired"):
+    with pytest.raises(ImportProblem, match="Connection needs keys"):
         workspace.fetch_connection("existing", arbitrary["id"], "trace")
     assert calls == []
     assert workspace.environment_keys(configured["host"]) == ("environment-public", "environment-secret")
@@ -917,3 +917,14 @@ def test_json_io_retries_transient_windows_sharing_errors(tmp_path, monkeypatch)
     storage_io.atomic_json(path, {"status": "completed"})
     assert storage_io.read_json(path) == {"status": "completed"}
     assert read_attempts == 3 and write_attempts == 2
+
+
+def test_submitted_preview_reports_existing_job_and_does_not_create_another(client, project):
+    manifest = preview(client, project, "atif", {"a.json": doc(), "b.json": doc("stuck_retry")}).json()
+    first = finish(client, project, submit(client, project, manifest).json())
+    restored = client.get(f"/projects/{project}/import-previews/{manifest['id']}").json()
+    assert restored["submitted_import"] == {"id": first["id"], "status": first["status"]}
+    again = submit(client, project, manifest, key="another-key").json()
+    assert again["id"] == first["id"]
+    different = submit(client, project, manifest, key="different-selection", selected=[manifest["items"][0]["id"]])
+    assert different.status_code == 409 and different.json()["detail"]["code"] == "preview_submitted"
