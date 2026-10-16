@@ -164,6 +164,9 @@ def _ingest(doc: dict, store: Store, adapter_version: str | None = None) -> Inge
         cwd=run.get("cwd"),
         task_checksum=run.get("task_checksum"),
         version_provenance=run.get("version_provenance"),
+        display_name=run.get("display_name"),
+        source_context=run.get("source_context"),
+        evaluation_summary=run.get("evaluation_summary"),
     )
     capabilities = _capability_profile(doc, run_id, capture_id)
 

@@ -9,8 +9,9 @@ LangSmith is structurally the closest of the three span-tree sources to
 Langfuse: runs carry ``run_type`` (``llm``/``tool``/``chain``/``retriever``/
 ``embedding``/``prompt``/``parser``), ``inputs``, ``outputs``, an ``error``
 string, ``parent_run_id``, ``trace_id``, and per-run token counts — a direct
-fit for :mod:`agr.span_tree`. Feedback records map to ``verifier.checks[]``
-the same way Langfuse ``scores`` do (docs/span-adapters.md).
+fit for :mod:`agr.span_tree`. LangSmith feedback retains its existing narrow
+``verifier.checks[]`` mapping. Langfuse scores are retained as metrics and
+require explicit verifier checks instead (docs/span-adapters.md).
 
 Field mapping:
 
@@ -120,10 +121,9 @@ def _feedback_status(fb: dict) -> str:
 
     LangSmith feedback carries a numeric ``score`` and/or a ``value``
     (bool/string), with no declared dataType the way Langfuse scores have.
-    Mirrors ``ingest_langfuse._score_status``'s narrowness: only the
+    This LangSmith-specific policy maps only the
     unambiguous cases (a boolean, an exact 0/1, or a small closed
-    pass/fail-like string vocabulary — reused from the Langfuse adapter, not
-    re-derived) map to passed/failed; anything else is "unknown" rather than
+    pass/fail-like string vocabulary) map to passed/failed; anything else is "unknown" rather than
     a guessed threshold on an arbitrary scale.
     """
     score = fb.get("score")
@@ -150,7 +150,7 @@ def _feedback_status(fb: dict) -> str:
 def _feedback_to_verifier(feedback: list, warnings: list[str]) -> Optional[dict]:
     """LangSmith ``feedback`` records -> a ``verifier.checks[]`` sidecar.
 
-    Mirrors ``ingest_langfuse._scores_to_verifier``. Returns ``None`` when
+    Returns ``None`` when
     there is no feedback — the caller keeps the run with no verifier evidence
     rather than writing an empty, misleading sidecar.
     """

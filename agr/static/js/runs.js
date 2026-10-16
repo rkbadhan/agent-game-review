@@ -12,7 +12,7 @@ const RUNS_PAGE = 50;
 function runsMatchesSearch(r, q) {
   const needle = (q || "").trim().toLowerCase();
   if (!needle) return true;
-  return (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
+  return (runDisplayName(r)).toLowerCase().includes(needle) || (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
 }
 // R3 (coordinator review 2, item 2): a boilerplate main_finding must not
 // fall back to a verdict-shaped sentence here — the Outcome column already
@@ -79,7 +79,7 @@ function renderRunsSurface(main) {
   // above the stat line's own big "27 runs" count.
   const nav = el("div", "review-nav runs-page-nav");
   const head = el("div", "outline");
-  head.append(el("span", "eyebrow", "Runs"));
+  head.append(el("h1", "eyebrow runs-heading", "Runs"));
   nav.append(head);
   const util = el("div", "review-util");
   if (state.runId) {
@@ -186,7 +186,7 @@ function runsOutcomeBadgeClass(status) {
 // Claude Code sessions do) and captured time, when available.
 function runsIdentityCell(r) {
   const cell = el("td", "runs-id-cell");
-  cell.append(el("div", "runs-task", r.task_id || r.run_id));
+  cell.append(el("div", "runs-task", runDisplayName(r)));
   const meta = el("div", "runs-id-meta");
   const short = shortRunId(r.run_id);
   if (short) {
@@ -297,7 +297,7 @@ function renderRunsTable(host) {
     const tr = el("tr", "runs-row" + (r.run_id === state.runId ? " active" : ""));
     tr.tabIndex = 0;
     tr.setAttribute("role", "link");
-    tr.setAttribute("aria-label", "Open " + (r.task_id || r.run_id));
+    tr.setAttribute("aria-label", "Open " + (runDisplayName(r)));
     tr.dataset.runId = r.run_id;
 
     tr.append(runsIdentityCell(r));

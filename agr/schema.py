@@ -217,6 +217,9 @@ class RunSource:
     cwd: Optional[str] = None
     task_checksum: Optional[str] = None
     version_provenance: Optional[dict] = None
+    display_name: Optional[str] = None
+    source_context: Optional[dict] = None
+    evaluation_summary: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return _clean(asdict(self))

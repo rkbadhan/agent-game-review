@@ -1027,6 +1027,8 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
         summaries.append({
             "run_id": run_id,
             "task_id": rs.get("task_id"),
+            "display_name": rs.get("display_name"),
+            "source_context": rs.get("source_context"),
             # Runs surface (item: readable session identity) — the working
             # directory the harness ran in, when the source captured one.
             # None means the source never declared it, not that this run has

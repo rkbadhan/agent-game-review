@@ -214,10 +214,14 @@ def discover(root: Path, source: str, store: Store, options: dict) -> tuple[list
                         raise ImportProblem("identity_collision", "This run ID already belongs to a different task or source.")
                 coverage = doc.get("capabilities", {})
                 item.update(status="duplicate" if existing else "new_capture" if prior else "new",
-                            run_id=run_id, title=doc["run"].get("task_id", run_id), model=doc["run"].get("model"),
+                            run_id=run_id, title=doc["run"].get("display_name") or doc["run"].get("task_id", run_id), model=doc["run"].get("model"),
                             source_hash=h, adapter_version=adapter, steps=len(doc["steps"]),
                             evaluation_available=bool((doc.get("verifier") or {}).get("checks")), coverage=coverage,
+                            evaluation_summary=doc["run"].get("evaluation_summary"),
                             captured_at=doc["run"].get("started_at"), limited=doc.get("capture_completeness") != "complete")
+                item["selected_by_default"] = not (prior and (doc["run"].get("evaluation_summary") or {}).get("score_status") == "unavailable")
+                if not item["selected_by_default"]:
+                    item["warnings"].append("Not selected by default: score retrieval failed for an existing run. Retry fetching before replacing its current capture.")
                 item["doc"] = doc
             except ImportProblem as exc:
                 item.update(status="invalid", error=str(exc), error_code=exc.code)
@@ -295,9 +299,6 @@ def discover(root: Path, source: str, store: Store, options: dict) -> tuple[list
                     if source == "langfuse":
                         export = _read(path)
                         result.warnings.extend(export.get("import_warnings") or [])
-                        if export.get("fetch_limits"):
-                            result.doc["capture_completeness"] = "partial"
-                            result.doc["capabilities"] = {k: "partial" if v == "complete" else v for k, v in result.doc.get("capabilities", {}).items()}
                     add(path, result.doc, result.warnings)
             except ImportProblem as exc:
                 if exc.code in ("import_limit", "invalid_verifier"):

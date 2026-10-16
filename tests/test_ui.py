@@ -2310,3 +2310,34 @@ def test_patterns_render_while_inbox_and_supporting_cards_are_pending(tmp_path):
         page.locator('.runs-table-card').wait_for()
         assert errors == []
         browser.close()
+
+
+def test_review_tabs_support_keyboard_and_source_browser_back(server):
+    from playwright.sync_api import expect
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        _open_review(page, server)
+        overview = page.get_by_role("tab", name="Overview")
+        overview.click()
+        expect(overview).to_be_focused()
+        expect(overview).to_have_attribute("aria-selected", "true")
+        expect(page.get_by_role("tabpanel")).to_have_attribute("aria-labelledby", "review-tab-overview")
+        overview.press("ArrowRight")
+        expect(page.get_by_role("tab", name="Key moments")).to_be_focused()
+        expect(page.get_by_role("tab", name="Key moments")).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("End")
+        expect(page.get_by_role("tab", name="Checks")).to_be_focused()
+        page.keyboard.press("ArrowRight")
+        expect(overview).to_be_focused()
+        page.keyboard.press("ArrowLeft")
+        expect(page.get_by_role("tab", name="Checks")).to_be_focused()
+        page.keyboard.press("Home")
+        expect(overview).to_be_focused()
+        assert page.locator('[role=tablist] [tabindex="0"]').count() == 1
+        page.get_by_role("button", name="Source", exact=True).click()
+        page.locator(".verify-ok").wait_for()
+        page.go_back()
+        expect(overview).to_have_attribute("aria-selected", "true")
+        expect(page.get_by_role("tabpanel")).to_be_visible()
+        browser.close()

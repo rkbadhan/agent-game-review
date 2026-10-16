@@ -323,6 +323,10 @@ def attach_workspace(app, default_store, read_only, *, allowed_hosts=None, sessi
     def fetch_trace(project_id: str, connection_id: str, payload: dict = Body(...)):
         return workspace.fetch_connection(project_id, connection_id, payload.get("trace_id"), payload.get("from_time"), payload.get("to_time"), payload.get("trace_ids"))
 
+    @app.patch("/projects/{project_id}/connections/{connection_id}/credentials")
+    def reconnect(project_id: str, connection_id: str, payload: dict = Body(...)):
+        return workspace.reconnect(project_id, connection_id, payload)
+
     @app.delete("/projects/{project_id}/connections/{connection_id}")
     def disconnect(project_id: str, connection_id: str):
         return workspace.disconnect(project_id, connection_id)

@@ -125,18 +125,13 @@ Two things to get right:
    already decodes (`ingest_harbor.py:_parse_returncode` /
    `_is_submission_non_execution_response` — `{"returncode": …}` and friends).
    Reuse that decoder; do not re-derive it.
-2. **Langfuse `scores`** attached to a trace are a natural source for atomic
-   checks — the first *external verifier signal* any adapter would carry, mapping
-   into the `verifier.checks[]` shape (`source: instrumented_assertion`) the way
-   `verifier_synth.synthesize_verifier` builds in-session checks. This is
-   stronger evidence than the reward-only Harbor path. **A `CATEGORICAL`
-   score's `value` is a numeric category-index, not the label** — the
-   human-readable label ("pass"/"fail"/…) is in `stringValue`. Match the
-   closed pass/fail vocabulary against `stringValue` (falling back to
-   `value` only when it happens to already be a string); matching `value`
-   itself means every categorical score silently reports `unknown` forever.
-   `BOOLEAN` scores are the other way round: `value` (0/1) is the primary
-   encoding, `stringValue` ("True"/"False") a fallback.
+2. **Langfuse `scores` retain their original meaning.** Adapter 0.4 preserves
+   their values, types, subjects and provenance in `source_scores`, without
+   turning arbitrary metrics into task checks. Numeric endpoints and boolean
+   truth do not establish metric polarity, and an observation-level score does
+   not establish whole-task success. Import an explicit verifier results
+   sidecar to define pass/fail checks. Trace retrieval/telemetry coverage stays
+   separate from evaluation availability.
 
 **Two source shapes are accepted**, both handled by `agr/ingest_langfuse.py`:
 the original blob-storage/UI export (`{"trace": {...}, "observations": [...],
@@ -168,7 +163,7 @@ Sizing: **one to two days.**
 Structurally the closest to Langfuse. Runs carry `run_type` (`llm`, `tool`,
 `chain`, …), `inputs`, `outputs`, an `error` string, `parent_run_id`,
 `trace_id`, and per-run token counts — a direct fit for the flattener. Feedback
-records map to `verifier.checks[]` the same way Langfuse scores do.
+records currently map to `verifier.checks[]`; Langfuse scores are retained as metrics.
 
 Do it last: a large share of LangSmith users run LangChain and can emit OTel
 instead, so the OTel adapter already covers many of them. Source is the SDK's
@@ -191,7 +186,8 @@ Sizing: **one to two days.**
 ## Gotchas that are the same everywhere
 
 - **No source carries a verifier.** Every run ingests `UNVERIFIED` unless
-  scores/feedback exist, or `verifier_synth` finds recognised test invocations
+  explicit checks are provided, the adapter supports applicable feedback, or
+  `verifier_synth` finds recognised test invocations
   in tool outputs. Say this plainly in each adapter's docs — it is the
   difference between "AGR found failures" and "AGR found process problems."
 - **"No error" is not "success."** Unlike a clean Messages API turn, a tool

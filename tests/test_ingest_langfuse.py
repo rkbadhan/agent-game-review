@@ -127,27 +127,31 @@ def test_session_id_from_trace_session_id():
 
 # --- scores -> verifier.checks ------------------------------------------------
 
-def test_scores_synthesize_verifier_when_no_explicit_one_given():
-    res = convert(FIXTURE, task_id="t")
-    assert "verifier" in res.doc
-    checks = res.doc["verifier"]["checks"]
-    assert len(checks) == 2
-    assert all(c["source"] == "instrumented_assertion" for c in checks)
+def test_scores_are_preserved_without_inferred_task_checks():
+    import json
+    export = json.loads(FIXTURE.read_text())
+    res = convert(export, task_id="t")
+    assert "verifier" not in res.doc
+    assert res.doc["source_scores"] == sorted(export["scores"], key=lambda score: json.dumps(score, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    assert res.doc["run"]["evaluation_summary"]["score_count"] == len(export["scores"])
 
 
-def test_boolean_score_maps_to_passed():
-    res = convert(FIXTURE, task_id="t")
-    checks = {c["name"]: c for c in res.doc["verifier"]["checks"]}
-    assert checks["correctness"]["status"] == "passed"
-
-
-def test_ambiguous_numeric_score_maps_to_unknown_with_warning():
-    """0.8 on an arbitrary evaluator-defined numeric scale has no universal
-    pass/fail meaning -- must never be guessed into a pass or fail."""
-    res = convert(FIXTURE, task_id="t")
-    checks = {c["name"]: c for c in res.doc["verifier"]["checks"]}
-    assert checks["helpfulness"]["status"] == "unknown"
-    assert any("no clear pass/fail mapping" in w for w in res.warnings)
+@pytest.mark.parametrize("score", [
+    {"name": "toxicity", "dataType": "NUMERIC", "value": 1},
+    {"name": "error_count", "dataType": "NUMERIC", "value": 0},
+    {"name": "violates_policy", "dataType": "BOOLEAN", "value": True},
+    {"name": "quality", "dataType": "NUMERIC", "value": 0.92},
+    {"name": "correctness", "dataType": "BOOLEAN", "value": True, "subject": {"kind": "observation", "id": "child", "traceId": "trace"}},
+])
+def test_metric_value_and_scope_never_imply_task_success(score, tmp_path):
+    from agr.pipeline import analyze
+    from agr.store import Store
+    res = convert({"id": "trace", "observations": [], "scores": [score]}, task_id="t")
+    store = Store(tmp_path / "store")
+    analyze(res.doc, store)
+    from agr.read import get_review
+    assert get_review(store, res.doc["run"]["logical_run_id"])["outcome"]["status"] == "UNVERIFIED"
+    assert res.doc["source_scores"] == [score]
 
 
 def test_explicit_verifier_overrides_scores():
@@ -284,71 +288,38 @@ def test_wrapped_export_shape_still_accepted():
     assert tool_steps
 
 
-# --- Fix 2: CATEGORICAL score label lives in stringValue, not value -----------
-
-def test_categorical_score_label_is_read_from_string_value():
-    """Guards Fix 2: per Langfuse's ScoreV1 schema, a CATEGORICAL score's
-    ``value`` is a NUMERIC category-index mapping -- the human label
-    ("pass"/"fail") is in ``stringValue``. Reading ``value`` for the label
-    (the bug) means these scores always fell through to 'unknown'."""
-    export = {
-        "id": "trace-cat-1",
-        "name": "categorical-check",
-        "timestamp": "2026-09-01T10:00:00.000Z",
-        "observations": [],
-        "scores": [
-            {"id": "s1", "name": "quality", "dataType": "CATEGORICAL",
-             "value": 1, "stringValue": "pass"},
-            {"id": "s2", "name": "safety", "dataType": "CATEGORICAL",
-             "value": 0, "stringValue": "fail"},
-        ],
-    }
-    res = convert(export, task_id="t")
-    checks = {c["name"]: c for c in res.doc["verifier"]["checks"]}
-    assert checks["quality"]["status"] == "passed"
-    assert checks["safety"]["status"] == "failed"
+def test_original_trace_name_and_source_context_survive_analysis(tmp_path):
+    from agr.pipeline import analyze
+    from agr.read import get_review, list_runs
+    from agr.store import Store
+    export = {"id": "stable-id", "name": "config-fixer", "observations": [], "scores": [],
+              "source_context": {"host": "https://cloud.langfuse.com", "project_id": "prod-1", "project_name": "Production"}}
+    res = convert(export)
+    run_id = res.doc["run"]["logical_run_id"]
+    assert run_id == "langfuse__langfuse-trace-stable-id__stable-id"
+    store = Store(tmp_path / "store")
+    analyze(res.doc, store)
+    assert get_review(store, run_id)["run"]["display_name"] == "config-fixer"
+    assert list_runs(store)[0]["display_name"] == "config-fixer"
+    assert get_review(store, run_id)["run"]["source_context"]["project_id"] == "prod-1"
 
 
-def test_boolean_score_numeric_value_and_string_value_fallback():
-    """BOOLEAN scores: ``value`` (0/1) is the primary encoding and is
-    preferred; ``stringValue`` ("True"/"False") is accepted as a fallback
-    when ``value`` itself is not usable."""
-    export = {
-        "id": "trace-bool-1",
-        "name": "boolean-check",
-        "timestamp": "2026-09-01T10:00:00.000Z",
-        "observations": [],
-        "scores": [
-            {"id": "s1", "name": "numeric_true", "dataType": "BOOLEAN", "value": 1},
-            {"id": "s2", "name": "numeric_false", "dataType": "BOOLEAN", "value": 0},
-            {"id": "s3", "name": "string_only_true", "dataType": "BOOLEAN",
-             "value": None, "stringValue": "True"},
-            {"id": "s4", "name": "string_only_false", "dataType": "BOOLEAN",
-             "value": None, "stringValue": "False"},
-        ],
-    }
-    res = convert(export, task_id="t")
-    checks = {c["name"]: c for c in res.doc["verifier"]["checks"]}
-    assert checks["numeric_true"]["status"] == "passed"
-    assert checks["numeric_false"]["status"] == "failed"
-    assert checks["string_only_true"]["status"] == "passed"
-    assert checks["string_only_false"]["status"] == "failed"
+def test_score_presence_does_not_define_observation_completeness():
+    base = {"id": "trace", "observations": [], "scores": []}
+    no_scores = convert(base).doc
+    with_scores = convert(dict(base, scores=[{"name": "quality", "dataType": "NUMERIC", "value": 1}])).doc
+    assert no_scores["capture_completeness"] == with_scores["capture_completeness"]
+    assert no_scores["capabilities"] == with_scores["capabilities"]
 
 
-def test_categorical_score_outside_closed_vocab_is_unknown():
-    """A categorical label outside the small closed vocabulary is 'unknown',
-    never guessed -- the narrow vocab is unchanged by Fix 2, only which field
-    it's matched against."""
-    export = {
-        "id": "trace-cat-2",
-        "name": "categorical-unknown",
-        "timestamp": "2026-09-01T10:00:00.000Z",
-        "observations": [],
-        "scores": [
-            {"id": "s1", "name": "vibe", "dataType": "CATEGORICAL",
-             "value": 2, "stringValue": "excellent"},
-        ],
-    }
-    res = convert(export, task_id="t")
-    checks = {c["name"]: c for c in res.doc["verifier"]["checks"]}
-    assert checks["vibe"]["status"] == "unknown"
+def test_score_order_and_untrusted_context_do_not_change_capture_identity():
+    from agr.store import source_hash
+    scores = [{"id": "z", "value": 1, "subject": {"id": "trace", "kind": "trace"}}, {"id": "a", "value": 0}]
+    export = {"id": "trace", "observations": [], "scores": scores,
+              "source_context": {"host": "https://self-hosted.example", "project_id": "p", "project_name": "Spoofed label", "window": "old", "userId": "private"}, "userId": "private"}
+    first = convert(export).doc
+    second = convert(dict(export, scores=list(reversed(scores)), source_context={"host": "https://self-hosted.example", "project_id": "p"})).doc
+    assert source_hash(first) == source_hash(second)
+    assert "userId" not in first["run"]["source_context"]
+    assert "project_name" not in first["run"]["source_context"]
+    assert source_hash(convert(dict(export, scores=scores + [{"id": "late", "value": 3}])).doc) != source_hash(first)

@@ -319,7 +319,7 @@ function renderRunList() {
     const o = r.outcome || {};
     const line = el("div", "run-line");
     line.append(el("span", "status-dot " + sc));
-    line.append(el("span", "run-name", r.task_id || r.run_id));
+    line.append(el("span", "run-name", runDisplayName(r)));
     line.append(el("span", "run-checks " + sc, outcomeCounts(o, true)));
     // The status WORD ("PASSED"/"FAILED"/…) is now conveyed by color (the dot,
     // .run-checks) rather than spelled out next to the ratio — kept as text

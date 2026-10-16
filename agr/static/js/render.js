@@ -95,7 +95,7 @@ function render() {
     syncUrl(); return;
   }
   const rv = state.review, run = rv.run || {};
-  $("#crumb-task").textContent = run.task_id || state.runId;
+  $("#crumb-task").textContent = runDisplayName(run);
 
   // header — the §4.2 shared run-review shell, compacted to three lines
   // (target: ≤140px tall at 1440px, ≤220px at 390px): a title line
@@ -112,7 +112,7 @@ function render() {
   const header = el("div", "run-header");
   const left = el("div");
   const titleRow = el("div", "run-title-row");
-  titleRow.append(el("h1", null, run.task_id || state.runId));
+  titleRow.append(el("h1", null, runDisplayName(run)));
   const o = rv.outcome || {}, sc = statusClass(o.status);
   const hs = el("span", "header-status " + sc);
   hs.append(el("span", "status-dot " + sc), el("span", null, (o.status||"?") + " · " + outcomeCounts(o)));
@@ -130,12 +130,21 @@ function render() {
   idSpan.title = state.runId;
   sub.append(idSpan);
   sub.append(copyButton(state.runId, "Copy full run id"));
+  const sourceURL = langfuseSourceLink(run.source_context);
   left.append(sub);
+  if (run.source_context) {
+    const origin = el("div", "run-source-context");
+    // The project's name is a label that can change, so it is not part of a capture; the host and project ID are.
+    const originLabel = run.source_context.project_name || (run.source_context.host || "").replace(/^https?:\/\//, "");
+    if (originLabel) origin.append(el("span", null, originLabel));
+    if (sourceURL) { const link = el("a", "langfuse-origin-link", "Open in Langfuse at " + new URL(sourceURL).host + " ↗"); link.href = sourceURL; link.target = "_blank"; link.rel = "noopener noreferrer"; origin.append(link); }
+    left.append(origin);
+  }
   // Persistent one-line verdict (plain language) directly under the title, so
   // the run's result reads in one glance from any chapter — not only Overview.
   // Restated from validated check facts; no interpretation is added here.
   const vsum = outcomeNarrative(rv);
-  if (vsum) {
+  if (vsum && !langfuseNeedsEvaluation(rv)) {
     const v = el("p", "run-verdict " + vsum.tone);
     v.append(el("span", "run-verdict-key", vsum.headline), document.createTextNode(" " + vsum.detail));
     left.append(v);
@@ -147,9 +156,24 @@ function render() {
     const snapshot = el("div", "notice callout", "Saved evidence snapshot · " + state.captureId + " · read-only ");
     snapshot.append(workspaceButton("Open latest capture", () => selectRun(state.runId))); main.append(snapshot);
   }
+  const actions = el("div", "run-review-actions");
   if (!state.loading && !aiReadOnly() && !state.captureId && !state.workspace.unavailable)
-    main.append(workspaceButton("Run AI review", () => openAIReview([state.runId])));
-  renderInvestigationComposer(main);
+    actions.append(workspaceButton(rv.review_status === "review_failed" ? "Retry AI review" : "Run AI review", () => openAIReview([state.runId])));
+  if (rv.review_status === "review_failed") {
+    const failure = el("details", "run-ai-failure");
+    const errors = rv.review_errors || [], reason = errors[0] && errors[0].error_type;
+    failure.append(el("summary", "engineer-error", "AI review failed" + (reason ? ": " + reason : " — view details")));
+    for (const error of errors) failure.append(el("p", null, error.message || error.error_type || "The provider did not complete this review."));
+    failure.append(el("p", "engineer-hint", "Trace analysis is available. Retry after correcting the reviewer configuration.")); actions.append(failure);
+  }
+  main.append(actions);
+  if (langfuseNeedsEvaluation(rv)) {
+    const note = el("div", "notice langfuse-evaluation-note");
+    note.append(el("strong", null, "Task evaluation is optional"), el("p", null, langfuseEvaluationHelp(run.evaluation_summary)));
+    const help = el("details"); help.append(el("summary", null, "How to add task evaluation"), el("p", "engineer-hint", "Import a trace export with an evaluation results file containing explicit pass/fail checks. AI review analyzes behavior; it does not supply missing verification.")); note.append(help);
+    main.append(note);
+  }
+  if (run.harness_version !== "langfuse-export") renderInvestigationComposer(main);
 
   if (rv.watermark) { const w = el("div", "watermark callout callout-warn"); w.append(icon("alert-triangle", "watermark-icon"), document.createTextNode(" " + rv.watermark)); main.append(w); }
   // Not-reviewable routing (§4.15): the capture is too incomplete for a
@@ -190,8 +214,24 @@ function render() {
   if (state.view !== "compare") {
     const outline = el("div", "outline"); outline.setAttribute("role", "tablist");
     outline.setAttribute("aria-label", "Review chapters");
-    for (const [id, label] of CHAPTERS)
-      outline.append(ochip(id, label, meta[id], state.view === "review" && state.chapter === id));
+    for (const [index, [id, label]] of CHAPTERS.entries()) {
+      const current = state.view === "review" && state.chapter === id;
+      const tab = ochip(id, label, meta[id], current);
+      tab.id = "review-tab-" + id; tab.setAttribute("role", "tab");
+      tab.removeAttribute("aria-current"); tab.setAttribute("aria-selected", String(current));
+      if (state.view === "review" && CHAPTERS.some(([key]) => key === state.chapter)) tab.setAttribute("aria-controls", "review-panel");
+      tab.tabIndex = current || (!CHAPTERS.some(([key]) => key === state.chapter) && index === 0) || (state.view !== "review" && index === 0) ? 0 : -1;
+      tab.addEventListener("keydown", e => {
+        let next;
+        if (e.key === "ArrowRight") next = (index + 1) % CHAPTERS.length;
+        else if (e.key === "ArrowLeft") next = (index + CHAPTERS.length - 1) % CHAPTERS.length;
+        else if (e.key === "Home") next = 0;
+        else if (e.key === "End") next = CHAPTERS.length - 1;
+        else return;
+        e.preventDefault(); e.stopPropagation(); setChapter(CHAPTERS[next][0]);
+      });
+      outline.append(tab);
+    }
     nav.append(outline);
   }
   // RIGHT zone: other views & tools, all together.
@@ -265,6 +305,7 @@ function render() {
   else if (state.view === "sibling") renderSiblingDivergence(main);
   else renderChapter(main);
 
+  if (run.harness_version === "langfuse-export") renderInvestigationComposer(main);
   renderEvidencePanel();
   syncUrl();
 }
@@ -298,7 +339,7 @@ function renderShellMeta(rv) {
   // warning (a failed/unconfigured reviewer) still gets its own visible chip
   // — that is signal, not redundancy.
   wrap.append(modeChip);
-  if (rv.review_status) {
+  if (rv.review_status && rv.review_status !== "not_configured") {
     const sv = vocab("review_status", rv.review_status);
     if (rv.review_status_success) {
       modeChip.title = mv.tip + " · " + sv.label + (sv.tip ? ": " + sv.tip : "");
@@ -306,7 +347,7 @@ function renderShellMeta(rv) {
       // Validation details remain available without competing with the ending.
       modeChip.title += " · " + sv.label + (sv.tip ? ": " + sv.tip : "");
     } else {
-      const statusChip = el("span", "shell-chip warn", sv.label);
+      const statusChip = el("span", "shell-chip warn", rv.review_status === "review_failed" ? "AI review failed" : sv.label);
       statusChip.title = sv.tip;
       wrap.append(statusChip);
     }
@@ -387,7 +428,7 @@ function renderShellMeta(rv) {
     // These chips switch which reviewer's snapshot is served; comparing two
     // reviews side by side lives in the unified "Compare" control by the tabs.
     wrap.append(flip);
-  } else {
+  } else if (rv.review_status !== "review_failed") {
     // GR-1: no model snapshot is served. "No model review" is the clear,
     // first-class label when nothing is configured; a failed or early-stopped
     // attempt is named by the limits panel and the status chip above, and the
@@ -405,15 +446,16 @@ function renderShellMeta(rv) {
   const handled = wf.review_progress === "handled";
   const wfVocab = handled && wf.disposition ? vocab("disposition", wf.disposition)
     : vocab("progress", wf.review_progress || "unreviewed");
-  const wfChip = el("span", "shell-chip wf" + (handled ? " on" : ""), wfVocab.label);
+  const wfChip = el("span", "shell-chip wf" + (handled ? " on" : ""), !handled && (!wf.review_progress || wf.review_progress === "unreviewed") ? "Awaiting human review" : wfVocab.label);
   wfChip.title = wfVocab.tip; wrap.append(wfChip);
   const who = [wf.reviewer ? "Reviewer " + wf.reviewer : null,
     wf.assignee ? "Assigned " + wf.assignee : null].filter(Boolean).join(" · ");
   if (who) wrap.append(el("span", "shell-who", who));
   const comp = (rv.capture || {}).capture_completeness;
   if (comp && comp !== "complete") {
-    const warn = el("span", "shell-chip warn", "Capture: " + comp);
-    warn.title = "The source capture is " + comp + " — some evidence may be missing.";
+    const bounded = ((rv.run || {}).source_context || {}).retrieval === "bounded";
+    const warn = el("span", "shell-chip " + (bounded ? "mode-det" : "warn"), bounded ? "Snapshot: selected time range" : "Capture: " + comp);
+    warn.title = bounded ? "Observations were retrieved within the selected time range. Coverage and evaluation availability are shown separately." : "The source capture is " + comp + " — inspect coverage for missing evidence.";
     wrap.append(warn);
   }
   return wrap;

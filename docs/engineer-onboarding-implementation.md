@@ -115,6 +115,10 @@ and can retry analysis without another upload or remote fetch.
 
 Import confirmation binds a selected-item list to an immutable manifest hash
 and an idempotency key. Identical source hash plus adapter version is a no-op.
+A Langfuse capture's source records the host, project ID and trace ID but not the
+time range it was searched with or the project's name, so re-importing an
+unchanged trace is a duplicate however it was found; only a change in the trace
+itself (late observations or scores) creates a new capture.
 New captures retain the prior revision chain. Conflicting task/source identity
 is checked both at preview and publication, including competing previews.
 Cancellation takes effect between committed items. A dead job owner's active
@@ -222,7 +226,7 @@ source paths through import/review, project and cache isolation, sample behavior
 sidecars, mixed traces, manifest/idempotency, duplicates, capture revisions,
 analysis failure/retry, cancellation/restart, original-file retention, remote
 and proxy request compatibility, reviewer attribution, and saved evidence pinning.
-Mocked Langfuse tests verify paginated observations, score mapping, and rejection
+Mocked Langfuse tests verify paginated observations, score preservation, and rejection
 of unrelated traces.
 
 Regression coverage for the PR review:
@@ -317,3 +321,127 @@ What the server's source established, and what is still open:
 
 The recorded contract is `tests/fixtures/langfuse/server_contract.json`; a test checks every request the connector
 makes against it, so a change to what is sent cannot drift from what the server validates.
+
+
+## Langfuse onboarding recovery and evaluation semantics
+
+Saved connections expose current credential availability. After the AGR server
+restarts, connections without matching environment keys show `needs_keys`.
+Reconnect replaces credentials on the existing connection, verifies access and
+rejects a key pair for another known upstream project. Keys remain memory-only.
+
+New imports preserve the original trace name as `display_name`, separately from
+stable task/run IDs. Source host, upstream project and trace identity support an
+Open in Langfuse link. Bounded observation retrieval is shown separately from
+telemetry capability coverage and score availability. Preview summarizes batch
+coverage and common capture notes; individual rows expand for exceptions.
+
+Adapter 0.4 retains Langfuse scores as typed metrics in immutable `source_scores`,
+including their subjects and evaluator provenance. It no longer guesses task
+pass/fail from boolean, numeric or categorical score values. Supply an explicit
+verifier results sidecar via file import to define task checks. Existing captures
+remain immutable; re-import to create a capture with these semantics. No model
+review or automatic source sync is started by importing.
+
+
+Validation commands and current results are recorded below. Tests use local
+simulated services; live customer Langfuse credentials were not used.
+
+
+## Onboarding navigation and interaction behavior
+
+Source selection, capture browsing and each server-side preview have distinct
+browser history destinations. Preview URLs carry project, source, connection
+and preview IDs so reload can retrieve the existing preview. Session storage
+keeps selected preview item IDs and return scroll positions; credentials and
+trace bodies are excluded. Expired or missing previews offer a new search or
+file selection. Reloading the browse step restores the saved connection, while
+trace-list contents must be fetched again; large trace payloads are not cached
+in browser storage.
+
+Back to traces restores the in-memory list, selection, filters and both page
+and table positions, returning focus to the preview action at that position.
+The source heading, connected search form, search results
+and preview summary receive focus on transition. Late preview responses cannot
+replace a newer navigation destination. Search initially exposes time, name and
+environment; the other filters and result limit are under More filters.
+Connection facts collapse after setup, and the next search action is brought
+into view. The duplicate numbered connection/search/selection steps are removed.
+
+Requests show a specific progress label beside the initiating control and mark
+the working surface busy. Sidebar destinations remain available, and finishing
+a request does not pull the engineer away from a newer destination. Project
+switching remains disabled during a workspace request. File transfer progress
+only repaints its originating page.
+
+At mobile widths the menu moves focus inside, makes the background inert, traps
+Tab, closes on every navigation destination, and restores the opener on Escape,
+the close button or the shade. Escape also works from editable controls.
+Review tabs expose tab/tabpanel semantics, selected state, a single tab stop,
+and Arrow Left/Right, Home and End navigation. Source view is a separate browser
+history destination, so Back returns to the review.
+
+
+The browser regressions cover preview reload selection, Back/Forward, return
+position, expired previews, visible request feedback, navigation during a
+delayed request, late preview responses, mobile menu focus and dismissal,
+and review-tab keyboard behavior. Desktop and mobile layouts were inspected
+at 1440x900 and 390x844. Real upstream latency remains untested.
+
+The CI browser gate includes Langfuse browsing and AI-review journeys alongside
+the review and demo suites.
+The eight demo regressions also passed, including the mobile story browser.
+
+
+## Stable refresh and recovery contracts
+
+A failed project lookup keeps the previously verified Langfuse project binding.
+Reconnect requires both a known saved project ID and a matching upstream ID;
+unknown bindings cannot be reassigned by replacement keys. Fetched trace or
+observation project IDs take precedence over connection metadata for capture
+provenance, including Langfuse 3 trace responses.
+
+Scores are sorted canonically before they enter the immutable source document.
+Score ordering, search-window endpoints and project display names do not change
+capture identity. Actual changed scores or captured observations do. A test fake
+that enforces the observation window covers genuinely narrower captures, in
+addition to the v3/v4 unchanged-refresh regressions.
+
+A score-fetch failure on an existing run leaves its preview item unchecked and
+explains why. Engineers can retry fetching, or explicitly select the degraded
+capture. This avoids replacing a good capture by default; it does not rewrite
+existing revision history or change content-addressed duplicate semantics.
+
+Workspace requests are isolated by project and view. An action on Sources can
+run while Add runs is fetching; a late error is announced for its originating
+view rather than appearing on a different page. Help and Glossary focus their
+selected tab, contain keyboard focus and restore the opener on dismissal.
+
+Submitted previews reopen as a notice linking to the existing import. Equivalent
+submissions with a fresh request key reuse the original job; changed selections
+require a new preview. Preview session state is removed on submission or expiry,
+ages out after a day, and is capped at 50 entries.
+
+Langfuse v2 capture fetches omit unused observation metadata and user IDs; trace browsing
+retains fields needed for its visible filters and details. Imported source
+context accepts only host/project identifiers, excludes arbitrary labels, and
+trace links display their actual hostname. Self-hosted destinations remain
+supported; an uploaded host is not an independently verified connection.
+
+
+Reproducible validation for the refresh/recovery changes (with API/test/browser
+dependencies and Chromium installed):
+
+```sh
+python -m pytest tests/test_ingest_langfuse.py tests/test_langfuse_browse.py tests/test_workspace.py tests/test_langfuse_api.py tests/test_span_tree.py tests/test_adapter.py
+python -m pytest tests/test_ui.py tests/test_langfuse_browse_ui.py tests/test_ai_review_ui.py
+python -m pytest tests/test_no_internal_spec_refs.py tests/test_outcome_status_coverage.py tests/test_review_status.py
+```
+
+Results: 357 backend tests, 70 browser tests, and 39 static safeguards passed.
+All 26 JavaScript modules parse and the diff passes whitespace checks. The
+backend fakes cover Langfuse 3/4, shuffled scores, failed project lookup,
+unknown-project reconnect, degraded refresh, submitted-preview reuse, and
+observation windows that actually omit spans. The services and model reviewer
+are simulated; real accounts, live latency and screen-reader behavior were
+not exercised.

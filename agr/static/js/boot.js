@@ -15,13 +15,36 @@ async function dispatchLocation(want, isBoot) {
     else await switchProject(destinationProject, false);
   }
   if (isEngineerView(want.view)) {
+    const destinationURL = location.href, project = state.projectId;
+    const stillHere = () => state.projectId === project && state.view === want.view && location.href === destinationURL;
     state.view = want.view;
     if (want.reviewJobId) {
       state.ai.job = await api(projectPath("/ai-reviews/" + encodeURIComponent(want.reviewJobId)));
       if (["queued", "running", "cancelling"].includes(state.ai.job.status)) pollAIReview();
     }
     if (want.importId) { state.workspace.job = await api(projectPath("/imports/" + encodeURIComponent(want.importId))); pollImport(); }
-    await loadEngineerData(); render(); return;
+    await loadEngineerData();
+    if (!stillHere()) return;
+    if (want.view === "add-runs") {
+      const ws = state.workspace;
+      ws.source = (ws.catalog || []).some(s => s.id === want.source) ? want.source : null;
+      ws.preview = null; ws.error = null;
+      if (want.connection && ws.connections.some(c => c.id === want.connection)) ws.connectionId = want.connection;
+      if (want.previewId) {
+        try {
+          const preview = await api(projectPath("/import-previews/" + encodeURIComponent(want.previewId)));
+          if (!stillHere()) return;
+          restorePreviewNavigation(preview);
+        }
+        catch (e) { if (!stillHere()) return; clearPreviewNavigation(want.previewId); ws.error = "This preview is unavailable or expired. Find traces or choose files to create a new preview. " + e.message; }
+      }
+      render();
+      if (ws.preview) focusWorkspace("#main .preview-summary", true);
+      else if (ws.source === "langfuse") restoreTracePosition();
+      else focusWorkspace("#main h1", true);
+      return;
+    }
+    render(); return;
   }
   // A shared "Runs" link opens the workspace with its search/filter/sort intact.
   if (want.importId) {
