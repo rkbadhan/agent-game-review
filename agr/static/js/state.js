@@ -26,7 +26,7 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
   // anchor whenever this id is not one of that moment's own anchors, so a
   // newly selected finding shows its own source without extra clicks.
   evidenceFocus: null,
-  sweep: null, queue: null, filters: new Set(), sort: "triage", reviewer: "Local reviewer", dispOpen: false,
+  sweep: null, queue: null, queueError: null, filters: new Set(), sort: "triage", reviewer: "Local reviewer", dispOpen: false,
   projectId: null, projects: [], serverReadOnly: false, captureId: null, importRunIds: null,
   workspace: { source: null, files: [], preview: null, job: null, busy: false, error: null, uploadProgress: null, selected: new Set(), connections: [], connectionId: null, investigations: [], detail: null, token: 0 },
   // UX audit finding #2: bumped on every loadInbox() call, the same way F4's
@@ -46,7 +46,9 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
   // half of that restore (runs.js): how many rows were actually on screen
   // when the run was opened, so a return can reveal enough of the paged
   // table for runsScroll to land somewhere meaningful again.
-  runsSearch: "", runsScroll: 0, runsShown: 0,
+  runsSearch: "", runsScroll: 0, runsShown: 0, runsGrouping: "none", runsSelected: new Set(), runsAnchorId: null,
+  focusedQueue: null, focusSearch: "", reviewStarting: false,
+  inspector: { runId: null, data: null, loading: false, error: null, token: 0 },
   compare: null, sibling: null, traceOpen: false, traceStep: null,
   // §4.3.5 fast/deep entry preference — where each run opens, remembered per
   // browser like the panel widths. Default is Overview: a first-time reader
@@ -123,11 +125,15 @@ function syncUrl() {
     if (state.view === "ai-review" && state.ai.job) p.set("review_job", state.ai.job.id);
     _commitUrl(p.toString()); return;
   }
+  if (state.runsGrouping !== "none") p.set("run_group", state.runsGrouping);
+  if (state.view === "runs" && state.inspector.runId) p.set("inspect", state.inspector.runId);
+  if (state.focusedQueue && !isWorkspaceView(state.view)) p.set("review_queue", state.focusedQueue.id);
   if (state.patternSelector && state.view !== "fleet") p.set("test_pattern", JSON.stringify(state.patternSelector));
   if (state.view === "runs") {
     p.set("view", "runs");
     if (state.importRunIds && state.workspace.job) p.set("import", state.workspace.job.id);
     if (state.runsSearch) p.set("q", state.runsSearch);
+    if (state.ai.filter) p.set("ai_status", state.ai.filter);
     for (const f of state.filters) p.append("filter", f);
     if (state.sort !== "triage") p.set("sort", state.sort);
     _commitUrl(p.toString());
@@ -153,6 +159,8 @@ function syncUrl() {
     _commitUrl(p.toString());
     return;
   }
+  if (state.runsSearch) p.set("q", state.runsSearch);
+  if (state.ai.filter) p.set("ai_status", state.ai.filter);
   if (state.runId) p.set("run", state.runId);
   if (state.importRunIds && state.workspace.job) p.set("import", state.workspace.job.id);
   if (state.captureId) p.set("capture", state.captureId);
@@ -191,6 +199,8 @@ function readUrl() {
   state.sort = SORT_OPTIONS.some(([v]) => v === sort) ? sort : "triage";
   state.filters = new Set(p.getAll("filter").filter(f => FILTER_CHIPS.some(([k]) => k === f)));
   state.runsSearch = p.get("q") || "";
+  state.runsGrouping = ["task", "session"].includes(p.get("run_group")) ? p.get("run_group") : "none";
+  state.ai.filter = ["none", "active", "reviewed", "failed"].includes(p.get("ai_status")) ? p.get("ai_status") : "";
   let testPattern = null;
   try {
     const parsed = JSON.parse(p.get("test_pattern"));
@@ -204,7 +214,7 @@ function readUrl() {
   if (p.get("axis")) v.axis = p.get("axis");
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
-  return { source: p.get("source"), connection: p.get("connection"), previewId: p.get("preview"), project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
+  return { inspector: p.get("inspect"), frozenId: p.get("review_queue"), source: p.get("source"), connection: p.get("connection"), previewId: p.get("preview"), project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),
     moment: p.get("moment"), evidence: p.get("evidence"), trace: p.get("trace") === "1",
     testPattern, patternType: p.get("pattern_type"), testGroupBy: p.get("test_group_by"), left, right, comparison: p.get("comparison"), groupBy: p.get("group_by"), q: p.get("q") };
 }

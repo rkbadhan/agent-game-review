@@ -422,10 +422,19 @@ submissions with a fresh request key reuse the original job; changed selections
 require a new preview. Preview session state is removed on submission or expiry,
 ages out after a day, and is capped at 50 entries.
 
-Langfuse v2 capture fetches omit unused observation metadata and user IDs; trace browsing
-retains fields needed for its visible filters and details. Imported source
-context accepts only host/project identifiers, excludes arbitrary labels, and
-trace links display their actual hostname. Self-hosted destinations remain
+Langfuse v2 capture fetches omit unused observation metadata and observation-level
+user IDs; trace browsing retains fields needed for its visible filters and details.
+Adapter 0.5 intentionally retains a captured trace-level `userId`, root input/output,
+and explicit task assignment for inspection and grouping. These fields are stored
+in the local immutable source. Inspector previews apply the existing sensitive-pattern
+redaction before returning them: email-shaped user IDs are masked, while opaque
+IDs such as `user_8812` and UUIDs remain visible. User IDs are not categorically
+anonymized. Arbitrary imported source-context labels and spoofed user IDs remain
+excluded: the user ID comes only from the captured trace field. This supersedes the
+earlier policy of excluding all user IDs. Re-importing a trace captured by adapter
+0.4 creates a new capture revision (even when the upstream trace is unchanged),
+because the adapter version and source document changed; old captures remain
+immutable. Trace links display their actual hostname. Self-hosted destinations remain
 supported; an uploaded host is not an independently verified connection.
 
 

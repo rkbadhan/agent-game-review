@@ -123,12 +123,25 @@ document.addEventListener("click", e => {
 // "Runs" (U1): the global triage workspace, distinct from a run's investigation
 // shell — full width, no evidence panel (render.js's isWorkspaceView), reached
 // from the app bar regardless of what was open before.
-function goToRuns() {
+async function goToRuns() {
+  cancelPendingRunLoad("runs");
+  state.loadToken++; state.loading = false;
+  const frozen = state.focusedQueue, back = frozen && frozen.return_to;
+  if (frozen) restoreFocusedDefinition(frozen);
+  if (back) {
+    state.runsAnchorId = back.anchor || state.runId;
+    state.runsShown = back.shown || 0; state.runsScroll = back.scroll || 0;
+  }
+  state.focusedQueue = null;
   state.runId = null; state.review = null; state.forensic = null;
   state.view = "runs"; closeTrace();
   $("#crumb-task").textContent = "Runs";
-  render();
+  if (back && back.inspector) {
+    state.inspector.runId = back.inspector;
+    render(); await openRunInspector(back.inspector, true);
+  } else render();
 }
+
 document.addEventListener("click", e => { if (!e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
@@ -143,6 +156,11 @@ document.addEventListener("keydown", e => {
   if (document.querySelector(".modal-shade.open")) return;
   if (e.target.matches("input, select, textarea")) return;
   const k = e.key.toLowerCase();
+  if (e.altKey && !e.ctrlKey && !e.metaKey && ["ArrowDown", "ArrowUp"].includes(e.key) && !isWorkspaceView(state.view)) {
+    e.preventDefault(); const ids = activeQueueIds(), index = ids.indexOf(state.runId), next = index + (e.key === "ArrowDown" ? 1 : -1);
+    if (next >= 0 && next < ids.length) selectRun(ids[next]); return;
+  }
+  if (e.key === "Escape" && state.view === "runs" && state.inspector.runId) { closeRunInspector(); return; }
   const onMoments = state.view === "review" && state.chapter === "moments";
   if (e.key === "Escape") {
     closeTrace(); closeModals(); closeSidebarDrawer(); state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open");

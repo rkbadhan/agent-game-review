@@ -332,3 +332,18 @@ def next_unhandled(store: Store, run_id: Optional[str], **view_kwargs) -> Option
         if runs_by_id[rid]["workflow"].get("review_progress") != "handled":
             return rid
     return None
+
+
+def next_in_order(store: Store, run_id: Optional[str], order: list[str]) -> Optional[str]:
+    """Walk an explicit slice of a frozen order using current human state.
+
+    The caller can batch a long browser-saved queue without sending large URLs.
+    Never replace its ordering with a sort based on mutable workflow state.
+    Unknown/cross-project runs are skipped, and no source/workflow is written.
+    """
+    if len(order) > 100 or any(not isinstance(rid, str) or len(rid) > 512 for rid in order):
+        raise ValueError("review order must contain at most 100 run IDs")
+    rows = {row["run_id"]: row for row in read.list_runs(store)}
+    start = order.index(run_id) + 1 if run_id in order else 0
+    return next((rid for rid in order[start:] if rid in rows
+                 and rows[rid]["workflow"].get("review_progress") != "handled"), None)

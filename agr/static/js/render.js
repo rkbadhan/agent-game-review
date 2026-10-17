@@ -44,6 +44,7 @@ function renderTopbarStepper() {
 function render() {
   phaseLabelObserver.disconnect();
   const main = $("#main"); main.textContent = "";
+  const oldActions = $("#review-action-bar"); if (oldActions) oldActions.remove();
   if (typeof syncProjectChrome === "function") syncProjectChrome();
   // A review view with no SELECTED run (e.g. a stray fallback) has nothing to
   // investigate, so it resolves to the Runs workspace before the layout mode
@@ -60,7 +61,7 @@ function render() {
   if (state.view === "review" && !state.runId) state.view = "runs";
   // A direct Patterns visit skips the inbox. Fetch it only when navigation
   // needs run summaries; concurrent renders reuse the same pending request.
-  if ((state.view === "runs" || state.view === "review") && !state.queue && !state.inboxRenderPending) {
+  if ((state.view === "runs" || state.view === "review") && !state.queue && !state.queueError && !state.inboxRenderPending) {
     state.inboxRenderPending = true;
     ensureInbox().then(() => {
       if (state.view === "runs" || state.view === "review") render();
@@ -68,8 +69,12 @@ function render() {
       .finally(() => { state.inboxRenderPending = false; });
   }
   const workspace = isWorkspaceView(state.view);
+  if (workspace && state.loading) cancelPendingRunLoad(state.view);
+  renderFocusedChrome();
   document.body.classList.toggle("workspace-mode", workspace);
   main.classList.toggle("wide", workspace);
+  main.classList.toggle("loading-run", !workspace && state.loading);
+  main.setAttribute("aria-busy", String(!workspace && state.loading));
   // N1: the app bar's primary nav (Runs / Patterns / Compare versions) marks
   // which workspace is current — reviewing a specific run leaves all three
   // unmarked, since none of them is "current" while investigating a run.
@@ -85,6 +90,7 @@ function render() {
   // ambiguous for both a human and a test's selector.
   if (workspace) {
     $("#queue-controls").textContent = ""; $("#run-list").textContent = "";
+    delete $("#run-list").dataset.revealed;
     $("#crumb-task").textContent = isEngineerView(state.view) ? engineerViewTitle(state.view) : state.view === "runs" ? "Runs"
       : state.view === "fleet" ? "Patterns" : "Compare versions";
     $("#topbar-stepper").textContent = "";
@@ -97,8 +103,14 @@ function render() {
   if (state.view === "versions") { renderVersionsSurface(main); syncUrl(); return; }
   if (state.view === "fleet") { renderFleetSurface(main); syncUrl(); return; }
   if (isEngineerView(state.view)) { renderEngineerSurface(main); syncUrl(); return; }
+  if (state.loading) {
+    $("#crumb-task").textContent = "Loading run…";
+    const notice = el("p", "run-loading-notice", "Loading the selected run…"); notice.setAttribute("role", "status"); main.append(notice);
+    renderTopbarStepper(); renderBottomBar(main); renderEvidencePanel();
+    syncUrl(); return;
+  }
   if (!state.review) {
-    main.append(el("div", "empty", state.runId && state.loading ? "Loading…" : "Select a run to begin."));
+    main.append(el("div", "empty", "Select a run to begin."));
     syncUrl(); return;
   }
   const rv = state.review, run = rv.run || {};
@@ -186,6 +198,7 @@ function render() {
   }
   if (run.harness_version !== "langfuse-export") renderInvestigationComposer(actions);
   if (actions.childElementCount) main.append(actions);
+  renderBottomBar(main);
   if (langfuseNeedsEvaluation(rv)) {
     const note = el("div", "notice langfuse-evaluation-note");
     note.append(el("strong", null, "Task evaluation is optional"), el("p", null, langfuseEvaluationHelp(run.evaluation_summary)));
@@ -467,11 +480,7 @@ function renderShellMeta(rv) {
     wrap.append(hint);
   }
   const wf = rv.workflow || {};
-  const handled = wf.review_progress === "handled";
-  const wfVocab = handled && wf.disposition ? vocab("disposition", wf.disposition)
-    : vocab("progress", wf.review_progress || "unreviewed");
-  const wfChip = el("span", "shell-chip wf" + (handled ? " on" : ""), !handled && (!wf.review_progress || wf.review_progress === "unreviewed") ? "Awaiting human review" : wfVocab.label);
-  wfChip.title = wfVocab.tip; wrap.append(wfChip);
+  const wfChip = el("span"); paintWorkflowChip(wfChip, wf); wrap.append(wfChip);
   const who = [wf.reviewer ? "Reviewer " + wf.reviewer : null,
     wf.assignee ? "Assigned " + wf.assignee : null].filter(Boolean).join(" · ");
   if (who) wrap.append(el("span", "shell-who", who));
@@ -501,4 +510,14 @@ function renderNotReviewable(rv) {
     card.append(row);
   }
   return card;
+}
+
+// Background workflow completion updates just this chip, preserving edits/focus.
+function paintWorkflowChip(chip, workflow) {
+  const handled = workflow.review_progress === "handled";
+  const label = handled && workflow.disposition ? vocab("disposition", workflow.disposition)
+    : vocab("progress", workflow.review_progress || "unreviewed");
+  chip.className = "shell-chip wf" + (handled ? " on" : "");
+  chip.textContent = !handled && (!workflow.review_progress || workflow.review_progress === "unreviewed") ? "Awaiting human review" : label.label;
+  chip.title = label.tip;
 }

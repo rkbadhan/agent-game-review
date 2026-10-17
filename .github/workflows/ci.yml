@@ -133,4 +133,4 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       - name: Run the browser suite
-        run: uv run pytest tests/test_ui.py tests/test_demo_leaderboard.py tests/test_langfuse_browse_ui.py tests/test_ai_review_ui.py
+        run: uv run pytest tests/test_sidebar_ui.py tests/test_runs_worklist_ui.py tests/test_review_workspace_ui.py tests/test_ui.py tests/test_demo_leaderboard.py tests/test_langfuse_browse_ui.py tests/test_ai_review_ui.py

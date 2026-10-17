@@ -664,3 +664,29 @@ def test_lesson_write_is_optimistic_and_refuses_bad_input(tmp_path):
     # An illegal transition (approved_for_test cannot revert to proposed) → 422.
     assert client.post(f"/runs/{RUN}/lessons/{lesson['lesson_id']}",
                        json={"base_version": 1, "status": "proposed"}).status_code == 422
+
+
+def test_inspector_and_explicit_order_remain_read_only(tmp_path):
+    client, store = _client(tmp_path, 'chess_best_move.atif.json', 'clean_pass.atif.json')
+    app = create_app(store.root, read_only=True)
+    with TestClient(app) as demo:
+        before = demo.get('/runs/chess_best_move__seed42').json()['workflow']
+        preview = demo.get('/runs/chess_best_move__seed42/inspect')
+        assert preview.status_code == 200
+        assert preview.json()['workflow'] == {key: before.get(key) for key in ('workflow_version', 'review_progress', 'disposition')}
+        assert demo.get('/runs/chess_best_move__seed42').json()['workflow'] == before
+        next_run = demo.get('/runs/chess_best_move__seed42/next', params=[('order', 'greeting_file__clean_pass')])
+        assert next_run.status_code == 200
+        assert next_run.json()['next_unhandled'] == 'greeting_file__clean_pass'
+        assert demo.get('/runs/missing/inspect').status_code == 404
+        assert demo.get('/runs/chess_best_move__seed42/next', params=[('order', 'x')] * 101).status_code == 400
+
+
+def test_inspector_and_order_do_not_cross_project_boundaries(tmp_path):
+    client, store = _client(tmp_path, 'chess_best_move.atif.json')
+    with client:
+        other = client.post('/projects', json={'name': 'Other project'}).json()
+        response = client.get('/runs/chess_best_move__seed42/inspect', headers={'x-agr-project': other['id']})
+        assert response.status_code == 404
+        response = client.get('/runs/current/next', params={'order': 'chess_best_move__seed42'}, headers={'x-agr-project': other['id']})
+        assert response.status_code == 200 and response.json()['next_unhandled'] is None

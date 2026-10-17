@@ -8,6 +8,7 @@ derived event traces to a source step, and unavailable evidence is marked.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -829,3 +830,184 @@ def test_run_summaries_tolerate_null_finding_check_links(tmp_path, monkeypatch):
     row = read.list_runs(store)[0]
     assert row["main_finding"]
     assert row["main_finding_checks"] == []
+
+
+def test_langfuse_input_excerpt_redacts_before_clipping_and_preserves_source(tmp_path):
+    from agr.ingest_langfuse import convert
+    from agr import queue
+
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    trace['input'] = 'Fix case 17 for bob@example.com token=sk-' + 'a' * 100 + '\n' + 'long instruction ' * 50
+    store = Store(str(tmp_path / 'store'))
+    result = analyze(convert(trace).doc, store)
+    excerpt = queue.queue_view(store)['runs'][0]['input_excerpt']
+    assert excerpt.startswith('Fix case 17 for [REDACTED:email]')
+    assert 'bob@example.com' not in excerpt
+    assert 'sk-' not in excerpt and 'a' * 30 not in excerpt
+    assert len(excerpt) <= 240 and excerpt.endswith('…')
+    assert '\n' not in excerpt
+    assert store.read_source(result.run_source.run_id, result.run_source.source_capture_id)['task']['instruction'] == trace['input']
+
+
+def test_input_preview_is_source_aware_and_optional(tmp_path):
+    from agr.ingest_langfuse import convert
+
+    store = _store_with(tmp_path, 'clean_pass.atif.json')
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    trace['input'] = ''
+    analyze(convert(trace).doc, store)
+    rows = read.list_runs(store)
+    assert len(rows) == 2
+    assert all(row['input_excerpt'] is None for row in rows)
+
+
+def test_inspector_is_bounded_redacted_and_does_not_open_review(tmp_path):
+    from agr.ingest_langfuse import convert
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    trace['input'] = 'Help bob@example.com token=sk-' + 'x' * 80 + '\n' + 'details ' * 500
+    trace['userId'] = 'bob@example.com'
+    store = Store(str(tmp_path / 'inspector'))
+    result = analyze(convert(trace).doc, store)
+    run_id = result.run_source.run_id
+    before = workflow.read_workflow(store, run_id)
+    view = read.get_inspector(store, run_id)
+    assert view['adapter_version'] == 'langfuse-adapter-0.5'
+    assert view['workflow']['review_progress'] == 'unreviewed'
+    assert workflow.read_workflow(store, run_id) == before
+    assert len(view['input']) <= 2000
+    assert 'bob@example.com' not in json.dumps(view)
+    assert 'sk-' not in view['input']
+    assert view['identity']['source_context']['userId'] == '[REDACTED:email]'
+    assert view['finding'] and view['output'] and view['evidence']
+    assert all(evidence['step_id'] for evidence in view['evidence'])
+    assert store.read_source(run_id, result.run_source.source_capture_id)['task']['instruction'] == trace['input']
+
+
+def test_input_excerpt_survives_listing_refresh_and_is_capture_scoped(tmp_path, monkeypatch):
+    from agr.ingest_langfuse import convert
+    from agr.capture_view import PinnedStore
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    trace['input'] = 'First bob@example.com ' + 'detail ' * 16000
+    store = Store(str(tmp_path / 'large-input'))
+    first = analyze(convert(trace).doc, store)
+    original = store.read_source
+    reads = []
+    def counted(run_id, capture_id):
+        reads.append((run_id, capture_id))
+        return original(run_id, capture_id)
+    monkeypatch.setattr(store, 'read_source', counted)
+    before = read.list_runs(store)[0]['input_excerpt']
+    assert '[REDACTED:email]' in before and len(before) <= 240
+    # A workflow write and a TTL expiry rebuild summaries, not immutable input.
+    workflow.set_workflow(store, first.run_source.run_id, actor='Reviewer', base_version=0, progress='in_progress')
+    read.list_runs(store)
+    monkeypatch.setattr(read, '_LIST_RUNS_CACHE_TTL_S', 0)
+    read.list_runs(store)
+    assert reads == [(first.run_source.run_id, first.run_source.source_capture_id)]
+    trace['input'] = 'Second input'
+    second = analyze(convert(trace).doc, store)
+    reads.clear()
+    assert read.list_runs(store)[0]['input_excerpt'] == 'Second input'
+    pinned = PinnedStore(store, first.run_source.run_id, first.run_source.source_capture_id)
+    assert read.list_runs(pinned)[0]['input_excerpt'] == before
+    assert reads == [(second.run_source.run_id, second.run_source.source_capture_id)]
+    # Identical IDs in a different project must not share excerpts.
+    other = Store(str(tmp_path / 'other-project'))
+    other_capture = analyze(convert(trace).doc, other)
+    assert other_capture.run_source.source_capture_id == second.run_source.source_capture_id
+    other_original = other.read_source
+    other_reads = []
+    def counted_other(run_id, capture_id):
+        other_reads.append((run_id, capture_id))
+        return other_original(run_id, capture_id)
+    monkeypatch.setattr(other, 'read_source', counted_other)
+    assert read.list_runs(other)[0]['input_excerpt'] == 'Second input'
+    assert other_reads == [(second.run_source.run_id, second.run_source.source_capture_id)]
+
+
+def test_excerpt_cache_warm_scan_survives_projects_larger_than_floor(tmp_path, monkeypatch):
+    from agr.ingest_langfuse import convert
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    store = Store(str(tmp_path / 'over-cache-floor'))
+    for i in range(3):
+        analyze(convert(dict(trace, id=f'cache-case-{i}', input=f'Input {i}')).doc, store)
+    monkeypatch.setattr(read, '_INPUT_EXCERPT_CACHE_SIZE', 2)
+    original = store.read_source
+    calls = []
+    def counted(run_id, capture_id):
+        calls.append((run_id, capture_id))
+        return original(run_id, capture_id)
+    monkeypatch.setattr(store, 'read_source', counted)
+    first = read._list_runs_uncached(store)
+    for _ in range(3):
+        assert read._list_runs_uncached(store) == first
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('through_listing', [False, True])
+def test_cold_excerpt_read_does_not_block_another_project(tmp_path, monkeypatch, through_listing):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from agr.ingest_langfuse import convert
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    slow, other = Store(str(tmp_path / 'slow')), Store(str(tmp_path / 'other'))
+    first = analyze(convert(trace).doc, slow)
+    analyze(convert(trace).doc, other)
+    entered, release = Event(), Event()
+    original = slow.read_source
+    def blocked(run_id, capture_id):
+        entered.set()
+        assert release.wait(5)
+        return original(run_id, capture_id)
+    monkeypatch.setattr(slow, 'read_source', blocked)
+    def first_read():
+        if through_listing:
+            return read.list_runs(slow)
+        return read._input_excerpt(slow, first.run_source.run_id, first.run_source.source_capture_id, {'harness_version': 'langfuse-export'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(first_read)
+        try:
+            assert entered.wait(2)
+            independent = pool.submit(read.list_runs, other)
+            assert independent.result(timeout=2)[0]['input_excerpt']
+        finally:
+            release.set()
+        assert pending.result(timeout=2)
+
+
+def test_simultaneous_list_requests_share_one_project_build(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    store = _store_with(tmp_path, 'clean_pass.atif.json')
+    entered, release = Event(), Event()
+    calls = []
+    original = read._list_runs_uncached
+    def blocked(store):
+        calls.append(1)
+        entered.set()
+        assert release.wait(5)
+        return original(store)
+    monkeypatch.setattr(read, '_list_runs_uncached', blocked)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(read.list_runs, store)
+        try:
+            assert entered.wait(2)
+            second = pool.submit(read.list_runs, store)
+        finally:
+            release.set()
+        assert first.result(timeout=2) == second.result(timeout=2)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('user_id,expected', [
+    ('user_8812', 'user_8812'),
+    ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001'),
+    ('jane.doe@example.com', '[REDACTED:email]'),
+])
+def test_inspector_user_id_redaction_follows_sensitive_patterns(tmp_path, user_id, expected):
+    from agr.ingest_langfuse import convert
+    trace = json.loads((Path(__file__).parent / 'fixtures/langfuse/langfuse_toy_run.json').read_text(encoding='utf-8'))
+    trace['userId'] = user_id
+    store = Store(str(tmp_path / 'user-id'))
+    result = analyze(convert(trace).doc, store)
+    assert read.get_inspector(store, result.run_source.run_id)['identity']['source_context']['userId'] == expected

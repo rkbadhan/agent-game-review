@@ -104,7 +104,7 @@ function renderChapterFooter(main) {
   foot.append(next);
   main.append(foot);
 }
-function chapterClose(main) { renderChapterFooter(main); renderBottomBar(main); }
+function chapterClose(main) { renderChapterFooter(main); }
 function chapterEmpty(main, title, reason) {
   const card = el("div", "card card-pad chapter-empty");
   card.append(el("p", "eyebrow", "Not available"));
@@ -309,7 +309,7 @@ function renderOverviewChapter(main) {
     // and an obvious action rather than a second, easy-to-miss button.
     const actions = el("div", "chapter-foot finding-actions");
     const idx = currentMoments().indexOf(mf);
-    const viewEvidence = el("button", "button primary", contextLeads ? "Inspect earlier finding" : evidenceActionLabel(mf));
+    const viewEvidence = el("button", "button", contextLeads ? "Inspect earlier finding" : evidenceActionLabel(mf));
     viewEvidence.addEventListener("click", () => {
       if (idx >= 0) state.momentIdx = idx;
       state.view = "review"; state.chapter = "moments"; state.viewed.add("moments");

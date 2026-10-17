@@ -26,10 +26,11 @@ import os
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Optional
 
-from . import lessons, taxonomy, version, workflow
+from . import lessons, redaction, taxonomy, version, workflow
 from .execution_quality import (
     execution_quality_record,
     generation_token_counts,
@@ -859,6 +860,7 @@ _list_runs_cache: "weakref.WeakKeyDictionary[Store, tuple[int, float, list[dict]
     weakref.WeakKeyDictionary()
 )
 _list_runs_cache_lock = threading.Lock()
+_list_runs_build_locks = weakref.WeakKeyDictionary()
 
 
 def list_runs(store: Store) -> list[dict]:
@@ -887,26 +889,24 @@ def list_runs(store: Store) -> list[dict]:
             # A CLI process can add this run inside the base cache's TTL.
             return sorted(summaries + pinned, key=lambda row: row["run_id"])
         return [pinned[0] if row["run_id"] == store.run_id and pinned else row for row in summaries]
+    # Serialize duplicate builds for this project, not unrelated projects.
+    # The global lock protects only weak-map access, never filesystem I/O.
     with _list_runs_cache_lock:
+        build_lock = _list_runs_build_locks.setdefault(store, threading.Lock())
+    with build_lock:
         now = time.monotonic()
-        cached = _list_runs_cache.get(store)
+        with _list_runs_cache_lock:
+            cached = _list_runs_cache.get(store)
         if cached is not None:
             write_seq, computed_at, summaries = cached
             if write_seq == store._write_seq and (now - computed_at) < _LIST_RUNS_CACHE_TTL_S:
                 return list(summaries)
-        # Captured BEFORE the (I/O-bound, lock-released-during-disk-reads)
-        # compute below, not after: a write landing on this store WHILE
-        # _list_runs_uncached is mid-walk bumps store._write_seq during the
-        # call, and if that new value were the one cached, the next reader
-        # would see seq match and be served this now-stale snapshot for the
-        # rest of the TTL. Caching the seq from before the compute means any
-        # write concurrent with it forces a recompute on the very next call.
+        # A write during the scan must invalidate this snapshot on the next call.
         seq_before = store._write_seq
         summaries = _list_runs_uncached(store)
-        # A leaderboard scan may itself exceed the TTL. Start the cache
-        # lifetime at completion so concurrent page requests can share it;
-        # keep the pre-scan write sequence to detect concurrent mutations.
-        _list_runs_cache[store] = (seq_before, time.monotonic(), summaries)
+        # Start TTL at completion, including scans that exceed the TTL themselves.
+        with _list_runs_cache_lock:
+            _list_runs_cache[store] = (seq_before, time.monotonic(), summaries)
         return list(summaries)
 
 
@@ -968,13 +968,77 @@ def _run_header(store: Store, run_id: str, capture_id: str) -> dict:
             "outcome": _read(store, run_id, capture_id, "outcome.json", {})}
 
 
+# Captures are immutable. Keep only bounded, redacted excerpts across mutable
+# listing invalidations; weak Store keys isolate projects without retaining them.
+# Minimum budget; complete scans reserve additional space for larger projects.
+_INPUT_EXCERPT_CACHE_SIZE = 4096
+_input_excerpt_cache = weakref.WeakKeyDictionary()
+_input_excerpt_cache_limits = weakref.WeakKeyDictionary()
+_input_excerpt_cache_lock = threading.Lock()
+
+
+def _excerpt_cache_owner(store):
+    owner = getattr(store, "_request_store", store)
+    from .capture_view import PinnedStore
+    return owner.store if isinstance(owner, PinnedStore) else owner
+
+
+def _reserve_excerpt_cache(store, run_count):
+    # Leave room for a complete current scan plus historical/pinned captures.
+    # A fixed LRU smaller than a scan has zero hits on every subsequent scan.
+    owner = _excerpt_cache_owner(store)
+    with _input_excerpt_cache_lock:
+        _input_excerpt_cache_limits[owner] = max(
+            _input_excerpt_cache_limits.get(owner, _INPUT_EXCERPT_CACHE_SIZE),
+            _INPUT_EXCERPT_CACHE_SIZE, 2 * run_count)
+
+
+def _input_excerpt(store: Store, run_id: str, capture_id: str, source: dict) -> str | None:
+    """Langfuse inputs distinguish traces; shared benchmark instructions do not.
+
+    Redact the complete instruction before normalising whitespace or clipping:
+    clipping first could leave a partial credential that no longer matches.
+    Only this bounded, redacted value enters the queue response/cache.
+    """
+    if source.get("harness_version") != "langfuse-export":
+        return None
+    owner = _excerpt_cache_owner(store)
+    key = (run_id, capture_id)
+    with _input_excerpt_cache_lock:
+        cache = _input_excerpt_cache.setdefault(owner, OrderedDict())
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+    # Source reads and complete-input redaction must not hold a cross-project lock.
+    try:
+        doc = store.read_source(run_id, capture_id)
+    except FileNotFoundError:
+        # An import may still be publishing this capture. Do not cache misses.
+        return None
+    instruction = (doc.get("source_io") or {}).get("input", (doc.get("task") or {}).get("instruction"))
+    if instruction is not None and not isinstance(instruction, str):
+        import json
+        instruction = json.dumps(instruction, ensure_ascii=False)
+    text = " ".join(redaction.redact(instruction).text.split()) if instruction is not None else ""
+    excerpt = (text[:239] + "…" if len(text) > 240 else text) or None
+    with _input_excerpt_cache_lock:
+        cache[key] = excerpt
+        cache.move_to_end(key)
+        limit = _input_excerpt_cache_limits.get(owner, _INPUT_EXCERPT_CACHE_SIZE)
+        if len(cache) > limit:
+            cache.popitem(last=False)
+    return excerpt
+
+
 def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
     root = _runs_root(store)
     if not os.path.isdir(root):
         return []
     summaries: list[dict] = []
 
-    for run_id in [rid for rid, _ in _capture_heads(store)] if run_ids is None else run_ids:
+    run_ids = [rid for rid, _ in _capture_heads(store)] if run_ids is None else list(run_ids)
+    _reserve_excerpt_cache(store, len(run_ids))
+    for run_id in run_ids:
         capture_id = store.latest_capture_id(run_id)
         if capture_id is None:
             continue
@@ -1037,6 +1101,7 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
             "run_id": run_id,
             "task_id": rs.get("task_id"),
             "display_name": rs.get("display_name"),
+            "input_excerpt": _input_excerpt(store, run_id, capture_id, rs),
             "source_context": rs.get("source_context"),
             # Runs surface (item: readable session identity) — the working
             # directory the harness ran in, when the source captured one.
@@ -1364,6 +1429,48 @@ def _review_configurations(store, run_id, capture_id):
             configurations[key] = {field: provenance.get(field) for field in
                 ("configuration_id", "provider", "model", "base_url", "request_timeout_s")}
     return configurations
+
+
+def get_inspector(store: Store, run_id: str) -> dict:
+    """Bounded, redacted inspection without opening or changing human review."""
+    capture_id = _latest(store, run_id)
+    source = store.read_source(run_id, capture_id)
+    rs = _read(store, run_id, capture_id, "run_source.json", {})
+    events = _read(store, run_id, capture_id, "events.json", [])
+    detectors = _read(store, run_id, capture_id, "detector_results.json", [])
+    moments, _, _ = _run_moments(store, run_id, capture_id, events, detectors)
+    finding = next((m for m in moments if m.get("polarity") != "positive"), None) or next(iter(moments), {})
+
+    def excerpt(value, limit=2000):
+        if not isinstance(value, str):
+            import json
+            value = json.dumps(value, ensure_ascii=False) if value is not None else ""
+        clean = redaction.redact(value).text
+        return clean[:limit - 1] + "…" if len(clean) > limit else clean
+
+    outcome = _read(store, run_id, capture_id, "outcome.json", {})
+    context = _outcome_context(outcome, _read(store, run_id, capture_id, "review_protocol.json", {}))
+    if context and context["leads_overview"]:
+        finding = {"summary": context["headline"], "anchor_event_ids": context.get("event_ids", [])}
+    anchors = set(finding.get("anchor_event_ids") or [])
+    evidence = [{"event_id": e["event_id"], "step_id": next(iter(e.get("source_step_ids") or []), None),
+                 "type": e["event_type"], "excerpt": excerpt(e.get("payload"), 400)}
+                for e in events if e["event_id"] in anchors][:5]
+    output = next((e.get("payload", {}).get("content") or e.get("payload", {}).get("data")
+                   for e in reversed(events) if e.get("event_type") == "final_submission"), None)
+    source_io = source.get("source_io") or {}
+    if "output" in source_io:
+        output = source_io["output"]
+    wf = workflow.read_workflow(store, run_id)
+    metadata, _ = redaction.redact_value({k: rs.get(k) for k in
+        ("display_name", "task_id", "model", "agent", "configuration_id", "harness_version", "source_context", "started_at", "finished_at")})
+    return {"run_id": run_id, "capture_id": capture_id,
+            "adapter_version": _index_entry(store, run_id, capture_id).get("adapter_version"), "identity": metadata,
+            "outcome": {key: outcome.get(key) for key in ("status", "passed", "total")},
+            "input": excerpt(source_io.get("input", (source.get("task") or {}).get("instruction"))),
+            "output": excerpt(output), "finding": excerpt(finding.get("summary"), 1000),
+            "evidence": evidence,
+            "workflow": {key: wf.get(key) for key in ("workflow_version", "review_progress", "disposition")}}
 
 
 def get_review(store: Store, run_id: str, reviewer_key: Optional[str] = None) -> dict:

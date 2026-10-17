@@ -53,7 +53,7 @@
          only content there. -->
     <aside class="queue" id="queue">
       <details class="queue-filter-disclosure">
-        <summary><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-down"></use></svg>Filter</summary>
+        <summary><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#chevron-down"></use></svg>Filter<span class="queue-count" id="queue-count"></span></summary>
         <div class="queue-head">
           <p class="eyebrow">Runs inbox</p>
           <div id="sweep-summary"></div>
@@ -153,6 +153,8 @@
         <kbd>J / K</kbd><span>Next / previous key moment</span>
         <kbd>E</kbd><span>Focus evidence for this moment</span>
         <kbd>D</kbd><span>Open disposition menu</span>
+        <kbd>Alt+↓</kbd><span>Next run in this queue</span>
+        <kbd>Alt+↑</kbd><span>Previous run in this queue</span>
         <kbd>N</kbd><span>Open next unhandled run</span>
         <kbd>T</kbd><span>Open full trace</span>
         <kbd>C</kbd><span>Compare reviewer outputs (two reviews of this run)</span>
@@ -236,6 +238,7 @@
 <script src="/static/js/keyboard.js"></script>
 <script src="/static/js/workspace.js"></script>
 <script src="/static/js/ai-review.js"></script>
+<script src="/static/js/workbench.js"></script>
 <script src="/static/js/boot.js"></script>
 </body>
 </html>

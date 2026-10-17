@@ -324,3 +324,15 @@ def test_chips_in_one_group_widen_and_groups_narrow(tmp_path):
     # The echoed definition and the counts do not depend on grouping.
     view = queue.queue_view(store, filters=["passed", "failed"])
     assert view["filters"] == ["failed", "passed"] and view["filter_counts"] == queue.queue_view(store)["filter_counts"]
+
+
+def test_explicit_review_order_keeps_positions_after_disposition(tmp_path):
+    store = _store(tmp_path, 'chess_best_move.atif.json', 'clean_pass.atif.json', 'ignored_failure.atif.json')
+    order = [row['run_id'] for row in reversed(queue.queue_view(store)['runs'])]
+    workflow.set_workflow(store, order[1], actor='Reviewer', base_version=0, progress='handled', disposition='no_action')
+    assert queue.next_in_order(store, order[0], order) == order[2]
+    assert queue.next_in_order(store, order[0], order[1:]) == order[2]
+    assert queue.next_in_order(store, order[2], order) is None
+    assert queue.next_in_order(store, None, ['other-project-run', order[2]]) == order[2]
+    with pytest.raises(ValueError, match='at most 100'):
+        queue.next_in_order(store, None, ['x'] * 101)

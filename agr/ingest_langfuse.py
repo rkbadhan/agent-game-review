@@ -87,7 +87,7 @@ from .span_tree import NormalizedSpan, flatten_span_tree
 #      previously-ingested Langfuse runs may have zero observations and/or
 #      categorical checks stuck at "unknown" that a re-run now resolves.
 # 0.4: preserve trace display identity and keep scores as metrics; explicit verifier required.
-LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.4"
+LANGFUSE_ADAPTER_VERSION = "langfuse-adapter-0.5"
 
 # Langfuse observation ``type`` -> normalized span kind (case-insensitive:
 # the SDKs and the API have varied in casing across versions).
@@ -367,9 +367,11 @@ def convert(
     # window (`fetch_limits`) differs on every search and a project label can be renamed; neither describes the trace,
     # and either would turn an unchanged re-import into a new capture.
     context.update(trace_id=trace_id, retrieval="bounded" if export.get("fetch_limits") else "export")
-    for key in ("environment", "tags", "release", "version", "sessionId"):
+    for key in ("environment", "tags", "release", "version", "sessionId", "userId"):
         if key in trace:
             context[key] = trace[key]
+    if task_id is not None:
+        context["task_id_explicit"] = True
     run["source_context"] = context
     if trace.get("timestamp"):
         run["started_at"] = trace["timestamp"]
@@ -386,6 +388,9 @@ def convert(
         "task": {"instruction": resolved_instruction, "artifacts": [], "requirements": []},
         "steps": result.steps,
     }
+    # Retain root I/O separately from observations and explicit task overrides.
+    # Previews redact these immutable values before returning them.
+    doc["source_io"] = {key: trace[key] for key in ("input", "output") if key in trace}
     doc["source_scores"] = scores
     if verifier:
         doc["verifier"] = verifier

@@ -320,6 +320,8 @@ def test_score_order_and_untrusted_context_do_not_change_capture_identity():
     first = convert(export).doc
     second = convert(dict(export, scores=list(reversed(scores)), source_context={"host": "https://self-hosted.example", "project_id": "p"})).doc
     assert source_hash(first) == source_hash(second)
-    assert "userId" not in first["run"]["source_context"]
+    assert first["run"]["source_context"]["userId"] == "private"
+    spoofed = convert(dict(export, userId="captured-user", source_context={"userId": "spoofed"})).doc
+    assert spoofed["run"]["source_context"]["userId"] == "captured-user"
     assert "project_name" not in first["run"]["source_context"]
     assert source_hash(convert(dict(export, scores=scores + [{"id": "late", "value": 3}])).doc) != source_hash(first)
