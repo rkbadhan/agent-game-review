@@ -14,6 +14,13 @@ async function dispatchLocation(want, isBoot) {
     if (state.workspace.unavailable && destinationProject === "existing") { /* keep legacy routes */ }
     else await switchProject(destinationProject, false);
   }
+  if (want.frozenId) {
+    const frozen = state.focusedQueue && state.focusedQueue.id === want.frozenId ? state.focusedQueue
+      : readFrozenQueue(want.frozenId, state.projectId || "existing");
+    if (!frozen) { state.focusedQueue = null; state.view = "runs"; await loadInbox(); render(); toast("Saved review queue is unavailable in this browser. Start review again from Runs."); return; }
+    state.focusedQueue = frozen; restoreFocusedDefinition(frozen);
+    if (!frozen.runs) await loadInbox();
+  } else state.focusedQueue = null;
   if (isEngineerView(want.view)) {
     const destinationURL = location.href, project = state.projectId;
     const stillHere = () => state.projectId === project && state.view === want.view && location.href === destinationURL;
@@ -77,7 +84,8 @@ async function dispatchLocation(want, isBoot) {
     // (readUrl() runs before it too), so only a later dispatch — a popstate,
     // or a run failing to load and falling back here — needs the refetch.
     if (!isBoot) await loadInbox();
-    render();
+    if (want.inspector) await openRunInspector(want.inspector, true);
+    else { state.inspector.token++; state.inspector.runId = null; render(); }
     return;
   }
   // A shared fleet link opens the surface directly at its group-by dimension.

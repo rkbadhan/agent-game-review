@@ -24,6 +24,7 @@ workflow beside the immutable source (never mutating it) via :mod:`agr.workflow`
     GET  /runs/{run_id}             full deterministic review + workflow/feedback
     GET  /runs/{run_id}/forensic    synchronized forensic view (§4.5)
     GET  /runs/{run_id}/source      raw immutable source + hash verification
+    GET  /runs/{run_id}/inspect     bounded redacted preview; no workflow write
     GET  /runs/{run_id}/reviews     reviewer keys that have scored this capture
     GET  /runs/{run_id}/compare     diff of two reviews of one run (reviewer vs reviewer)
     GET  /runs/{run_id}/divergence  aligned against a passing sibling on the same task (item 21)
@@ -259,6 +260,10 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None,
     def source(run_id: str) -> dict:
         return _run_or_404(read.get_source, run_id)
 
+    @app.get("/runs/{run_id:path}/inspect")
+    def inspect_run(run_id: str) -> dict:
+        return _run_or_404(read.get_inspector, run_id)
+
     @app.get("/runs/{run_id:path}/reviews")
     def reviews(run_id: str) -> dict:
         """Reviewer keys that have scored this run's latest capture."""
@@ -303,13 +308,14 @@ def create_app(store_root: str = ".agr-store", read_only: Optional[bool] = None,
     @app.get("/runs/{run_id:path}/next")
     def next_run(
         run_id: str,
+        order: list[str] = Query(default=[]),
         filter: list[str] = Query(default=[]),
         sort: str = "triage",
         grouping: str = "none",
     ) -> dict:
         try:
-            nxt = queue.next_unhandled(
-                store, run_id, filters=filter, sort=sort, grouping=grouping)
+            nxt = (queue.next_in_order(store, run_id, order) if order else queue.next_unhandled(
+                store, run_id, filters=filter, sort=sort, grouping=grouping))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"run_id": run_id, "next_unhandled": nxt}

@@ -481,7 +481,7 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         # its digits onto the label and break an exact-string comparison.
         chip_labels = {c.inner_text() for c in page.query_selector_all(".runs-controls-row .fchip-label")}
         assert {"Failed", "Passed", "Undetermined", "Unverified",
-                "Unreviewed", "In progress", "Handled"} <= chip_labels
+                "Unreviewed", "In progress", "Reviewed"} <= chip_labels
         # Regression: at the default 1280px viewport the grouped chips used to
         # shrink below their content and spill over each other and the sort
         # block (an unreadable overlap of the labels). Every chip must now stay
@@ -520,10 +520,11 @@ def test_runs_workspace_is_full_width_with_search_filter_sort_and_scroll(server)
         run_id = page.query_selector(".runs-row").get_attribute("data-run-id")
         page.evaluate("() => document.querySelector('#main').scrollTo(0, 40)")
         page.click(f'.runs-row[data-run-id="{run_id}"]')
+        page.get_by_role("button", name="Open full review", exact=True).click()
         page.wait_for_selector(".run-header")
         assert _query(page.url)["run"] == [run_id]
 
-        page.click("#runs-button")
+        page.get_by_role("button", name="Back to Runs", exact=True).click()
         page.wait_for_selector(".runs-table-card")
         assert _query(page.url)["filter"] == ["failed"]
         assert _query(page.url)["sort"] == ["cost"]
@@ -629,7 +630,9 @@ def test_browser_back_to_runs_refreshes_the_table_under_restored_filters(server)
         # the RUN's own URL; the earlier Runs entry above keeps its old,
         # filter-less query string.
         run_id = page.query_selector(".runs-row").get_attribute("data-run-id")
-        page.click(f'.runs-row[data-run-id="{run_id}"]')
+        # Direct run links retain the general queue controls. Start review
+        # instead freezes its current worklist and changes filters back in Runs.
+        page.goto(server + "/?run=" + run_id)
         page.wait_for_selector(".run-header")
         # Both fixture runs have a failing check (overall outcome FAILED), so
         # "Passed" is guaranteed to actually shrink the queue (to 0) rather
@@ -1052,7 +1055,7 @@ def test_triage_inbox_disposition_and_feedback(server):
         assert "agreed" in page.query_selector(".mfb").inner_text().lower()
 
         # Disposition via the bottom-bar menu; the inbox row reflects handled state.
-        page.click('.bottom-bar button:has-text("Set disposition")')
+        page.click('.bottom-bar button:has-text("Mark reviewed")')
         page.wait_for_selector("#disp-menu.open")
         page.click('#disp-menu button:has-text("Corrected")')
         page.wait_for_selector('.run[data-run-id="chess_best_move__seed42"] .review-state.handled')
@@ -1119,10 +1122,8 @@ def test_rapid_run_switch_never_lets_a_stale_response_win(server):
 
 
 def test_annotation_actions_disabled_while_a_newer_selection_is_loading(server):
-    """F4: once chess is fully loaded and its moment actions are live,
-    starting a (delayed) switch to greeting must disable those still-visible
-    chess actions immediately — a click during the pending window would
-    otherwise write a chess moment_id against whatever run/reviewer lands."""
+    """A delayed switch replaces the previous run's findings and actions,
+    preventing a chess annotation from being submitted against greeting."""
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
@@ -1149,13 +1150,14 @@ def test_annotation_actions_disabled_while_a_newer_selection_is_loading(server):
           };
         }""")
         page.click('.run[data-run-id="greeting_report__seed7"]')
-        # While greeting's (delayed) response is in flight, the actions still
-        # on screen (chess's, since the view has not been replaced yet) must
-        # be disabled — not just visually stale but non-interactive.
-        page.wait_for_function(
-            "() => { const b = [...document.querySelectorAll('.moment-actions button')]"
-            ".find(x => x.textContent.includes('Agree')); return !!b && b.disabled; }",
-            timeout=2000)
+        # Replace the old findings/actions while the new review is pending.
+        page.wait_for_selector(".run-loading-notice")
+        assert page.query_selector(".moment-actions") is None
+        assert page.query_selector(".run-header") is None
+        assert agree.evaluate("button => !button.isConnected")
+        assert "Loading evidence" in page.query_selector("#evidence-body").text_content()
+        page.keyboard.press("t")
+        assert page.evaluate("state.traceOpen") is False
 
         # The switch still completes correctly once greeting's response lands.
         page.wait_for_function(
@@ -1180,7 +1182,7 @@ def test_disposition_shortcut_honors_the_same_loading_guard_as_its_button(server
         _open_review(page, server)
         page.wait_for_selector(".run")
         page.click('.run[data-run-id="chess_best_move__seed42"]')
-        page.wait_for_selector(".bottom-bar button:has-text('Set disposition')")
+        page.wait_for_selector(".bottom-bar button:has-text('Mark reviewed')")
 
         page.evaluate("""() => {
           const real = window.api;
@@ -1198,7 +1200,7 @@ def test_disposition_shortcut_honors_the_same_loading_guard_as_its_button(server
         # disabled — confirm the guard is actually armed for this window...
         page.wait_for_function(
             "() => { const b = [...document.querySelectorAll('.bottom-bar button')]"
-            ".find(x => x.textContent.includes('Set disposition')); return !!b && b.disabled; }",
+            ".find(x => x.textContent.includes('Mark reviewed')); return !!b && b.disabled; }",
             timeout=2000)
         # ...then the shortcut, not the button, must respect it too.
         page.keyboard.press("d")
@@ -1279,7 +1281,7 @@ def test_header_run_stepper_walks_the_queue(server):
         assert not arrows[1].is_disabled()      # next
         arrows[1].click()
         page.wait_for_function(
-            "t => (document.querySelector('.run-header h1')?.innerText ?? '') !== t", arg=first)
+            "t => !state.loading && !!document.querySelector('.run-header h1') && document.querySelector('.run-header h1').innerText !== t", arg=first)
         assert page.query_selector(".run-header h1").inner_text() != first
 
         browser.close()

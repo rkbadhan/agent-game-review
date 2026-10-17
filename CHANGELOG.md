@@ -12,6 +12,36 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Added
 
+- **Inspect and review from Runs.** Rows open a redacted inspector with linked
+  evidence and captured input/output. Start review freezes the selected or
+  filtered result, including search, AI status and import/pattern scope. A compact
+  focused queue shares its order with the stepper and Next; optional task/session
+  grouping, 50-run windows and reload/return restoration keep larger lists usable.
+  Views and review queues are saved per project in this browser, with explicit
+  recovery when storage or queue loading is unavailable.
+- **Human review has an explicit completion step.** Opening full review moves
+  untouched work to In progress. Mark reviewed stays visible, requires a
+  disposition, and advances within the focused queue. Optimistic versions and
+  selection guards prevent stale writes from changing another run. Unverified
+  and Undetermined use neutral styling; harness errors remain separate warnings.
+- **Home leads with attention.** Continue review or review pending human work,
+  then see AI retries/progress and saved next actions when present. Outcome-count
+  cards and competing primary actions no longer lead the page.
+- **Langfuse adapter 0.5** retains captured root input/output, userId and explicit
+  task identity for redacted previews and grouping. This intentionally supersedes
+  excluding all user IDs: trace-level IDs are stored in the local immutable source,
+  and may appear in the inspector. Previews apply the existing sensitive-pattern
+  redaction (including email addresses); opaque IDs such as `user_8812` and UUIDs
+  remain visible. Re-importing an adapter 0.4 trace creates a new capture
+  revision because both the adapter version and source document changed; the old
+  capture remains unchanged.
+
+- **Runs input previews and saved views.** Langfuse worklists show a bounded input
+  excerpt, redacted before truncation and searchable without opening each trace.
+  Named views include Awaiting review (human unreviewed or in progress) and Failed
+  checks. Custom filter, search, sort and AI status definitions can be saved in
+  this browser per project. Shared benchmark instructions do not add a column.
+
 - **AI review is trackable.** The sidebar has an **AI review** entry with a live
   `done/total` badge, and the Runs page shows a summary strip (reviewed,
   reviewing, queued, failed, not reviewed), an **AI review** column with a
@@ -31,6 +61,23 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Fixed
 
+- **Review navigation displays fetched evidence immediately.** Starting a load
+  replaces the previous run's content. Opening human work and refreshing queue
+  counts happen in the background; quick dispositions wait for that write's
+  version. Queue rebuilds reuse bounded redacted input excerpts per immutable
+  capture instead of re-reading and re-redacting large inputs. The cache budget
+  grows with project size, preventing full scans from churning a smaller fixed
+  cache. Cold I/O/redaction runs outside global cache locks so other projects
+  can load independently.
+
+- **The sidebar run list tells runs apart.** Each row now shows a short run id,
+  step count and capture time under the task name, so a Langfuse project whose
+  traces all share one name (every row read `process_case`) is navigable. Runs
+  with no task evaluation no longer show a meaningless `0/0` tally. The Filter
+  row stays pinned above the list with the run count, only the list scrolls,
+  the open run is scrolled into view when it changes, and the nav is a little
+  tighter so more rows fit. Empty queues still show `0 runs`, and clearing a
+  filter that hid the open run brings its row back into view.
 - **Review follow-ups (PR 118).** A failed retry on the other Langfuse API now
   reports its own error (bad keys, a rate limit, a timeout) instead of the first
   404, and a rate limit no longer marks a connection unusable. A trace ID that

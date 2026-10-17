@@ -84,6 +84,8 @@ function refreshAIViews() {
   renderAIBadge();
   document.querySelectorAll("[data-ai-run]").forEach(chip => paintAIChip(chip, aiRunState(chip.dataset.aiRun, ((state.queue && state.queue.runs) || []).find(r => r.run_id === chip.dataset.aiRun)), null));
   document.querySelectorAll(".ai-strip-host").forEach(renderAIStrip);
+  const attention = $("#home-attention"); if (attention) renderHomeAttention(attention, (state.workspace.detail || {}).runs || []);
+  if (state.view === "runs") { refreshWorklistActions(); const host = $("#runs-table-host"); if (host && state.ai.filter) renderRunsTable(host); }
   const activity = $("#ai-activity"); if (activity) renderAIActivity(activity);
   const job = $("#ai-job"); if (job && state.ai.job) renderAIJob(job, state.ai.job);
 }
@@ -396,7 +398,7 @@ function paintAIJob(host, job) {
 // The Runs page's AI review summary: counts, the running job, and a button scoped to the runs on screen.
 function renderAIStrip(host) {
   if (aiReadOnly() || (state.workspace && state.workspace.unavailable)) { aiPaint(host, "hidden", () => { host.textContent = ""; }); return; }
-  const runs = ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
+  const runs = state.view === "runs" ? visibleWorklistRuns() : ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
   const counts = aiCounts(runs), active = activeAIJob();
   const todo = runs.filter(r => ["none", "failed"].includes(aiRunState(r.run_id, r)));
   const signature = JSON.stringify([state.ai.settings ? !!state.ai.settings.model : null, counts, active && [active.id, active.total, (active.results || []).length, active.current_run], todo.map(r => r.run_id)]);
@@ -418,8 +420,8 @@ function paintAIStrip(host, runs, counts, active, todo) {
   }
   const actions = el("div", "ai-strip-actions");
   if (state.ai.settings && !state.ai.settings.model) {
-    actions.append(aiKeyed(workspaceButton("Configure AI review", configureAIReview, true), "strip:configure"));
-  } else if (state.ai.settings && todo.length) actions.append(aiKeyed(workspaceButton("Review " + todo.length.toLocaleString() + " not yet reviewed with AI", () => openAIReview(todo.map(r => r.run_id).slice(0, 1000)), !active), "strip:review"));
+    actions.append(aiKeyed(workspaceButton("Configure AI review", configureAIReview), "strip:configure"));
+  } else if (state.ai.settings && todo.length) actions.append(aiKeyed(workspaceButton("Review " + todo.length.toLocaleString() + (counts.failed ? " with AI (incl. " + counts.failed.toLocaleString() + " failed)" : " not yet reviewed with AI"), () => openAIReview(todo.map(r => r.run_id).slice(0, 1000))), "strip:review"));
   actions.append(aiKeyed(workspaceButton("AI review activity", () => { state.ai.job = null; goEngineer("ai-review"); }), "strip:activity"));
   strip.append(actions); host.append(strip);
 }

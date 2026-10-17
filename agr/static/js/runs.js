@@ -12,8 +12,87 @@ const RUNS_PAGE = 50;
 function runsMatchesSearch(r, q) {
   const needle = (q || "").trim().toLowerCase();
   if (!needle) return true;
-  return (runDisplayName(r)).toLowerCase().includes(needle) || (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
+  return (runDisplayName(r)).toLowerCase().includes(needle) || (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle) || (r.input_excerpt || "").toLowerCase().includes(needle);
 }
+// Definitions store filters, not run IDs: each visit uses the existing queue API.
+// Awaiting review includes both human states that are not yet handled.
+const RUNS_BUILTIN_VIEWS = [
+  { id: "all", name: "All runs", filters: [], sort: "triage", search: "", ai: "", grouping: "none" },
+  { id: "awaiting", name: "Awaiting review", filters: ["unreviewed", "in_progress"], sort: "triage", search: "", ai: "", grouping: "none" },
+  { id: "failed", name: "Failed checks", filters: ["failed"], sort: "triage", search: "", ai: "", grouping: "none" },
+];
+function runsViewStorageKey() { return "agr-runs-views-v1-" + (state.projectId || "existing"); }
+function runsSavedViews() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(runsViewStorageKey()) || "[]");
+    if (!Array.isArray(saved)) return [];
+    return saved.filter(v => v && typeof v.id === "string" && v.id.startsWith("saved-")
+      && typeof v.name === "string" && v.name.trim() && v.name.length <= 60
+      && Array.isArray(v.filters) && v.filters.every(f => FILTER_CHIPS.some(([key]) => key === f))
+      && SORT_OPTIONS.some(([key]) => key === v.sort) && typeof v.search === "string"
+      && ["", "none", "active", "reviewed", "failed"].includes(v.ai)
+      && [undefined, "none", "task", "session"].includes(v.grouping)).slice(0, 20);
+  } catch (_) { return []; }
+}
+function runsViewMatches(view) {
+  return (view.grouping || "none") === state.runsGrouping && view.sort === state.sort && view.search === state.runsSearch && view.ai === (state.ai.filter || "")
+    && view.filters.length === state.filters.size && view.filters.every(f => state.filters.has(f));
+}
+function renderRunsViews(host) {
+  const bar = el("div", "runs-views");
+  const label = el("label", "runs-view-picker"); label.append(el("span", null, "View"));
+  const picker = el("select"); picker.setAttribute("aria-label", "Saved run view");
+  const saved = runsSavedViews(), views = RUNS_BUILTIN_VIEWS.concat(saved);
+  const current = saved.find(runsViewMatches) || RUNS_BUILTIN_VIEWS.find(runsViewMatches);
+  if (!current) { const option = el("option", null, "Custom view"); option.value = ""; picker.append(option); }
+  for (const v of views) { const option = el("option", null, v.name); option.value = v.id; picker.append(option); }
+  picker.value = current ? current.id : "";
+  picker.addEventListener("change", () => {
+    const view = views.find(v => v.id === picker.value);
+    if (!view) return;
+    state.filters = new Set(view.filters); state.sort = view.sort; state.runsSearch = view.search; state.ai.filter = view.ai; state.runsGrouping = view.grouping || "none";
+    state.runsScroll = 0; state.runsShown = 0;
+    loadInbox().then(render).catch(showInboxError);
+  });
+  label.append(picker); bar.append(label);
+  const details = el("details", "runs-save-view");
+  details.append(el("summary", "seg", "Save current view"));
+  const form = el("form", "runs-save-form");
+  const name = el("input"); name.type = "text"; name.maxLength = 60; name.required = true;
+  name.placeholder = "View name"; name.setAttribute("aria-label", "View name");
+  const save = el("button", "seg", "Save view"); save.type = "submit";
+  const note = el("span", "runs-view-note", "Saved in this browser for this project.");
+  const error = el("span", "runs-view-error"); error.setAttribute("role", "alert");
+  form.append(name, save, note, error);
+  form.addEventListener("submit", e => {
+    e.preventDefault(); const title = name.value.trim();
+    if (!title) { name.setCustomValidity("Enter a view name."); name.reportValidity(); return; }
+    if (views.some(v => v.name.toLowerCase() === title.toLowerCase())) { error.textContent = "Choose a different view name."; return; }
+    const existing = saved.find(runsViewMatches);
+    if (existing) { error.textContent = "These settings are already saved as " + existing.name + "."; return; }
+    if (saved.length >= 20) { error.textContent = "Remove a saved view before adding another."; return; }
+    const view = { id: "saved-" + Date.now() + "-" + Math.random().toString(36).slice(2), name: title,
+      filters: [...state.filters], sort: state.sort, search: state.runsSearch, ai: state.ai.filter || "", grouping: state.runsGrouping };
+    try { localStorage.setItem(runsViewStorageKey(), JSON.stringify(saved.concat(view))); }
+    catch (_) { error.textContent = "This browser could not save the view."; return; }
+    renderRunsViews(host); host.querySelector("select").focus();
+  });
+  name.addEventListener("input", () => { name.setCustomValidity(""); error.textContent = ""; });
+  details.append(form); bar.append(details);
+  const custom = saved.find(runsViewMatches);
+  if (custom) {
+    const remove = el("button", "runs-clear", "Delete saved view"); remove.type = "button";
+    remove.addEventListener("click", () => {
+      try { localStorage.setItem(runsViewStorageKey(), JSON.stringify(saved.filter(v => v.id !== custom.id))); }
+      catch (_) { error.textContent = "This browser could not delete the view."; details.open = true; return; }
+      renderRunsViews(host); host.querySelector("select").focus();
+    });
+    bar.append(remove);
+  }
+  host.replaceChildren(bar);
+}
+function refreshRunsViews() { const host = $("#runs-views-host"); if (host && !host.querySelector(".runs-save-view[open]")) renderRunsViews(host); }
+
 // Shorten only the known verifier template; keep authored findings intact.
 // The full persisted summary remains the cell's tooltip and review text.
 function runRowFindingText(r) {
@@ -60,7 +139,8 @@ function renderRunsStatLine() {
 
 function renderRunsSurface(main) {
   if (!state.queue) {
-    main.append(el("p", "subline", "Loading runs…"));
+    if (state.queueError) main.append(queueErrorNotice());
+    else main.append(el("p", "subline", "Loading runs…"));
     return;
   }
   if (state.importRunIds) {
@@ -99,19 +179,33 @@ function renderRunsSurface(main) {
     backPattern.addEventListener("click", () => { state.view = "fleet"; state.fleet.mode = "tests"; render(); });
     pattern.append(clearPattern, backPattern); main.append(pattern);
   }
+  if (state.queueError) main.append(queueErrorNotice());
+  const layout = el("div", "workbench-layout" + (state.inspector.runId ? " has-inspector" : ""));
+  const pane = el("div", "worklist-pane"); layout.append(pane); main.append(layout);
+  const reviewActions = el("div"); reviewActions.id = "worklist-actions"; pane.append(reviewActions);
+  renderWorklistActions(reviewActions);
+  const views = el("div"); views.id = "runs-views-host";
+  renderRunsViews(views); pane.append(views);
   const controls = el("div", "runs-controls-row");
   renderRunsControls(controls);
-  main.append(controls);
+  pane.append(controls);
 
   const tableHost = el("div"); tableHost.id = "runs-table-host";
-  main.append(tableHost);
+  pane.append(tableHost);
   renderRunsTable(tableHost);
+  if (state.inspector.runId) {
+    const inspector = el("div"); inspector.id = "trace-inspector-host"; layout.append(inspector); renderTraceInspector(inspector);
+  }
 
   // U2: returning from a run restores the scroll position the reader left,
   // rather than dropping them back at the top of a freshly rendered table.
   // render() just wiped #main's content, which resets scrollTop to 0, so the
   // restore has to happen on the next frame, after layout.
-  requestAnimationFrame(() => { main.scrollTop = state.runsScroll || 0; });
+  requestAnimationFrame(() => {
+    // Cancel selectRun's still-running smooth scroll when Back is pressed quickly.
+    if (state.view === "runs" && main.contains(tableHost))
+      main.scrollTo({ top: state.runsScroll || 0, behavior: "instant" });
+  });
 }
 
 function renderRunsControls(host) {
@@ -123,9 +217,9 @@ function renderRunsControls(host) {
   searchWrap.append(searchIcon);
   const search = el("input", "runs-search");
   search.type = "search";
-  search.placeholder = "Search task name or run ID…";
+  search.placeholder = "Search task, run ID or input…";
   search.value = state.runsSearch || "";
-  search.setAttribute("aria-label", "Search runs by task name or run ID");
+  search.setAttribute("aria-label", "Search runs by task name, run ID or input");
   search.addEventListener("input", () => {
     state.runsSearch = search.value;
     if (clear) clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter);
@@ -143,7 +237,7 @@ function renderRunsControls(host) {
     const select = el("select"); select.setAttribute("aria-label", "Filter runs by AI review status");
     for (const [value, label] of [["", "All"], ["none", "Not reviewed"], ["active", "Queued or reviewing"], ["reviewed", "AI reviewed"], ["failed", "Review failed"]]) { const option = el("option", null, label); option.value = value; select.append(option); }
     select.value = state.ai.filter || "";
-    select.addEventListener("change", () => { state.ai.filter = select.value; if (clear) clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter); renderRunsTable($("#runs-table-host")); });
+    select.addEventListener("change", () => { state.ai.filter = select.value; if (clear) clear.hidden = !(state.filters.size || state.runsSearch || state.ai.filter); renderRunsTable($("#runs-table-host")); syncUrl(); });
     wrap.append(select); actions.append(wrap);
   }
   clear = el("button", "runs-clear", "Clear all");
@@ -168,8 +262,9 @@ function aiFilterMatches(run) {
 }
 
 function runsOutcomeBadgeClass(status) {
+  if (!status) return "neutral";
   const sc = statusClass(status);
-  return sc === "undetermined" ? "warn" : sc === "warning" ? "warn" : sc === "passed" ? "pass" : "fail";
+  return sc === "undetermined" ? "neutral" : sc === "warning" ? "warn" : sc === "passed" ? "pass" : "fail";
 }
 
 // Runs §item "readable session identity": the captured task is the title
@@ -181,6 +276,13 @@ function runsOutcomeBadgeClass(status) {
 // Claude Code sessions do) and captured time, when available.
 function runsIdentityCell(r) {
   const cell = el("td", "runs-id-cell");
+  const choose = el("input", "run-selection"); choose.type = "checkbox"; choose.dataset.selectRun = r.run_id;
+  choose.setAttribute("aria-label", "Select " + runDisplayName(r) + " " + shortRunId(r.run_id));
+  choose.checked = state.runsSelected.has(r.run_id);
+  choose.addEventListener("click", event => event.stopPropagation());
+  choose.addEventListener("keydown", event => event.stopPropagation());
+  choose.addEventListener("change", () => { if (choose.checked) state.runsSelected.add(r.run_id); else state.runsSelected.delete(r.run_id); refreshWorklistActions(); });
+  cell.append(choose);
   cell.append(el("div", "runs-task", runDisplayName(r)));
   const meta = el("div", "runs-id-meta");
   const short = shortRunId(r.run_id);
@@ -204,10 +306,24 @@ function runsIdentityCell(r) {
 // least one run in the CURRENT (filtered) set actually captured a value —
 // a column of permanent "—" cells is noise, and a missing value must never
 // be hidden by collapsing it into a false 0 either.
-function renderRunsTable(host) {
+function renderRunsTable(host, groupRuns = null) {
+  if (!groupRuns) { refreshRunsViews(); refreshWorklistActions(); const inspector = $("#trace-inspector-host"); if (inspector) renderTraceInspector(inspector); }
   host.textContent = "";
   const all = (state.queue && state.queue.runs) || [];
-  const runs = all.filter(r => (!state.patternRunIds || state.patternRunIds.has(r.run_id)) && (!state.importRunIds || state.importRunIds.has(r.run_id)) && runsMatchesSearch(r, state.runsSearch) && aiFilterMatches(r));
+  const runs = groupRuns || visibleWorklistRuns();
+  if (!groupRuns && state.runsGrouping !== "none" && runs.length) {
+    const reveal = (state.projectId || "existing") + ":" + state.runsGrouping + ":" + (state.inspector.runId || state.runsAnchorId || state.runId || "");
+    for (const group of worklistGroups(runs)) {
+      const details = el("details", "worklist-group");
+      const active = state.inspector.runId || state.runsAnchorId || state.runId;
+      details.open = !groupIsClosed(group.key) || (state.worklistGroupRevealed !== reveal && group.runs.some(run => run.run_id === active));
+      details.append(el("summary", null, group.label + " · " + group.runs.length));
+      const table = el("div"); details.append(table); renderRunsTable(table, group.runs); host.append(details);
+      details.addEventListener("toggle", () => { if (details.isConnected) saveGroupState(group.key, !details.open); });
+    }
+    state.worklistGroupRevealed = reveal;
+    return;
+  }
   const card = el("div", "card card-pad runs-table-card");
   // Coordinator review 2, item 7: this used to always repeat "N runs ·
   // Sorted by …" — a duplicate of the page's own stat line above whenever
@@ -215,7 +331,7 @@ function renderRunsTable(host) {
   // case), and "Sorted by" duplicates what the Sort control's own selected
   // option already says. It's worth a line only when a search or a filter
   // has made this table's count differ from the sweep's total.
-  if (state.runsSearch || state.filters.size || state.ai.filter) {
+  if (!groupRuns && (state.runsSearch || state.filters.size || state.ai.filter)) {
     const tableMeta = el("div", "runs-table-meta");
     // `all` is already filter-narrowed (state.queue.runs, loaded with the
     // active filters applied server-side) — only the client-side search
@@ -233,7 +349,7 @@ function renderRunsTable(host) {
       ? "No runs match that search"
       : state.filters.size || state.ai.filter ? "No runs match the selected filters" : "No runs in this sweep"));
     empty.append(el("p", null, state.runsSearch
-      ? "Try a task name, run ID, or clear the search."
+      ? "Try a task name, run ID, input excerpt, or clear the search."
       : state.filters.size || state.ai.filter
         ? "Clear the filters to return to the full triage queue."
         : "Ingest a run to begin reviewing this sweep."));
@@ -263,10 +379,12 @@ function renderRunsTable(host) {
     host.append(card);
     return;
   }
+  const showInput = runs.some(r => r.harness_version === "langfuse-export");
   const showDuration = runs.some(r => r.duration_s != null);
   const showCost = runs.some(r => r.cost != null);
   const scroll = el("div", "table-scroll");
   const t = el("table", "vs-table runs-table"
+    + (showInput ? " has-input" : "")
     + (showDuration ? " has-duration" : "")
     + (showCost ? " has-cost" : ""));
   // table-layout:auto with a shrink-to-fit hint on the short
@@ -275,7 +393,9 @@ function renderRunsTable(host) {
   // finding (no compact class) simply take whatever space is left over.
   const showAI = !aiReadOnly() && !state.workspace.unavailable;
   const headerDefs = [["Session", null], ["Outcome", "col-compact"],
-    ["Main finding", null], ["Review status", "col-compact"]];
+    ["Main finding", null]];
+  if (showInput) headerDefs.push(["Input", "runs-input-heading"]);
+  headerDefs.push(["Review status", "col-compact"]);
   if (showAI) headerDefs.push(["AI review", "col-compact"]);
   if (showDuration) headerDefs.push(["Duration", "col-compact num"]);
   if (showCost) headerDefs.push(["Cost", "col-compact num"]);
@@ -289,10 +409,10 @@ function renderRunsTable(host) {
   let shown = 0;
 
   function runsRow(r) {
-    const tr = el("tr", "runs-row" + (r.run_id === state.runId ? " active" : ""));
+    const tr = el("tr", "runs-row" + (r.run_id === (state.inspector.runId || state.runsAnchorId || state.runId) ? " active" : ""));
     tr.tabIndex = 0;
     tr.setAttribute("role", "link");
-    tr.setAttribute("aria-label", "Open " + (runDisplayName(r)));
+    tr.setAttribute("aria-label", "Inspect " + (runDisplayName(r)));
     tr.dataset.runId = r.run_id;
 
     tr.append(runsIdentityCell(r));
@@ -340,7 +460,7 @@ function renderRunsTable(host) {
     const inProgress = wf.review_progress === "in_progress";
     const rsCls = handled ? "handled" : inProgress ? "progress" : "unreviewed";
     const rsTd = el("td");
-    const label = handled && wf.disposition ? vocab("disposition", wf.disposition).label : vocab("progress", wf.review_progress || "unreviewed").label;
+    const label = handled ? "Reviewed" + (wf.disposition ? " · " + vocab("disposition", wf.disposition).label : "") : vocab("progress", wf.review_progress || "unreviewed").label;
     if (handled || inProgress) {
       rsTd.append(el("span", "review-state " + rsCls, label));
     } else {
@@ -348,6 +468,12 @@ function renderRunsTable(host) {
       rs.append(icon("circle"), el("span", "sr-only", label));
       rs.title = label;
       rsTd.append(rs);
+    }
+    if (showInput) {
+      const input = el("td", "runs-input");
+      const preview = el("span", "runs-input-text", r.input_excerpt || (r.harness_version === "langfuse-export" ? "Not captured" : "—"));
+      preview.title = r.input_excerpt || "Input preview unavailable for this source";
+      input.append(preview); tr.append(input);
     }
     tr.append(rsTd);
 
@@ -359,7 +485,7 @@ function renderRunsTable(host) {
     // U2 follow-up: `shown` is saved alongside the scroll offset so a return
     // to this table (below) can restore ENOUGH rows for that offset to mean
     // anything, not just the scroll number itself.
-    const open = () => { state.runsScroll = $("#main").scrollTop; state.runsShown = shown; selectRun(r.run_id); };
+    const open = () => { state.runsScroll = $("#main").scrollTop; state.runsShown = shown; openRunInspector(r.run_id); };
     tr.addEventListener("click", open);
     tr.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
@@ -403,7 +529,8 @@ function renderRunsTable(host) {
   // run's own position, and at least as many rows as were on screen when it
   // was opened (state.runsShown) — both fall back to 0/-1 for an ordinary
   // fresh visit, so this never over-reveals when nothing needs restoring.
-  const activeIdx = state.runId ? runs.findIndex(r => r.run_id === state.runId) : -1;
+  const anchor = state.inspector.runId || state.runsAnchorId || state.runId;
+  const activeIdx = anchor ? runs.findIndex(r => r.run_id === anchor) : -1;
   const restoreFloor = activeIdx >= 0 ? Math.max(activeIdx + 1, state.runsShown || 0) : 0;
   showMore(Math.max(RUNS_PAGE, restoreFloor));
 

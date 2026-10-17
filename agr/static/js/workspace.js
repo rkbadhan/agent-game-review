@@ -89,6 +89,7 @@ function syncProjectChrome() {
   if (!state.serverReadOnly) { const option = el("option", null, "+ New project"); option.value = "new"; chooser.append(option); }
   chooser.value = state.projectId;
   chooser.disabled = state.workspace.busy || !!state.workspace.unavailable;
+  $("#add-runs-button").classList.toggle("primary", false);
   $("#add-runs-button").disabled = state.serverReadOnly || !!state.workspace.unavailable;
   $("#add-runs-label").textContent = activeProject() && activeProject().sample ? "Analyze my runs" : "Add runs";
   $("#reviewer-avatar").textContent = state.reviewer.split(/\s+/).slice(0, 2).map(x => x[0]).join("").toUpperCase();
@@ -103,16 +104,19 @@ async function switchProject(projectId, navigate = true) {
   const project = state.projects.find(p => p.id === projectId);
   if (!project) throw new Error("This project is unavailable.");
   state.workspace.token++; state.loadToken++; state.queueLoadToken++;
+  state.pendingSelection = null; state.loading = false;
   state.projectId = projectId; state.readOnly = state.serverReadOnly || !!project.sample || !!project.archived;
   state.view = "home";
   state.runId = null; state.captureId = null; state.importRunIds = null; state.review = null; state.forensic = null; state.sibling = null; state.compare = null;
   state.filters = new Set(); state.sort = "triage"; state.runsSearch = ""; state.runsShown = 0;
+  state.focusedQueue = null; state.runsSelected.clear(); state.runsGrouping = "none"; state.runsAnchorId = null;
+  state.inspector.token++; state.inspector.runId = null; state.inspector.data = null;
   state.versions = { configurations: null, baseline: null, candidate: null, axis: "evaluation_harness", keys: ["task_id", "task_version", "verifier_version", "environment_image_digest", "task_parameters", "seed"], result: null, pending: false, savedId: null };
   state.fleet.loadToken++;
   state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null;
   state.fleet = { groupBy: "tool,error_signature", episodes: null, pending: false, error: null, loadToken: 0, usageSummary: null, executionQuality: null, total: null, hasMore: false, loadingMore: false, argumentShapes: null };
   Object.assign(state.workspace, { detail: null, files: [], preview: null, job: null, error: null, selected: new Set(), busy: false, operations: new Map(), connectionId: null, lf: null, reviewerDraft: null, projectDraft: null });
-  if (state.ai) { state.ai.token++; state.ai.job = null; state.ai.jobs = []; state.ai.plan = null; state.ai.selected.clear(); state.ai.error = null; }
+  if (state.ai) { state.ai.token++; state.ai.job = null; state.ai.jobs = []; state.ai.plan = null; state.ai.selected.clear(); state.ai.error = null; state.ai.filter = ""; }
   clearTimeout(aiPollTimer);
   closeTrace();
   if (!state.serverReadOnly) await apiPatch("/workspace", { last_project: projectId });
@@ -131,6 +135,8 @@ async function loadEngineerData() {
   if (state.view === "settings" || state.view === "ai-review") await loadAIReviewData();
 }
 async function goEngineer(view) {
+  cancelPendingRunLoad(view);
+  state.loadToken++; state.loading = false;
   state.captureId = null;
   state.readOnly = state.serverReadOnly || !!(activeProject() || {}).sample || !!(activeProject() || {}).archived;
   state.view = view; state.workspace.error = null; closeTrace(); render();
@@ -184,31 +190,88 @@ function renderWelcome(host) {
   layout.append(own, sample); host.append(layout);
   host.append(el("p", "engineer-hint", "Import → inspect a finding → record a next action. Evaluation results are optional; missing checks never become a pass."));
 }
+async function reviewPendingRuns() {
+  state.focusedQueue = null; state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null; state.importRunIds = null;
+  state.filters = new Set(["unreviewed", "in_progress"]); state.sort = "triage"; state.runsSearch = ""; state.ai.filter = "";
+  state.runsSelected.clear(); state.runsGrouping = "none";
+  await loadInbox();
+  await startFocusedReview(null, null, true);
+}
+function renderHomeAttention(host, rows) {
+  host.textContent = "";
+  const pending = rows.filter(run => (run.workflow || {}).review_progress !== "handled");
+  const failed = rows.filter(run => aiRunState(run.run_id, run) === "failed");
+  const active = rows.filter(run => ["reviewing", "queued"].includes(aiRunState(run.run_id, run)));
+  const nextActions = (state.workspace.detail || {}).investigations || [];
+  if (!pending.length && !failed.length && !active.length && !nextActions.length) {
+    host.append(el("h2", "engineer-section-title", "All caught up"), el("p", "engineer-hint", "All runs have a recorded human disposition. Open Runs to revisit their evidence.")); return;
+  }
+  host.append(el("h2", "engineer-section-title", "Needs attention"));
+  const item = (title, detail, action) => {
+    const row = el("div", "home-attention-row"); const text = el("div");
+    text.append(el("strong", null, title), el("p", "engineer-hint", detail)); row.append(text, action); host.append(row);
+  };
+  if (pending.length) item(pending.length + " awaiting human review", "Unreviewed and in progress. Task evaluation status is separate.", workspaceButton("Review runs", reviewPendingRuns));
+  if (failed.length) item(failed.length + " AI reviews to retry", "These model reviews did not complete.", workspaceButton("Review retries", () => openAIReview(failed.map(run => run.run_id))));
+  if (active.length) item(active.length + " AI reviews running or queued", "Track progress while reviewing captured evidence.", workspaceButton("View progress", () => goEngineer("ai-review")));
+  if (nextActions.length) {
+    host.append(el("h3", null, "Saved next actions"));
+    for (const investigation of nextActions) host.append(investigationRow(investigation));
+  }
+}
 function renderProjectHome(host) {
   const project = activeProject(), detail = state.workspace.detail;
-  workspaceHeading(host, project.name, project.sample ? "Explore sample captures. Start a personal project to analyze your own runs." : "Continue your investigations or bring in your next batch of runs.");
-  if (state.workspace.startHere) renderDemoStartHere(host, state.workspace.startHere);
-  const actions = el("div", "engineer-actions"); actions.append(workspaceButton(project.sample ? "Analyze my runs" : "Add runs", startAddingRuns, true));
-  if (!state.serverReadOnly) actions.append(workspaceButton("New project", () => goEngineer("welcome")));
-  host.append(actions);
+  workspaceHeading(host, project.name, project.sample ? "Explore sample captures. Start a personal project to analyze your own runs." : "Review what needs attention and continue where you left off.");
   if (!detail) { host.append(el("p", null, "Loading project…")); return; }
-  if (!detail.runs.length) { host.append(emptyState("list-tree", "No runs yet. Add a run from your tools to start investigating.", workspaceButton("Choose a source", startAddingRuns))); return; }
-  const stats = el("div", "engineer-stat-row");
-  const counts = { Runs: detail.runs.length, Failed: detail.runs.filter(r => r.outcome.status === "FAILED").length, Unverified: detail.runs.filter(r => r.outcome.status === "UNVERIFIED").length, Undetermined: detail.runs.filter(r => r.outcome.status === "UNDETERMINED").length, "Operational error": detail.runs.filter(r => r.outcome.status === "OPERATIONAL_ERROR").length };
-  for (const [label, value] of Object.entries(counts)) { const card = el("div", "engineer-stat"); card.append(el("strong", null, String(value)), el("span", null, label)); stats.append(card); } host.append(stats);
-  const aiHome = el("div", "ai-strip-host"); host.append(aiHome); renderAIStrip(aiHome);
-  let last; try { last = localStorage.getItem("agr-last-" + state.projectId); } catch (_) {}
-  if (last) {
-    const p = new URLSearchParams(last); const runId = p.get("run");
-    if (detail.runs.some(r => r.run_id === runId)) host.append(workspaceButton("Continue investigation", () => selectRun(runId, { chapter: p.get("chapter"), moment: p.get("moment"), trace: p.get("trace") === "1", evidence: p.get("evidence") }), true));
+  const rows = detail.runs, pending = rows.filter(run => (run.workflow || {}).review_progress !== "handled");
+  const actions = el("div", "engineer-actions"); host.append(actions);
+  if (!rows.length) {
+    actions.append(workspaceButton(project.sample ? "Analyze my runs" : "Add runs", startAddingRuns, true));
+    host.append(emptyState("list-tree", "No runs yet. Add a run from your tools to start investigating."));
+    return;
   }
-  host.append(workspaceButton("Open runs", () => goToRuns()));
-  host.append(el("h2", "engineer-section-title", "Recent imports"));
-  if (!detail.imports.length) host.append(el("p", "engineer-hint", "Existing captures are available in Runs. New browser imports will appear here."));
-  for (const job of detail.imports) host.append(importHistoryRow(job));
-  host.append(el("h2", "engineer-section-title", "Next actions"));
-  if (!detail.investigations.length) host.append(el("p", "engineer-hint", "Save an evidence-linked next action while reviewing a run."));
-  for (const investigation of detail.investigations) host.append(investigationRow(investigation));
+  let saved = new URLSearchParams();
+  try { saved = new URLSearchParams(localStorage.getItem("agr-last-" + state.projectId) || ""); } catch (_) {}
+  let last = rows.find(run => run.run_id === saved.get("run"));
+  if (last && last.workflow.review_progress === "handled") {
+    const previous = readFrozenQueue(saved.get("review_queue"), state.projectId || "existing");
+    const order = previous ? previous.run_ids : rows.map(run => run.run_id), index = order.indexOf(last.run_id);
+    const waiting = new Map(pending.map(run => [run.run_id, run]));
+    last = waiting.get([...order.slice(index + 1), ...order.slice(0, index + 1)].find(id => waiting.has(id)));
+  }
+  if (last && pending.length) {
+    const frozen = readFrozenQueue(saved.get("review_queue"), state.projectId || "existing");
+    const order = frozen ? frozen.run_ids : rows.map(run => run.run_id);
+    const position = order.indexOf(last.run_id);
+    host.append(el("p", "home-resume-context", "Continue " + runDisplayName(last) + (position >= 0 ? " · run " + (position + 1) + " of " + order.length : "")));
+    actions.append(workspaceButton("Continue review", async () => {
+      // Restore the same queue when it is available; a missing browser snapshot
+      // gets an explicit explanation before creating a fresh pending queue.
+      if (saved.get("review_queue") && !frozen) { toast("The saved queue is unavailable; opening the current pending runs."); await reviewPendingRuns(); return; }
+      state.focusedQueue = frozen; readUrlFromSavedReview(saved); if (frozen) restoreFocusedDefinition(frozen);
+      await loadInbox();
+      await selectRun(last.run_id, last.run_id === saved.get("run") ? { capture: saved.get("capture"), chapter: saved.get("chapter"), moment: saved.get("moment"), trace: saved.get("trace") === "1", evidence: saved.get("evidence") } : null);
+    }, true));
+  } else if (pending.length) {
+    if (saved.get("run")) host.append(el("p", "engineer-hint", "Your last run is no longer available. Continue with the first pending run."));
+    actions.append(workspaceButton("Review pending runs", reviewPendingRuns, true));
+  }
+  actions.append(workspaceButton("Open runs", goToRuns), workspaceButton(project.sample ? "Analyze my runs" : "Add runs", startAddingRuns));
+  host.append(el("p", "engineer-hint", rows.length + " runs · " + (rows.length - pending.length) + " reviewed"));
+  const attention = el("section"); attention.id = "home-attention"; host.append(attention); renderHomeAttention(attention, rows);
+  if (detail.imports.length) {
+    const imports = el("details", "home-imports"); imports.append(el("summary", null, "Recent imports"));
+    for (const job of detail.imports) imports.append(importHistoryRow(job)); host.append(imports);
+  }
+  if (state.workspace.startHere) { const examples = el("details", "home-imports"); examples.append(el("summary", null, "Demo examples")); renderDemoStartHere(examples, state.workspace.startHere); host.append(examples); }
+}
+function readUrlFromSavedReview(saved) {
+  state.filters = new Set(saved.getAll("filter").filter(key => FILTER_CHIPS.some(([known]) => key === known)));
+  state.sort = SORT_OPTIONS.some(([key]) => key === saved.get("sort")) ? saved.get("sort") : "triage";
+  state.runsSearch = saved.get("q") || "";
+  state.ai.filter = ["none", "active", "reviewed", "failed"].includes(saved.get("ai_status")) ? saved.get("ai_status") : "";
+  state.runsGrouping = ["task", "session"].includes(saved.get("run_group")) ? saved.get("run_group") : "none";
+  state.patternRunIds = null; state.patternSelector = null; state.patternLabel = null; state.importRunIds = null;
 }
 function importHistoryRow(job) {
   const row = el("div", "engineer-list-row"); row.append(el("strong", null, job.label), el("span", "engineer-hint", job.status.replaceAll("_", " ") + " · " + job.results.length + "/" + job.total));

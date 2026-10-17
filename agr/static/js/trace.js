@@ -8,6 +8,7 @@ const PANELS = [["agent_message","Agent messages"],["tool_io","Tool I/O"],["envi
 // means "follow the lit panel", same as no override at all.
 let traceActiveTab = null;
 function openTrace(stepId) {
+  if (state.loading || !state.forensic || isWorkspaceView(state.view)) return;
   track("full_trace_opened", { run_id: state.runId, step_id: stepId || undefined });
   // No explicit step (the plain Trace button, "T", or a link with no
   // ?evidence=) still lands on a synchronized panel instead of four empty

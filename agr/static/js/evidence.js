@@ -27,6 +27,10 @@ function factSpanTerms(facts) {
 }
 function renderEvidencePanel() {
   const host = $("#evidence-body"); host.textContent = "";
+  if (state.loading) {
+    syncEvidenceCollapse(false);
+    host.append(el("p", "empty", "Loading evidence for the selected run…")); return;
+  }
   const onMoments = state.view === "review" && state.chapter === "moments";
   const hasContent = onMoments && !!currentMoment();
   syncEvidenceCollapse(hasContent);
@@ -251,6 +255,7 @@ function evItem(head, detail) {
   return it;
 }
 function focusEvidence() {
+  if (state.loading) return;
   const m = currentMoment();
   track("evidence_opened", { run_id: state.runId, moment_id: m && m.moment_id });
   const panel = $("#evidence-panel");
@@ -267,7 +272,7 @@ function focusEvidence() {
 let _evidenceHasContent = null, _evidenceOverride = null;
 function syncEvidenceCollapse(hasContent) {
   if (hasContent !== _evidenceHasContent) { _evidenceHasContent = hasContent; _evidenceOverride = null; }
-  const open = _evidenceOverride != null ? _evidenceOverride : hasContent;
+  const open = _evidenceOverride != null ? _evidenceOverride : hasContent && !state.focusedQueue;
   $("#evidence-panel").classList.toggle("collapsed", !open);
   $("#workspace").classList.toggle("evidence-collapsed", !open);
 }

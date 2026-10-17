@@ -38,7 +38,7 @@ const LABELS = {
   progress: {
     unreviewed: ["Unreviewed", "No human has opened this review"],
     in_progress: ["In progress", "Opened or edited, not yet dispositioned"],
-    handled: ["Handled", "An explicit disposition was recorded"],
+    handled: ["Reviewed", "An explicit disposition was recorded"],
   },
   opportunity_status: {
     measured: ["Measured", "The behaviour was evaluated from validated evidence in this window"],

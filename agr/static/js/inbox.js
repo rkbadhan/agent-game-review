@@ -22,7 +22,7 @@ const FILTER_GROUPS = [
   ["Outcome", [["failed", "Failed"], ["passed", "Passed"],
     ["undetermined", "Undetermined"], ["unverified", "Unverified"],
     ["operational_error", "Operational error"]]],
-  ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Handled"]]],
+  ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Reviewed"]]],
 ];
 const MORE_FILTER_CHIPS = [["needs_attention", "Needs attention"], ["recovered", "Recovered"],
   ["plausible_recovery", "Plausible recovery"], ["verifier_concern", "Verifier concern"],
@@ -58,6 +58,7 @@ function setEntryPreference(v) {
 // Position of the current run within the active frozen queue, for the §4.2 header.
 // One-based for display; null when the run is not part of the current queue view.
 function activeQueueIds() {
+  if (state.focusedQueue) return state.focusedQueue.run_ids;
   const ids = (state.queue && state.queue.run_ids) || [];
   const patternIds = state.patternRunIds ? ids.filter(id => state.patternRunIds.has(id)) : ids;
   return state.importRunIds ? patternIds.filter(id => state.importRunIds.has(id)) : patternIds;
@@ -77,14 +78,18 @@ function relTime(iso) { if (!iso) return null; const t = Date.parse(iso); if (is
 function fmtCost(c) { return c == null ? null : "$" + Number(c).toFixed(2); }
 function statusClass(s) { s = (s||"").toUpperCase();
   // F1 follow-up: UNDETERMINED/UNVERIFIED are honest "no verdict" states —
-  // neutral, not the red a failure implies. OPERATIONAL_ERROR is the same: the
-  // harness broke, so it is not an agent failure.
-  return s==="PASSED"?"passed":s==="WARNING"?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED"||s==="OPERATIONAL_ERROR")?"undetermined":"failed"; }
+  // neutral, not the red a failure implies. OPERATIONAL_ERROR is a warning:
+  // the harness broke, so it is not an agent failure.
+  return s==="PASSED"?"passed":(s==="WARNING"||s==="OPERATIONAL_ERROR")?"warning":(s==="UNDETERMINED"||s==="UNVERIFIED")?"undetermined":"failed"; }
 
 function loadInbox() {
   const promise = loadInboxRecords();
   state.inboxPromise = promise;
-  promise.finally(() => { if (state.inboxPromise === promise) state.inboxPromise = null; }).catch(() => {});
+  promise.finally(() => {
+    if (state.inboxPromise !== promise) return;
+    state.inboxPromise = null;
+    if (state.view === "runs") { refreshWorklistActions(); const inspector = $("#trace-inspector-host"); if (inspector) renderTraceInspector(inspector); }
+  }).catch(() => {});
   return promise;
 }
 function ensureInbox() {
@@ -99,10 +104,17 @@ async function loadInboxRecords() {
   const params = new URLSearchParams();
   for (const f of state.filters) params.append("filter", f);
   params.set("sort", state.sort);
-  const [sweep, queue] = await Promise.all([api("/sweep"), api("/queue?" + params.toString())]);
+  let sweep, queue, focusedRuns;
+  try { [sweep, queue, focusedRuns] = await Promise.all([api("/sweep"), api("/queue?" + params.toString()), state.focusedQueue ? api("/runs") : Promise.resolve(null)]); }
+  catch (error) { if (token !== state.queueLoadToken) return; error.agrQueueToken = token; state.queueError = error.message; throw error; }
   if (token !== state.queueLoadToken) return;  // superseded by a newer load
-  state.sweep = sweep; state.queue = queue;
-  renderSweep(); renderQueueControls(); renderRunList(); syncUrl();
+  state.sweep = sweep; state.queue = queue; state.queueError = null;
+  document.querySelectorAll(".queue-error-notice").forEach(notice => notice.remove());
+  if (state.focusedQueue && focusedRuns) { const rows = new Map(focusedRuns.map(r => [r.run_id, r])); state.focusedQueue.runs = state.focusedQueue.run_ids.map(id => rows.get(id)).filter(Boolean); }
+  renderSweep();
+  if (!isWorkspaceView(state.view)) { renderQueueControls(); renderRunList(); }
+  if (state.view === "runs") paintWorklistQueue();
+  syncUrl();
   track("queue_view_created", { queue_view_id: state.queue.queue_view_id, sort: state.sort,
     filters: [...state.filters], count: (state.queue.run_ids || []).length });
 }
@@ -288,6 +300,16 @@ function buildSortRow(onChange) {
 function renderQueueControls() {
   const host = $("#queue-controls"); host.textContent = "";
   const refresh = () => loadInbox().catch(showInboxError);
+  if (state.focusedQueue) {
+    host.append(el("p", "subline", "Frozen review order. Return to Runs to change filters."));
+    const definition = state.focusedQueue.definition || {}, parts = [];
+    if (definition.search) parts.push("Search: " + definition.search);
+    for (const key of definition.filters || []) { const chip = FILTER_CHIPS.find(([known]) => known === key); if (chip) parts.push(chip[1]); }
+    if (definition.ai) parts.push("AI: " + definition.ai);
+    const order = SORT_OPTIONS.find(([known]) => known === definition.sort); if (order) parts.push(order[1]);
+    if (parts.length) host.append(el("p", "focused-definition", parts.join(" · ")));
+    return;
+  }
   host.append(buildFilterChipsRow(refresh));
   host.append(buildSortRow(refresh));
   // §4.3.5 workspace preference: where a run opens. Changing it never reorders the
@@ -299,33 +321,66 @@ function renderQueueControls() {
   esel.addEventListener("change", () => setEntryPreference(esel.value));
   entryRow.append(esel); host.append(entryRow);
 }
-// Coordinator review 2, item 3: a dense single-line row (status dot + task
-// name, ellipsis + checks tally right-aligned) instead of a ~110px four-line
-// card — the queue lists every run in the sweep and needs to scan like a
-// list, not a stack of cards. Concern/steps/review-mode meta and the review
-// state's own label move into the row's `title` tooltip; each also stays in
-// the DOM as `.sr-only` text (clipped, not display:none/visibility:hidden),
-// so a test or a screen reader that reads the row's own text still finds
-// them (see app.css's .sr-only comment) even though a sighted reader now
-// sees only the small state icon at the row's end.
+// Coordinator review 2, item 3: a dense row (status dot + task name,
+// ellipsis + checks tally right-aligned) instead of a ~110px four-line card —
+// the queue lists every run in the sweep and needs to scan like a list, not a
+// stack of cards. Concern/review-mode meta and the review state's own label
+// move into the row's `title` tooltip; each also stays in the DOM as
+// `.sr-only` text (clipped, not display:none/visibility:hidden), so a test or
+// a screen reader that reads the row's own text still finds them (see
+// app.css's .sr-only comment) even though a sighted reader now sees only the
+// small state icon at the row's end.
+//
+// A single muted identity line sits under the name: a Langfuse project (or
+// any source that names traces after the workflow) gives every run the same
+// display name, so without the short session id, step count and captured
+// time each row read "process_case" and nothing told two of them apart.
+function runListIdentity(r) {
+  const bits = [], short = shortRunId(r.run_id);
+  if (short) bits.push(short);
+  if (r.steps != null) bits.push(r.steps + (r.steps === 1 ? " step" : " steps"));
+  const when = relTime(r.finished_at || r.started_at);
+  if (when) bits.push(when);
+  return bits.join(" · ");
+}
+// The compact tally only when the run has checks or tests to tally — an
+// unverified capture with no task evaluation has nothing to count, and a bare
+// "0/0" there read as "zero of zero passed" rather than "not evaluated".
+function runListTally(o) {
+  const tally = o.test_results || o;
+  return tally.total ? outcomeCounts(o, true) : "";
+}
 function renderRunList() {
-  const list = $("#run-list"), runs = ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
+  const list = $("#run-list"), runs = state.focusedQueue ? focusedRows().filter(r => runsMatchesSearch(r, state.focusSearch) || (r.main_finding || "").toLowerCase().includes(state.focusSearch.trim().toLowerCase()))
+    : ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
+  const readingPosition = list.scrollTop;
   list.textContent = "";
-  if (!runs.length) { list.append(el("div", "empty", "No runs match this queue.")); return; }
-  for (const r of runs) {
+  const count = $("#queue-count");
+  if (count) count.textContent = (state.focusedQueue && state.focusSearch ? runs.length + " of " + state.focusedQueue.run_ids.length : runs.length) + (runs.length === 1 ? " run" : " runs");
+  if (!runs.length) {
+    delete list.dataset.revealed;
+    list.append(el("div", "empty", state.focusedQueue && state.focusSearch ? "No runs match Find. Clear the search to see this queue." : "No runs match this queue.")); return;
+  }
+  let activeRow = null;
+  function rowButton(r) {
     const btn = el("button", "run" + (r.run_id === state.runId ? " active" : ""));
     btn.dataset.runId = r.run_id;
     const sc = statusClass(r.outcome && r.outcome.status);
     const o = r.outcome || {};
     const line = el("div", "run-line");
     line.append(el("span", "status-dot " + sc));
-    line.append(el("span", "run-name", runDisplayName(r)));
-    line.append(el("span", "run-checks " + sc, outcomeCounts(o, true)));
+    const text = el("span", "run-text");
+    text.append(el("span", "run-name", runDisplayName(r)));
+    const identity = state.focusedQueue ? r.input_excerpt || runRowFindingText(r) || runListIdentity(r) : runListIdentity(r);
+    if (identity) text.append(el("span", "run-identity", identity));
+    line.append(text);
+    line.append(el("span", "run-checks " + sc, runListTally(o)));
     // The status WORD ("PASSED"/"FAILED"/…) is now conveyed by color (the dot,
     // .run-checks) rather than spelled out next to the ratio — kept as text
     // too (clipped, not hidden) so a reader querying the row's own text for
     // it, sighted or not, still finds it.
-    line.append(el("span", "run-status sr-only " + sc, (o.status||"?").toUpperCase() + " · " + outcomeCounts(o, true)));
+    const statusText = (o.status||"?").toUpperCase() + " · " + (runListTally(o) || outcomeCounts(o));
+    line.append(el("span", "run-status sr-only " + sc, statusText));
     const wf = r.workflow || {};
     const handled = wf.review_progress === "handled";
     const stCls = handled ? "handled" : wf.review_progress === "in_progress" ? "progress" : "";
@@ -343,15 +398,76 @@ function renderRunList() {
     if (c.strength) bits.push(c.strength + " strong");
     if (c.recovery) bits.push(c.recovery + " recovery");
     if (c.concern) bits.push(c.concern + " concern");
-    if (r.steps != null) bits.push(r.steps + " steps");
     const cost = fmtCost(r.cost); if (cost) bits.push(cost);
     if (r.contract && r.contract.watermarked) bits.push("provisional");
     bits.push(vocab("review_mode", r.review_mode).label.replace(" review", ""));
-    btn.title = (o.status||"?").toUpperCase() + " · " + outcomeCounts(o, true) + " — " + bits.join(" · ");
+    btn.title = runDisplayName(r) + "\n" + statusText + " — " + bits.join(" · ") + "\n" + r.run_id;
     btn.append(el("span", "sr-only run-meta", bits.join(" · ")));
 
     btn.addEventListener("click", () => selectRun(r.run_id));
-    list.append(btn);
+    if (r.run_id === state.runId) activeRow = btn;
+    return btn;
+  }
+  const pages = state.focusPages || (state.focusPages = new Map());
+  function renderWindow(host, members, key) {
+    const readingPosition = list.scrollTop;
+    host.textContent = "";
+    let page = pages.get(key) || { start: 0, count: 50 };
+    const selected = members.findIndex(run => run.run_id === state.runId);
+    if (selected >= 0 && (selected < page.start || selected >= page.start + page.count)) page = { start: Math.floor(selected / 50) * 50, count: 50 };
+    if (page.start >= members.length) page = { start: 0, count: 50 };
+    pages.set(key, page);
+    if (page.start > 0) {
+      const earlier = workspaceButton("Show earlier runs", () => { pages.set(key, { start: Math.max(0, page.start - 50), count: page.count + 50 }); renderWindow(host, members, key); });
+      earlier.classList.add("queue-page"); host.append(earlier);
+    }
+    for (const run of members.slice(page.start, page.start + page.count)) host.append(rowButton(run));
+    if (page.start + page.count < members.length) {
+      const more = workspaceButton("Show more runs", () => { pages.set(key, { start: page.start, count: page.count + 50 }); renderWindow(host, members, key); });
+      more.classList.add("queue-page"); host.append(more);
+    }
+    if (readingPosition) list.scrollTop = readingPosition;
+  }
+  if (!state.focusedQueue) for (const run of runs) list.append(rowButton(run));
+  else if (state.runsGrouping === "none") renderWindow(list, runs, state.focusedQueue.id + ":all");
+  else {
+    const byId = new Map(runs.map(run => [run.run_id, run]));
+    const groups = state.focusedQueue.groups ? state.focusedQueue.groups.map(group => ({ key: group.key, label: group.label,
+      runs: group.run_ids.map(id => byId.get(id)).filter(Boolean) })).filter(group => group.runs.length) : worklistGroups(runs);
+    const reveal = state.focusedQueue.id + ":" + state.runId;
+    for (const group of groups) {
+      const details = el("details", "focused-group");
+      details.open = !groupIsClosed(group.key) || (state.focusGroupRevealed !== reveal && group.runs.some(run => run.run_id === state.runId));
+      details.append(el("summary", null, group.label + " · " + group.runs.length));
+      const body = el("div"); details.append(body); list.append(details);
+      const key = state.focusedQueue.id + ":" + group.key;
+      if (details.open) renderWindow(body, group.runs, key);
+      details.addEventListener("toggle", () => {
+        if (!details.isConnected) return;
+        saveGroupState(group.key, !details.open);
+        if (details.open && !body.childNodes.length) renderWindow(body, group.runs, key);
+        else if (!details.open) body.textContent = "";
+      });
+    }
+  }
+  if (state.focusedQueue) state.focusGroupRevealed = state.focusedQueue.id + ":" + state.runId;
+  // Keep the open run in view when it changes (stepper, keyboard, a shared
+  // link), but leave the list where the reader scrolled it on any other
+  // re-render.
+  // Filtering the active run out invalidates its reveal, so clearing the
+  // filter brings it back into view even though the selected id is unchanged.
+  if (!activeRow) delete list.dataset.revealed;
+  if (activeRow && list.dataset.revealed !== state.runId) {
+    list.dataset.revealed = state.runId;
+    activeRow.scrollIntoView({ block: "nearest" });
+  } else list.scrollTop = readingPosition;
+}
+function showInboxError(error) {
+  if (error.agrQueueToken && error.agrQueueToken !== state.queueLoadToken) return;
+  state.queueError = error.message;
+  if (state.view === "runs" || !state.queue) { state.view = "runs"; render(); }
+  else {
+    const previous = $("#queue-load-error"); if (previous) previous.remove();
+    const notice = queueErrorNotice(); notice.id = "queue-load-error"; $("#queue").insertBefore(notice, $("#run-list"));
   }
 }
-function showInboxError(e) { $("#run-list").append(el("div", "empty", "Failed to load queue: " + e.message)); }
