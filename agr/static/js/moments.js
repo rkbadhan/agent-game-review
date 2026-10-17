@@ -17,7 +17,7 @@ function moveMoment(dir) { const n = currentMoments().length; if (!n) return;
 function renderMomentCard(rv, f, moment) {
   const card = el("div", "moment-card");
   const top = el("div", "moment-topline");
-  const kind = el("span", "moment-kind " + momentTagClass(moment), momentTypeLabel(moment));
+  const kind = el("span", "moment-kind " + momentTagClass(moment), moment.kind ? humanizeToken(moment.kind) : (moment.polarity === "positive" ? "Strength" : "Concern"));
   top.append(kind);
   if (rv.review_curation)
     top.append(el("span", "shell-chip mode-curated", curatedReviewLabel(rv.review_curation)));
@@ -39,6 +39,11 @@ function renderMomentCard(rv, f, moment) {
   // the run's overall verdict — see chapters.js's momentHeadline() comment.
   const boilerIds = groundedBoilerplateIds(moment.summary);
   const headingText = boilerIds ? momentHeadline(moment, rv) : moment.summary;
+  // The kind pill stays concise; retain the reviewer's distinct verdict when
+  // an authored headline does not already say it (as the timeline tooltip does).
+  const verdict = momentTypeLabel(moment);
+  if (moment.taxonomy_verdict && verdict !== kind.textContent && !(headingText || "").includes(verdict))
+    summary.append(el("p", "moment-verdict engineer-hint", "Review finding: " + verdict));
   heading.append(el("h2", null, headingText));
   heading.append(el("span", "moment-anchor", moment._stepIdx != null ? "trace step " + (moment._stepIdx + 1) : (moment.anchor_event_ids || [])[0] || ""));
   summary.append(heading);

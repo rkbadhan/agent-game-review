@@ -145,7 +145,7 @@ async function boot() {
       // Authentication errors and other-project links cannot use this fallback.
       if (e.status === 401 || e.status === 403 || (want.project && want.project !== "existing")) throw e;
       state.workspace.unavailable = true;
-      state.projects = [{ id: "existing", name: "Existing runs", sample: state.serverReadOnly }];
+      state.projects = [{ id: "existing", name: "Local runs", sample: state.serverReadOnly }];
       state.projectId = null; state.readOnly = state.serverReadOnly;
       if (want.project === "existing") delete want.project;
       if (!want.run && !want.view) want.view = "runs";

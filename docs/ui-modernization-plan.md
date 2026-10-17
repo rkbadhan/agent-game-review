@@ -62,6 +62,50 @@ shortened; a full line-by-line rewrite of the remaining ones was judged not
 worth the risk of quietly losing a still-relevant "why" for a line-count
 target versus the actual gain.
 
+## Follow-up review (2026-10-16)
+
+A second pass over the demo store at 1440×900 (light and dark) and 390×844
+found that the original redesign held up, and most of what looked dated came
+from screens added after it: Home, Add runs, Settings, AI review, and the
+run-header actions. Those still used hard-coded pixel sizes and their own
+card and heading styles.
+
+Fixed in this pass:
+
+| Finding | Fix |
+|---|---|
+| Home, AI review, Sources, Investigations and Settings had no sidebar icon, so labels started at two different x positions. The collapsed rail showed the letters "H", "S", "I" and "⚙". | Lucide icons for every item (`home`, `sparkles`, `database`, `bookmark`, `settings`, `plus`), plus Review and Workspace group labels (a divider on the rail). |
+| "Run AI review" floated at the page edge, outside the 900px reading column. "Save next action" was a full-width boxed disclosure above the tabs. | Both are buttons in one `.run-actions` row under the header. The composer form opens beneath them. |
+| A curated review showed "Curated review · date" as a chip and again as the active reviewer tab, which was a large segmented pill. | When the active tab already names the mode, the tab replaces the chip and takes over its tooltip. The switcher is now chip-sized. |
+| Chapter tabs started with a "•" glyph. | The unvisited mark is hidden. Check, "~" and "–" still show. |
+| Key-moment markers (and the active ring) were cut off at the bottom of the lane. | The lane is 28px tall, markers are 20px, and clusters are centered vertically. |
+| Runs table: "FAILED / 0/1 / checks" wrapped to three lines, so row heights varied. Every row had a bordered "Not reviewed" chip. | The outcome cell no longer wraps on desktop. "Not reviewed" is quiet text. Main finding absorbs the spare width, so Duration and Cost stay inside the card. |
+| The AI review strip took two rows above the run count. | One row: counts on the left, actions on the right. |
+| Workspace pages used 28/18/13/12px literals and gray cards. Source cards had an 11px title above 13px body text. | Shared type tokens, white cards, a bold source name, and a hover lift on clickable cards. Inputs are 36px with an accent focus ring. |
+| Button labels were 11px. | 12.5px (`--text-sm`), with hover fill, a disabled state and 14px icons. |
+| At 390px, the Runs search box and the AI review select overflowed the filter card. | The toolbar wraps, and the controls grid uses `minmax(0,1fr)`. |
+
+Completed follow-ups:
+
+1. Runs leads verifier-template findings with their linked check ID and name.
+   Queue summaries expose only the referenced check names; stored summaries
+   and their full tooltip text stay unchanged.
+2. Runs shows **Configure AI review** until effective settings select a model.
+   The action opens Settings and focuses the reviewer-model field.
+3. The default project is **Local runs**. The old default label is upgraded
+   on read; custom project names are preserved.
+4. Phone run headers fold the review chips into **Review details**. Desktop
+   keeps them visible, including after resizing from a narrow window.
+5. Moment cards use the moment kind in the topline pill, leaving the finding
+   sentence in the headline below.
+6. Phase labels hide when their complete text does not fit, and reappear
+   when resized wide enough. The band tooltip retains the full label.
+7. Archive/restore lives in its own section at the bottom of Settings, with
+   archive styled as a danger action and its reversible effect explained.
+8. **Ctrl/⌘K** or the top-bar search button opens a run picker. It searches
+   task names and run IDs across the active project, independent of queue
+   filters. Arrow keys and Enter select a result; Escape restores focus.
+
 ## Constraints that shape the plan
 
 - **No build step.** The SPA ships as package data (`index.html`, `app.css`,

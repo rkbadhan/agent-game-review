@@ -5,6 +5,12 @@
 // reconciled rv.outcome.status — so the header can never disagree with
 // Overview's "What happened" headline, which reads the same function.
 
+const reviewDetailsMedia = matchMedia("(max-width:640px)");
+reviewDetailsMedia.addEventListener("change", () => {
+  const details = $(".run-review-details");
+  if (details) details.open = !reviewDetailsMedia.matches || !!state.reviewDetailsOpen;
+});
+
 // --- render root -------------------------------------------------------------
 // U1: which top-level surfaces are global workspaces (Runs / Patterns /
 // Compare versions) rather than a run's investigation shell. Workspaces get
@@ -36,6 +42,7 @@ function renderTopbarStepper() {
 }
 
 function render() {
+  phaseLabelObserver.disconnect();
   const main = $("#main"); main.textContent = "";
   if (typeof syncProjectChrome === "function") syncProjectChrome();
   // A review view with no SELECTED run (e.g. a stray fallback) has nothing to
@@ -151,14 +158,25 @@ function render() {
   }
   header.append(left);
   main.append(header);
-  main.append(renderShellMeta(rv));
+  const reviewDetails = el("details", "run-review-details");
+  reviewDetails.open = !reviewDetailsMedia.matches || !!state.reviewDetailsOpen;
+  reviewDetails.append(el("summary", null, "Review details"), renderShellMeta(rv));
+  reviewDetails.addEventListener("toggle", () => {
+    if (reviewDetails.isConnected && reviewDetailsMedia.matches) state.reviewDetailsOpen = reviewDetails.open;
+  });
+  main.append(reviewDetails);
   if (state.captureId) {
     const snapshot = el("div", "notice callout", "Saved evidence snapshot · " + state.captureId + " · read-only ");
     snapshot.append(workspaceButton("Open latest capture", () => selectRun(state.runId))); main.append(snapshot);
   }
+  // The header's actions share one row inside the reading column, so they
+  // line up with the title instead of floating at the page edge.
   const actions = el("div", "run-review-actions");
-  if (!state.loading && !aiReadOnly() && !state.captureId && !state.workspace.unavailable)
-    actions.append(workspaceButton(rv.review_status === "review_failed" ? "Retry AI review" : "Run AI review", () => openAIReview([state.runId])));
+  if (!state.loading && !aiReadOnly() && !state.captureId && !state.workspace.unavailable) {
+    const aiButton = workspaceButton(rv.review_status === "review_failed" ? "Retry AI review" : "Run AI review", () => openAIReview([state.runId]));
+    aiButton.prepend(icon("sparkles"));
+    actions.append(aiButton);
+  }
   if (rv.review_status === "review_failed") {
     const failure = el("details", "run-ai-failure");
     const errors = rv.review_errors || [], reason = errors[0] && errors[0].error_type;
@@ -166,14 +184,14 @@ function render() {
     for (const error of errors) failure.append(el("p", null, error.message || error.error_type || "The provider did not complete this review."));
     failure.append(el("p", "engineer-hint", "Trace analysis is available. Retry after correcting the reviewer configuration.")); actions.append(failure);
   }
-  main.append(actions);
+  if (run.harness_version !== "langfuse-export") renderInvestigationComposer(actions);
+  if (actions.childElementCount) main.append(actions);
   if (langfuseNeedsEvaluation(rv)) {
     const note = el("div", "notice langfuse-evaluation-note");
     note.append(el("strong", null, "Task evaluation is optional"), el("p", null, langfuseEvaluationHelp(run.evaluation_summary)));
     const help = el("details"); help.append(el("summary", null, "How to add task evaluation"), el("p", "engineer-hint", "Import a trace export with an evaluation results file containing explicit pass/fail checks. AI review analyzes behavior; it does not supply missing verification.")); note.append(help);
     main.append(note);
   }
-  if (run.harness_version !== "langfuse-export") renderInvestigationComposer(main);
 
   if (rv.watermark) { const w = el("div", "watermark callout callout-warn"); w.append(icon("alert-triangle", "watermark-icon"), document.createTextNode(" " + rv.watermark)); main.append(w); }
   // Not-reviewable routing (§4.15): the capture is too incomplete for a
@@ -202,7 +220,7 @@ function render() {
     if (!m.available) markSpan.textContent = "–";
     else if (m.corrected) markSpan.textContent = "~";
     else if (state.viewed.has(id) && !current) markSpan.append(icon("check"));
-    else markSpan.textContent = "•";
+    else markSpan.hidden = true;
     b.append(markSpan, el("span", "ochip-label", label));
     b.title = m.available ? label : label + " · Not available — " + m.reason;
     b.setAttribute("aria-current", current ? "step" : "false");
@@ -427,7 +445,13 @@ function renderShellMeta(rv) {
     }
     // These chips switch which reviewer's snapshot is served; comparing two
     // reviews side by side lives in the unified "Compare" control by the tabs.
-    wrap.append(flip);
+    // When the active tab already names the review mode, the mode chip would
+    // say the same thing twice, so the tab takes its place and its tooltip.
+    const activeTab = flip.querySelector(".flip-tab.active");
+    if (activeTab && activeTab.textContent === modeChip.textContent) {
+      activeTab.title = modeChip.title;
+      modeChip.replaceWith(flip);
+    } else modeChip.after(flip);
   } else if (rv.review_status !== "review_failed") {
     // GR-1: no model snapshot is served. "No model review" is the clear,
     // first-class label when nothing is configured; a failed or early-stopped

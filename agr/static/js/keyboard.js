@@ -131,6 +131,15 @@ function goToRuns() {
 }
 document.addEventListener("click", e => { if (!e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
 document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (runPickerDialog.open) closeRunPicker(); else openRunPicker();
+    return;
+  }
+  if (runPickerDialog.open) return;
+  // AltGr (Ctrl+Alt) and Option can produce bracket characters on non-US
+  // layouts. Keep those character shortcuts, but ignore command chords.
+  if (((e.ctrlKey || e.metaKey) && !e.altKey) || e.target.isContentEditable) return;
   if (document.querySelector(".modal-shade.open")) return;
   if (e.target.matches("input, select, textarea")) return;
   const k = e.key.toLowerCase();

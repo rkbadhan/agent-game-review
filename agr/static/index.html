@@ -24,20 +24,27 @@
     <div class="project-controls">
       <label for="project-switcher">Project</label>
       <select id="project-switcher" aria-label="Switch project"></select>
-      <button class="button primary" id="add-runs-button">Add runs</button>
+      <button class="button primary" id="add-runs-button"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#plus"></use></svg><span id="add-runs-label">Add runs</span></button>
     </div>
     <nav class="sidebar-nav">
-      <button class="sidebar-nav-item" id="home-button"><span class="sidebar-nav-label">Home</span></button>
+      <button class="sidebar-nav-item" id="home-button" title="Home">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#home"></use></svg><span class="sidebar-nav-label">Home</span></button>
+      <p class="sidebar-nav-group">Review</p>
       <button class="sidebar-nav-item" id="runs-button" title="Runs: the sweep triage queue">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#list-tree"></use></svg><span class="sidebar-nav-label">Runs</span></button>
       <button class="sidebar-nav-item" id="fleet-button" title="Patterns: tool failures and recovery episodes across every run (F)">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#layers"></use></svg><span class="sidebar-nav-label">Patterns</span></button>
       <button class="sidebar-nav-item" id="versions-button" title="Compare versions on a matched task slice (V)">
         <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#git-compare"></use></svg><span class="sidebar-nav-label">Compare versions</span></button>
-      <button class="sidebar-nav-item" id="ai-review-button" hidden><span class="sidebar-nav-label">AI review</span><span class="sidebar-badge" id="ai-review-badge" hidden></span></button>
-      <button class="sidebar-nav-item" id="sources-button"><span class="sidebar-nav-label">Sources</span></button>
-      <button class="sidebar-nav-item" id="investigations-button"><span class="sidebar-nav-label">Investigations</span></button>
-      <button class="sidebar-nav-item" id="settings-button"><span class="sidebar-nav-label">Settings</span></button>
+      <button class="sidebar-nav-item" id="ai-review-button" title="AI review" hidden>
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#sparkles"></use></svg><span class="sidebar-nav-label">AI review</span><span class="sidebar-badge" id="ai-review-badge" hidden></span></button>
+      <p class="sidebar-nav-group">Workspace</p>
+      <button class="sidebar-nav-item" id="sources-button" title="Sources">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#database"></use></svg><span class="sidebar-nav-label">Sources</span></button>
+      <button class="sidebar-nav-item" id="investigations-button" title="Investigations: saved next actions">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#bookmark"></use></svg><span class="sidebar-nav-label">Investigations</span></button>
+      <button class="sidebar-nav-item" id="settings-button" title="Settings">
+        <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#settings"></use></svg><span class="sidebar-nav-label">Settings</span></button>
     </nav>
 
     <!-- The run queue only makes sense while investigating a run — a
@@ -74,6 +81,7 @@
       <button class="icon-button mobile-toggle" id="queue-toggle" aria-label="Open menu"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#menu"></use></svg></button>
       <div class="crumbs"><span id="crumb-sweep">Sweep</span><span>›</span><strong id="crumb-task">Select a run</strong></div>
       <div class="topbar-stepper" id="topbar-stepper"></div>
+      <button class="icon-button" id="run-picker-button" aria-label="Jump to a run" title="Jump to a run (Ctrl/⌘K)"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#search"></use></svg></button>
     </div>
     <main class="review-space" id="main">
       <div class="empty" id="placeholder">Select a run to begin the review.</div>
@@ -140,6 +148,7 @@
     <div class="help-tab-panel" id="help-panel-shortcuts" role="tabpanel">
       <p>Move quickly without sacrificing evidence checks.</p>
       <div class="shortcut-grid">
+        <kbd>Ctrl / ⌘ K</kbd><span>Jump to a run by task name or run ID</span>
         <kbd>[ / ]</kbd><span>Previous / next review chapter (Overview · Key moments · Checks)</span>
         <kbd>J / K</kbd><span>Next / previous key moment</span>
         <kbd>E</kbd><span>Focus evidence for this moment</span>
@@ -223,6 +232,7 @@
 <script src="/static/js/source.js"></script>
 <script src="/static/js/trace.js"></script>
 <script src="/static/js/correct.js"></script>
+<script src="/static/js/run-picker.js"></script>
 <script src="/static/js/keyboard.js"></script>
 <script src="/static/js/workspace.js"></script>
 <script src="/static/js/ai-review.js"></script>

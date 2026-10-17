@@ -1,5 +1,13 @@
 "use strict";
 
+// Visibility preserves text measurement, so hiding a label cannot make it
+// appear to fit on the next resize. Disconnect on every full render.
+const phaseLabelObserver = new ResizeObserver(entries => {
+  for (const { target: band } of entries) {
+    const label = band.firstElementChild;
+    label.style.visibility = label.scrollWidth > label.clientWidth ? "hidden" : "visible";
+  }
+});
 const UNRESOLVED_CONTRACT = new Set(["at_risk","evidenced_violated","unknown","not_observed","in_progress"]);
 function renderTimeline(rv, moments, seqOfEvent, maxSeq) {
   const pct = seq => (maxSeq > 1 ? ((seq-1)/(maxSeq-1))*100 : 0);
@@ -17,6 +25,7 @@ function renderTimeline(rv, moments, seqOfEvent, maxSeq) {
     band.append(el("span", "phase-band-label", ph.label));
     band.addEventListener("click", () => { const i = moments.findIndex(m => m.phase_id === ph.phase_id); if (i >= 0) selectMoment(i); });
     plane.append(band);
+    phaseLabelObserver.observe(band);
   }
   wrap.append(laneRow("Phase", plane));
 

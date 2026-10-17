@@ -1,6 +1,7 @@
 """AI review progress must be visible and trackable outside the one page that started it."""
 import json
 import re
+import threading
 import time
 
 import pytest
@@ -19,7 +20,9 @@ def slow_ai(tmp_path, monkeypatch):
     for key in ("AGR_REVIEW_PROVIDER", "AGR_REVIEW_MODEL", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "AGR_REVIEW_COST_BUDGET_USD", "AGR_REVIEW_TIME_BUDGET_S"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "ui-environment-key")
-    control = {"calls": [], "delay": 0.0, "fail": set()}
+    gate = threading.Event()
+    gate.set()
+    control = {"calls": [], "delay": 0.0, "fail": set(), "gate": gate}
 
     class Offline(models._LazyModelReviewer):
         provider = "openai"
@@ -27,6 +30,8 @@ def slow_ai(tmp_path, monkeypatch):
         def _complete(self, system, user_json):
             packet = json.loads(user_json)
             control["calls"].append(packet)
+            if not gate.wait(timeout=30):
+                raise RuntimeError("Test review gate was not released")
             time.sleep(control["delay"])
             return {"moments": []}
 
@@ -36,12 +41,16 @@ def slow_ai(tmp_path, monkeypatch):
     for name in ("chess_best_move.atif.json", "contract_mismatch.atif.json", "clean_pass.atif.json", "ignored_failure.atif.json"):
         _analyzed(store, name)
     with _serving(store.root) as base:
-        yield base, control
+        try:
+            yield base, control
+        finally:
+            gate.set()
 
 
 def test_progress_is_visible_everywhere_while_a_review_runs(slow_ai):
     base, control = slow_ai
     control["delay"] = 0.8
+    control["gate"].clear()
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
@@ -79,6 +88,9 @@ def test_progress_is_visible_everywhere_while_a_review_runs(slow_ai):
         assert rows.locator(".ai-chip.ai-reviewing, .ai-chip.ai-queued").count() == rows.count()
         assert rows.locator(".ai-chip.ai-reviewed, .ai-chip.ai-none, .ai-chip.ai-failed").count() == 0
         page.get_by_label("Filter runs by AI review status").select_option("")
+        # Release the first call only after the running/queued assertions;
+        # browser speed must not decide how many runs are still waiting.
+        control["gate"].set()
         # It finishes: chips, summary and badge settle without a reload.
         expect(page.locator(".runs-row .ai-chip.ai-reviewed")).to_have_count(4, timeout=30000)
         expect(page.locator("#ai-review-badge")).to_be_hidden()
@@ -143,14 +155,14 @@ def test_a_review_can_be_stopped_and_resumed_without_repeating_work(slow_ai):
         expect(page.locator(".ai-run-row .ai-chip.ai-reviewing")).to_have_count(1)
         # Stop: takes effect between runs, so the run in flight finishes and the rest stay unreviewed.
         page.get_by_role("button", name="Cancel remaining reviews", exact=True).click()
-        expect(page.locator("#ai-job .engineer-status")).to_contain_text("cancelled", timeout=30000)
+        expect(page.locator("#ai-job .engineer-status:not(.operation-status)")).to_contain_text("cancelled", timeout=30000)
         done = page.locator(".ai-run-row .ai-chip.ai-reviewed").count()
         assert 1 <= done < 4
         assert len(control["calls"]) == done
         expect(page.locator("#ai-review-badge")).to_be_hidden()
         # Resume: only the unfinished runs are reviewed.
         page.get_by_role("button", name="Retry unfinished reviews", exact=True).click()
-        expect(page.locator("#ai-job .engineer-status")).to_contain_text("completed", timeout=30000)
+        expect(page.locator("#ai-job .engineer-status:not(.operation-status)")).to_contain_text("completed", timeout=30000)
         expect(page.locator(".ai-run-row .ai-chip.ai-reviewed")).to_have_count(4)
         assert len(control["calls"]) == 4  # nothing was paid for twice
         browser.close()
@@ -159,6 +171,7 @@ def test_a_review_can_be_stopped_and_resumed_without_repeating_work(slow_ai):
 def test_polling_keeps_keyboard_focus_and_does_not_rebuild_an_unchanged_panel(slow_ai):
     base, control = slow_ai
     control["delay"] = 3.0
+    control["gate"].clear()
     with sync_playwright() as pw:
         browser = _launch(pw)
         page = _page(browser)
@@ -168,14 +181,16 @@ def test_polling_keeps_keyboard_focus_and_does_not_rebuild_an_unchanged_panel(sl
         page.get_by_role("button", name="Preview AI review", exact=True).click()
         page.get_by_role("button", name="Start AI review · uses tokens", exact=True).click()
         expect(page.locator(".ai-run-row .ai-chip.ai-reviewing")).to_have_count(1)
+        page.wait_for_function("!state.workspace.busy")
         cancel = page.get_by_role("button", name="Cancel remaining reviews", exact=True)
         cancel.focus()
-        page.evaluate("window.__status = document.querySelector('#ai-job .engineer-status')")
+        page.evaluate("window.__status = document.querySelector('#ai-job .engineer-status:not(.operation-status)')")
         # A poll that finds nothing new leaves the panel, and so the status line, exactly as it was.
-        page.wait_for_timeout(2200)
+        page.evaluate("pollAIReview()")
         assert page.evaluate("document.body.contains(window.__status)")
+        control["gate"].set()
         # A poll that brings progress repaints it, and focus is still on the same button afterwards.
-        expect(page.locator("#ai-job .engineer-status")).to_contain_text("1/4", timeout=15000)
+        expect(page.locator("#ai-job .engineer-status:not(.operation-status)")).to_contain_text("1/4", timeout=15000)
         assert page.evaluate("document.activeElement && document.activeElement.textContent") == "Cancel remaining reviews"
         # The same on the Runs page: the summary strip's button keeps focus across a repaint.
         page.get_by_role("button", name=re.compile(r"^Runs")).first.click()
@@ -229,7 +244,7 @@ def test_focus_returns_to_the_same_run_row_not_the_first_one(slow_ai):
         wanted = page.evaluate("document.activeElement.dataset.aiKey")
         assert wanted and wanted.startswith("run:")
         # Progress repaints the panel; focus is still on the third row's button, not the first.
-        expect(page.locator("#ai-job .engineer-status")).to_contain_text("1/4", timeout=15000)
+        expect(page.locator("#ai-job .engineer-status:not(.operation-status)")).to_contain_text("1/4", timeout=15000)
         assert page.evaluate("document.activeElement.dataset.aiKey") == wanted
         browser.close()
 
@@ -251,4 +266,60 @@ def test_focus_survives_a_button_changing_its_label(slow_ai):
         expect(page.locator("#ai-activity .ai-job-status").first).to_have_text("completed", timeout=30000)
         assert page.evaluate("document.activeElement.dataset.aiKey") == key
         assert page.evaluate("document.activeElement.textContent") == "View details"
+        browser.close()
+
+
+def test_settings_pending_failed_and_unconfigured_are_distinct(slow_ai):
+    base, _ = slow_ai
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        pending = []
+        response = {"status": None, "model": ""}
+
+        def settings_route(route):
+            if response["status"] is None:
+                pending.append(route)
+            else:
+                route.fulfill(status=response["status"], json={"model": response["model"], "detail": "Invalid saved configuration"})
+
+        page.route("**/workspace/ai-review", settings_route)
+        page.goto(base + "/?view=runs")
+        page.locator(".runs-row").first.wait_for()
+        expect(page.locator('[data-ai-key="strip:activity"]')).to_be_visible()
+        expect(page.locator('[data-ai-key="strip:configure"]')).to_have_count(0)
+        expect(page.locator('[data-ai-key="strip:review"]')).to_have_count(0)
+        pending[0].fulfill(json={"model": ""})
+        expect(page.locator('[data-ai-key="strip:configure"]')).to_be_visible()
+        response["status"] = 422
+        page.evaluate("loadAIJobs()")
+        expect(page.locator('[data-ai-key="strip:configure"]')).to_have_count(0)
+        expect(page.locator('[data-ai-key="strip:review"]')).to_have_count(0)
+        response.update(status=200, model="ui-model")
+        page.evaluate("loadAIJobs()")
+        expect(page.locator('[data-ai-key="strip:review"]')).to_be_visible()
+        browser.close()
+
+
+def test_invalid_settings_do_not_hide_running_jobs_or_stop_polling(slow_ai):
+    base, control = slow_ai
+    control["delay"] = 2.0
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(base + "/?view=runs")
+        _start_review(page)
+        page.route("**/workspace/ai-review", lambda route: route.fulfill(status=422, json={"detail": "Invalid saved configuration"}))
+        page.goto(base + "/?view=runs")
+        expect(page.locator(".ai-strip-active")).to_be_visible()
+        expect(page.locator("#ai-review-badge")).to_be_visible()
+        expect(page.locator(".runs-row .ai-chip.ai-reviewing")).to_have_count(1)
+        expect(page.locator('[data-ai-key="strip:configure"]')).to_have_count(0)
+        expect(page.locator('[data-ai-key="strip:review"]')).to_have_count(0)
+        expect(page.locator(".ai-strip-active")).to_contain_text("1 of 4 runs", timeout=15000)
+        assert page.evaluate("state.ai.settings === null")
+        assert page.evaluate("state.ai.jobs.length > 0")
+        # The full settings-page loader must preserve the job list as well.
+        result = page.evaluate("async () => { await loadAIReviewData(); return {jobs:state.ai.jobs.length, settings:state.ai.settings, error:state.ai.error}; }")
+        assert result["jobs"] > 0 and result["settings"] is None and result["error"]
         browser.close()

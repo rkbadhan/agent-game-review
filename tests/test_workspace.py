@@ -919,6 +919,19 @@ def test_json_io_retries_transient_windows_sharing_errors(tmp_path, monkeypatch)
     assert read_attempts == 3 and write_attempts == 2
 
 
+def test_default_project_label_upgrades_without_renaming_custom_projects(client):
+    ws = client.app.state.workspace
+    settings = ws.settings()
+    assert settings["projects"][0]["name"] == "Local runs"
+    settings["projects"][0]["name"] = "Existing runs"
+    atomic_json(ws.root / "workspace.json", settings)
+    assert client.get("/workspace").json()["projects"][0]["name"] == "Local runs"
+    client.patch("/projects/existing", json={"name": "My evaluation runs"}).raise_for_status()
+    assert client.get("/workspace").json()["projects"][0]["name"] == "My evaluation runs"
+    client.patch("/projects/existing", json={"name": "Existing runs"}).raise_for_status()
+    assert client.get("/workspace").json()["projects"][0]["name"] == "Existing runs"
+
+
 def test_submitted_preview_reports_existing_job_and_does_not_create_another(client, project):
     manifest = preview(client, project, "atif", {"a.json": doc(), "b.json": doc("stuck_retry")}).json()
     first = finish(client, project, submit(client, project, manifest).json())
