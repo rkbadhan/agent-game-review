@@ -97,16 +97,20 @@ function aiJobSummary(job) {
 async function loadAIReviewData() {
   const project = state.projectId, token = ++state.ai.token;
   try {
-    const [settings, jobs] = await Promise.all([
+    const [settingsResult, jobsResult] = await Promise.allSettled([
       api("/workspace/ai-review"), api(projectPath("/ai-reviews"))
     ]);
     if (project !== state.projectId || token !== state.ai.token) return;
-    state.ai.settings = settings; state.ai.jobs = sortAIJobs(jobs.jobs); state.ai.error = null;
-    if (!state.ai.draft && !settings.read_only) {
+    const settings = settingsResult.status === "fulfilled" ? settingsResult.value : null;
+    state.ai.settings = settings;
+    state.ai.error = settingsResult.status === "rejected" ? settingsResult.reason.message
+      : jobsResult.status === "rejected" ? jobsResult.reason.message : null;
+    if (jobsResult.status === "fulfilled") state.ai.jobs = sortAIJobs(jobsResult.value.jobs);
+    if (settings && !state.ai.draft && !settings.read_only) {
       state.ai.draft = Object.fromEntries(["provider", "model", "base_url", "cost_budget_usd", "time_budget_s", "request_timeout_s"].map(k => [k, settings[k]]));
     }
     const jobId = new URLSearchParams(location.search).get("review_job");
-    if (jobId && !state.ai.job) state.ai.job = jobs.jobs.find(j => j.id === jobId) || null;
+    if (jobId && !state.ai.job) state.ai.job = state.ai.jobs.find(j => j.id === jobId) || null;
     const finished = settleAIJobs();
     refreshAIViews();
     if (state.ai.jobs.some(aiJobActive)) pollAIReview();
@@ -116,14 +120,19 @@ async function loadAIReviewData() {
   }
 }
 function sortAIJobs(jobs) { return jobs.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")); }
-// Loads the project's jobs for the badge and the Runs page without touching settings; safe to call on any view.
+// Load effective settings too: the Runs CTA must know whether a model is selected.
 async function loadAIJobs() {
   if (aiReadOnly() || (state.workspace && state.workspace.unavailable) || !state.projectId) return;
   const project = state.projectId, token = ++state.ai.pollToken;
   try {
-    const data = await api("/projects/" + encodeURIComponent(project) + "/ai-reviews");
+    // A malformed configuration must not hide jobs already accepted with
+    // their own saved settings, or stop their badge/chips/polling updates.
+    const [jobsResult, settingsResult] = await Promise.allSettled([
+      api("/projects/" + encodeURIComponent(project) + "/ai-reviews"), api("/workspace/ai-review")
+    ]);
     if (project !== state.projectId || token !== state.ai.pollToken) return;
-    state.ai.jobs = sortAIJobs(data.jobs);
+    state.ai.settings = settingsResult.status === "fulfilled" ? settingsResult.value : null;
+    if (jobsResult.status === "fulfilled") state.ai.jobs = sortAIJobs(jobsResult.value.jobs);
     if (state.ai.job) state.ai.job = state.ai.jobs.find(j => j.id === state.ai.job.id) || state.ai.job;
     const finished = settleAIJobs();
     refreshAIViews();
@@ -133,6 +142,14 @@ async function loadAIJobs() {
 }
 // Settings are shared defaults and reviews only add snapshots, so every project
 // of a writable local server can configure and run AI review.
+async function configureAIReview() {
+  await goEngineer("settings");
+  // goEngineer focuses the page heading on the next frame; focus the model
+  // after that navigation has settled, provided the reader is still here.
+  await new Promise(requestAnimationFrame);
+  const model = state.view === "settings" && $("#ai-review-model");
+  if (model) { model.scrollIntoView({ block: "center" }); model.focus(); }
+}
 function aiReadOnly() {
   return state.serverReadOnly;
 }
@@ -184,6 +201,7 @@ function renderAISettings(host) {
   endpoint.required = true;
   workspaceField(form, "API key (optional; server session only)", draft.api_key || "", v => draft.api_key = v, "password").autocomplete = "off";
   const model = workspaceField(form, "Reviewer model ID", draft.model, v => { draft.model = v; ai.plan = null; });
+  model.id = "ai-review-model";
   model.required = true; model.placeholder = "Load models or enter a model ID";
   const pick = el("div", "engineer-actions");
   pick.append(workspaceButton("Load models", () => aiAction(async () => {
@@ -381,7 +399,7 @@ function renderAIStrip(host) {
   const runs = ((state.queue && state.queue.runs) || []).filter(r => !state.importRunIds || state.importRunIds.has(r.run_id));
   const counts = aiCounts(runs), active = activeAIJob();
   const todo = runs.filter(r => ["none", "failed"].includes(aiRunState(r.run_id, r)));
-  const signature = JSON.stringify([counts, active && [active.id, active.total, (active.results || []).length, active.current_run], todo.map(r => r.run_id)]);
+  const signature = JSON.stringify([state.ai.settings ? !!state.ai.settings.model : null, counts, active && [active.id, active.total, (active.results || []).length, active.current_run], todo.map(r => r.run_id)]);
   aiPaint(host, signature, () => paintAIStrip(host, runs, counts, active, todo));
 }
 function paintAIStrip(host, runs, counts, active, todo) {
@@ -399,7 +417,9 @@ function paintAIStrip(host, runs, counts, active, todo) {
     strip.append(line);
   }
   const actions = el("div", "ai-strip-actions");
-  if (todo.length) actions.append(aiKeyed(workspaceButton("Review " + todo.length.toLocaleString() + " not yet reviewed with AI", () => openAIReview(todo.map(r => r.run_id).slice(0, 1000)), !active), "strip:review"));
+  if (state.ai.settings && !state.ai.settings.model) {
+    actions.append(aiKeyed(workspaceButton("Configure AI review", configureAIReview, true), "strip:configure"));
+  } else if (state.ai.settings && todo.length) actions.append(aiKeyed(workspaceButton("Review " + todo.length.toLocaleString() + " not yet reviewed with AI", () => openAIReview(todo.map(r => r.run_id).slice(0, 1000)), !active), "strip:review"));
   actions.append(aiKeyed(workspaceButton("AI review activity", () => { state.ai.job = null; goEngineer("ai-review"); }), "strip:activity"));
   strip.append(actions); host.append(strip);
 }

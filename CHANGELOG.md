@@ -90,6 +90,30 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Changed
 
+- Fix UI follow-up review findings: AI jobs keep tracking when settings are
+  invalid, setup actions wait for settings, AltGr/Option chapter shortcuts
+  work, authored findings retain their explanations, and the run picker keeps
+  its loading state and briefly reuses rows until its inbox changes. Preserve explicit
+  project names and show a distinct model verdict on moment cards.
+
+- Complete the UI follow-ups: check-name finding labels, model-aware AI setup
+  action, Local runs default project name, compact phone review details,
+  concise moment-kind pills, phase labels that hide when too narrow, a
+  separate archive section, and a project-scoped Ctrl/⌘K run picker.
+
+- **UI polish pass on the screens added since the redesign.** Every sidebar
+  item has an icon (the collapsed rail no longer shows letter placeholders),
+  and the nav is grouped into Review and Workspace. On a run, **Run AI review**
+  and **Save next action** sit together in one row under the header instead of
+  floating at the page edge, the reviewer switcher is chip-sized, and the
+  review-mode chip is no longer repeated next to the same switcher tab. Chapter
+  tabs lose their leading dots. Key-moment markers are no longer clipped by the
+  timeline lane. The Runs table keeps each outcome on two lines, shows "Not
+  reviewed" as quiet text, and no longer pushes Duration past the card's edge;
+  the AI review strip is one row. Home, Add runs and Settings use the shared
+  type scale, source cards lead with a bold name and lift on hover, and button
+  labels are a size larger. On a phone, the Runs search and sort controls no
+  longer overflow their card.
 - Reviewer settings now display concrete effective values and their sources.
   Environment overrides are consistent across provider/model/endpoint/limits;
   changing providers clears incompatible saved fields. Cost/time targets and

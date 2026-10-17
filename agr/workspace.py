@@ -142,7 +142,7 @@ class Workspace:
         if not read_only:
             with self.write_lock():
                 if not (self.root / "workspace.json").exists():
-                    atomic_json(self.root / "workspace.json", {"reviewer": "Local reviewer", "last_project": "existing", "projects": [{"id": "existing", "name": "Existing runs", "created_at": now(), "archived": False, "sample": False}]})
+                    atomic_json(self.root / "workspace.json", {"reviewer": "Local reviewer", "last_project": "existing", "projects": [{"id": "existing", "name": "Local runs", "created_at": now(), "archived": False, "sample": False}]})
                 # An interrupted process cannot claim that its work finished.
                 for path in (self.root / "jobs").glob("*.json"):
                     job = self._read(path)
@@ -168,7 +168,12 @@ class Workspace:
     def settings(self):
         if self.read_only:
             return {"reviewer": "Local reviewer", "last_project": "existing", "projects": [{"id": "existing", "name": "Sample data", "sample": True, "archived": False}]}
-        return self._read(self.root / "workspace.json")
+        settings = self._read(self.root / "workspace.json")
+        # Upgrade the old default label without changing user-named projects.
+        for project in settings["projects"]:
+            if project["id"] == "existing" and project["name"] == "Existing runs" and not project.get("updated_at"):
+                project["name"] = "Local runs"
+        return settings
 
     def project(self, project_id):
         for project in self.settings()["projects"]:

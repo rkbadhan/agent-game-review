@@ -14,20 +14,15 @@ function runsMatchesSearch(r, q) {
   if (!needle) return true;
   return (runDisplayName(r)).toLowerCase().includes(needle) || (r.task_id || "").toLowerCase().includes(needle) || (r.run_id || "").toLowerCase().includes(needle);
 }
-// R3 (coordinator review 2, item 2): a boilerplate main_finding must not
-// fall back to a verdict-shaped sentence here — the Outcome column already
-// shows the status badge and its own "X/Y checks" line right next to this
-// one, so "Failed — 0/1 checks." simply repeated it. chapters.js/moments.js
-// can fall back to a moment-specific "<Kind> during <Phase>" headline because
-// they hold the full moment (kind, phase_id, anchor step); this table's row
-// is the lightweight queue summary (agr/read.py's list_runs) — outcome
-// status/passed/total only, no moment kind or phase — and adding either
-// would mean changing that backend summary, out of scope here. The honest
-// fallback is a plain "no finding text" statement, styled the same as the
-// "no finding at all" case below, rather than fabricating check names this
-// row does not carry.
+// Shorten only the known verifier template; keep authored findings intact.
+// The full persisted summary remains the cell's tooltip and review text.
 function runRowFindingText(r) {
   const finding = r.main_finding;
+  const match = /^Requirement check (.+?) (?:failed (?:the run's final verifier|an in-session observation)(?: \(expected [\s\S]*, observed [\s\S]*\))?; the agent's trace records no observation of this check\.|was still failing at submission(?: \(expected [\s\S]*, observed [\s\S]*\))?\.)$/.exec(finding || "");
+  if (match) {
+    const check = (r.main_finding_checks || []).find(c => c.check_id === match[1] && c.name);
+    if (check) return check.check_id + " · " + check.name;
+  }
   return groundedBoilerplateIds(finding) ? (r.main_finding_title ? humanizeToken(r.main_finding_title) : null) : finding;
 }
 

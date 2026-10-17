@@ -1024,6 +1024,15 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
         # closed action window even when earlier strengths were selected.
         if outcome_context and outcome_context["leads_overview"]:
             main_finding_moment = None
+        # Only carry names for this finding's own linked checks. Display code
+        # can shorten verifier boilerplate without guessing names or rewriting
+        # the persisted review summary.
+        finding_check_ids = set((main_finding_moment or {}).get("affected_checks") or [])
+        finding_checks = [
+            {"check_id": c["check_id"], "name": c.get("name")}
+            for c in _read(store, run_id, capture_id, "checks.json", [])
+            if c.get("check_id") in finding_check_ids
+        ] if finding_check_ids else []
         summaries.append({
             "run_id": run_id,
             "task_id": rs.get("task_id"),
@@ -1070,6 +1079,7 @@ def _list_runs_uncached(store: Store, run_ids=None) -> list[dict]:
             "verification": _verification_summary(capabilities, outcome),
             "review_mode": _review_mode(review_moments, entry.get("capture_completeness")),
             "outcome_context": outcome_context,
+            "main_finding_checks": finding_checks,
             "main_finding_title": (main_finding_moment or {}).get("taxonomy_verdict"),
             "main_finding": ((main_finding_moment or {}).get("summary")
                              or (outcome_context or {}).get("headline")),

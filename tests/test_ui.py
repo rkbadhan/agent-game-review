@@ -135,7 +135,7 @@ def test_default_entry_opens_project_home(server):
         browser = _launch(pw)
         page = _page(browser)
         page.goto(server)
-        page.get_by_role("heading", name="Existing runs", exact=True).wait_for()
+        page.get_by_role("heading", name="Local runs", exact=True).wait_for()
         assert _query(page.url)["view"] == ["home"]
         assert page.query_selector(".run-header") is None
         page.click("#runs-button")
@@ -2312,6 +2312,112 @@ def test_patterns_render_while_inbox_and_supporting_cards_are_pending(tmp_path):
         browser.close()
 
 
+def test_run_picker_searches_beyond_filters_and_restores_focus(server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(server + "/?view=runs&filter=passed")
+        page.wait_for_selector(".runs-empty")
+        page.locator(".runs-search").fill("nothing")
+        page.keyboard.press("Control+k")
+        search = page.get_by_role("combobox", name="Search runs")
+        search.fill("chess-best-move")
+        page.get_by_role("option", name="chess-best-move", exact=False).wait_for()
+        assert page.locator(".run-picker-option").count() == 1
+        page.keyboard.press("Escape")
+        assert not page.locator(".run-picker").is_visible()
+        assert page.locator(".runs-search").evaluate("e => e === document.activeElement")
+        assert "view=runs" in page.url
+        page.keyboard.press("Control+k")
+        search.fill("chess_best_move__seed42")
+        page.get_by_role("option", name="chess-best-move", exact=False).wait_for()
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".run-header")
+        assert CHESS in page.url
+        assert "filter=passed" in page.url
+        assert not errors
+        browser.close()
+
+
+def test_run_picker_is_scoped_to_the_active_project(server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server)
+        page.get_by_role("heading", name="Local runs", exact=True).wait_for()
+        project = page.evaluate("async () => (await apiPost('/projects', {name:'Empty project'})).id")
+        page.evaluate("async () => { state.projects = (await api('/workspace')).projects; }")
+        page.evaluate("id => switchProject(id)", project)
+        page.get_by_role("heading", name="Empty project", exact=True).wait_for()
+        page.click("#run-picker-button")
+        page.get_by_role("status").filter(has_text="No matching runs").wait_for()
+        assert page.locator(".run-picker-option").count() == 0
+        page.keyboard.press("Escape")
+        page.select_option("#project-switcher", "existing")
+        page.get_by_role("heading", name="Local runs", exact=True).wait_for()
+        page.click("#run-picker-button")
+        page.get_by_role("option", name="chess-best-move", exact=False).wait_for()
+        assert page.locator(".run-picker-option").count() == 2
+        browser.close()
+
+
+def test_ui_followups_configure_ai_and_separate_archive(server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        configured = {"model": ""}
+
+        def settings_route(route):
+            response = route.fetch()
+            data = response.json()
+            data["model"] = configured["model"]
+            route.fulfill(response=response, json=data)
+
+        page.route("**/workspace/ai-review", settings_route)
+        page.goto(server + "/?view=runs")
+        page.locator('[data-ai-key="strip:configure"]').click()
+        model = page.get_by_label("Reviewer model ID", exact=True)
+        model.wait_for()
+        page.wait_for_function("document.activeElement.id === 'ai-review-model'")
+        assert page.locator(".engineer-surface > :last-child").get_attribute("class") == "engineer-card project-danger"
+        page.locator(".project-danger .button.danger").click()
+        page.get_by_role("button", name="Restore project", exact=True).wait_for()
+        page.get_by_role("button", name="Restore project", exact=True).click()
+        page.get_by_role("button", name="Archive project", exact=True).wait_for()
+        configured["model"] = "test-reviewer"
+        page.goto(server + "/?view=runs")
+        page.locator('[data-ai-key="strip:review"]').wait_for()
+        assert page.locator('[data-ai-key="strip:configure"]').count() == 0
+        browser.close()
+
+
+def test_ui_followups_mobile_details_phase_labels_and_finding_text(server):
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser, viewport={"width": 390, "height": 844})
+        page.goto(server + "/?run=" + CHESS + "&chapter=moments")
+        page.wait_for_selector(".moment-card")
+        details = page.locator(".run-review-details")
+        assert details.get_attribute("open") is None
+        assert not page.locator(".shell-meta").is_visible()
+        details.locator("summary").click()
+        assert page.locator(".shell-meta").is_visible()
+        page.set_viewport_size({"width": 1440, "height": 900})
+        assert details.evaluate("e => e.open")
+        assert not details.locator("summary").is_visible()
+        assert page.locator(".moment-kind").inner_text() == page.evaluate("humanizeToken(currentMoment().kind)")
+        assert page.evaluate("runRowFindingText({main_finding: 'Requirement check C1 was still failing at submission.', main_finding_checks: [{check_id:'C1',name:'Binary exists at /app/bin'}]})") == "C1 · Binary exists at /app/bin"
+        assert page.evaluate("runRowFindingText({main_finding: 'Authored finding', main_finding_checks: [{check_id:'C1',name:'Binary exists'}]})") == "Authored finding"
+        band = page.locator(".phase-band").first
+        band.evaluate("e => { e.style.width = '20px'; }")
+        page.wait_for_function("getComputedStyle(document.querySelector('.phase-band-label')).visibility === 'hidden'")
+        band.evaluate("e => { e.style.width = '350px'; }")
+        page.wait_for_function("getComputedStyle(document.querySelector('.phase-band-label')).visibility === 'visible'")
+        browser.close()
+
+
 def test_review_tabs_support_keyboard_and_source_browser_back(server):
     from playwright.sync_api import expect
     with sync_playwright() as pw:
@@ -2340,4 +2446,90 @@ def test_review_tabs_support_keyboard_and_source_browser_back(server):
         page.go_back()
         expect(overview).to_have_attribute("aria-selected", "true")
         expect(page.get_by_role("tabpanel")).to_be_visible()
+        browser.close()
+
+
+@pytest.mark.parametrize("modifiers", [{"ctrlKey": True, "altKey": True}, {"altKey": True}])
+def test_chapter_shortcuts_accept_altgr_and_option_characters(server, modifiers):
+    from playwright.sync_api import expect
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server + "/?run=" + CHESS + "&chapter=outcome")
+        page.wait_for_selector(".run-header")
+        page.evaluate("modifiers => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:']', ...modifiers}))", modifiers)
+        expect(page.get_by_role("tab", name="Key moments")).to_have_attribute("aria-selected", "true")
+        page.evaluate("modifiers => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'[', ...modifiers}))", modifiers)
+        expect(page.get_by_role("tab", name="Overview")).to_have_attribute("aria-selected", "true")
+        page.evaluate("document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true,key:']',ctrlKey:true}))")
+        expect(page.get_by_role("tab", name="Overview")).to_have_attribute("aria-selected", "true")
+        browser.close()
+
+
+def test_finding_labels_shorten_complete_templates_and_preserve_authored_explanations(server):
+    from agr.reviewer import render as render_statement
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server + "/?view=runs")
+        page.wait_for_selector(".runs-row")
+        check = {"check_id": "C1", "name": "Binary exists at /app/bin"}
+        for observed in (False, True):
+            for detail in ({}, {"expected": ["/app/bin"], "observed": []}):
+                for basis in (None, "in_session_observation"):
+                    text = render_statement({"type": "requirement_status", "check_id": "C1", "status": "failed", "agent_observed_failure": observed, "status_basis": basis, **detail}, "direct", "negative")
+                    row = {"main_finding": text, "main_finding_checks": [check]}
+                    assert page.evaluate("row => runRowFindingText(row)", row) == "C1 · Binary exists at /app/bin"
+        for text in (
+            "Requirement check C1 failed because the binary was built in /tmp instead of /app/bin",
+            "Requirement check C1 was still failing at submission because the binary was in /tmp.",
+            text + " The binary was built in /tmp.",
+        ):
+            assert page.evaluate("row => runRowFindingText(row)", {"main_finding": text, "main_finding_checks": [check]}) == text
+        browser.close()
+
+
+def test_run_picker_keeps_loading_text_and_invalidates_cached_rows_with_inbox(server):
+    from playwright.sync_api import expect
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        pending = []
+        page.route("**/runs", lambda route: pending.append(route))
+        page.goto(server + "/?view=runs")
+        page.wait_for_selector(".runs-row")
+        with page.expect_request(lambda request: request.url.endswith("/runs")):
+            page.click("#run-picker-button")
+        page.get_by_role("combobox", name="Search runs").fill("chess")
+        expect(page.locator(".run-picker-status")).to_have_text("Loading runs…")
+        assert page.locator(".run-picker-option").count() == 0
+        pending[0].fulfill(response=pending[0].fetch())
+        expect(page.locator(".run-picker-option")).to_have_count(1)
+        page.keyboard.press("Escape")
+        page.click("#run-picker-button")
+        expect(page.locator(".run-picker-option")).to_have_count(2)
+        assert len(pending) == 1
+        page.keyboard.press("Escape")
+        page.evaluate("loadInbox()")
+        with page.expect_request(lambda request: request.url.endswith("/runs")):
+            page.click("#run-picker-button")
+        expect(page.locator(".run-picker-status")).to_have_text("Loading runs…")
+        assert len(pending) == 2
+        pending[1].fulfill(response=pending[1].fetch())
+        expect(page.locator(".run-picker-option")).to_have_count(2)
+        browser.close()
+
+
+def test_moment_card_preserves_the_review_verdict_beside_a_distinct_kind(server):
+    from playwright.sync_api import expect
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        page.goto(server + "/?run=" + CHESS + "&chapter=moments")
+        page.wait_for_selector(".moment-card")
+        page.evaluate("() => { Object.assign(currentMoment(), {taxonomy_verdict:'strategy_drift',summary:'The agent stopped tracking its original plan.'}); render(); }")
+        expect(page.locator(".moment-verdict")).to_have_text("Review finding: Strategy drift")
+        assert "Strategy drift" in page.locator(".moment-mark").first.get_attribute("title")
+        page.evaluate("() => { currentMoment().summary = 'Strategy drift caused the plan to be abandoned.'; render(); }")
+        expect(page.locator(".moment-verdict")).to_have_count(0)
         browser.close()

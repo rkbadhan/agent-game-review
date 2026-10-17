@@ -90,7 +90,7 @@ function syncProjectChrome() {
   chooser.value = state.projectId;
   chooser.disabled = state.workspace.busy || !!state.workspace.unavailable;
   $("#add-runs-button").disabled = state.serverReadOnly || !!state.workspace.unavailable;
-  $("#add-runs-button").textContent = activeProject() && activeProject().sample ? "Analyze my runs" : "Add runs";
+  $("#add-runs-label").textContent = activeProject() && activeProject().sample ? "Analyze my runs" : "Add runs";
   $("#reviewer-avatar").textContent = state.reviewer.split(/\s+/).slice(0, 2).map(x => x[0]).join("").toUpperCase();
   $("#reviewer-avatar").title = state.reviewer + " · local display attribution";
   for (const [id, view] of [["home", "home"], ["sources", "sources"], ["investigations", "investigations"], ["settings", "settings"], ["ai-review", "ai-review"]]) $("#" + id + "-button").classList.toggle("current", state.view === view);
@@ -99,6 +99,7 @@ function syncProjectChrome() {
   if (state.workspace.unavailable) for (const id of ["home", "sources", "investigations", "settings"]) $("#" + id + "-button").disabled = true;
 }
 async function switchProject(projectId, navigate = true) {
+  closeRunPicker();
   const project = state.projects.find(p => p.id === projectId);
   if (!project) throw new Error("This project is unavailable.");
   state.workspace.token++; state.loadToken++; state.queueLoadToken++;
@@ -241,7 +242,8 @@ function renderAddRuns(host) {
     const grid = el("div", "source-grid");
     for (const source of ws.catalog || []) {
       const button = workspaceButton(source.name, () => { ws.source = source.id; ws.files = []; ws.preview = null; ws.options = {}; render(); focusWorkspace("#main h2", true); });
-      button.classList.add("source-choice"); button.append(el("span", "engineer-hint", source.help)); grid.append(button);
+      button.textContent = ""; button.classList.add("source-choice");
+      button.append(el("strong", "source-choice-name", source.name), el("span", "engineer-hint", source.help)); grid.append(button);
     } host.append(grid); return;
   }
   const source = ws.catalog.find(s => s.id === ws.source);
@@ -784,17 +786,30 @@ function renderWorkspaceSettings(host) {
     const resultProject = await apiPatch(projectPath(""), { name: state.workspace.projectDraft || project.name }); state.projects = state.projects.map(p => p.id === project.id ? resultProject : p); toast("Settings saved");
   }); }); host.append(form);
   host.append(el("p", "engineer-hint", "Connection keys are kept in memory until the AGR server stops; reconnect saved connections after a restart. Original input files are retained locally with imports. Hosted login, automatic sync, and external notifications are not enabled."));
-  if (!state.serverReadOnly) host.append(workspaceButton(project.archived ? "Restore project" : "Archive project", () => workspaceAction(async () => { const result = await apiPatch(projectPath(""), { archived: !project.archived }); state.projects = state.projects.map(p => p.id === result.id ? result : p); state.readOnly = state.serverReadOnly || !!result.sample || result.archived; })));
   renderAISettings(host);
   host.append(el("h2", "engineer-section-title", "Automate local imports"));
   host.append(el("p", "engineer-hint", "Run a CLI import against this project's store. The command uses the same adapters and deterministic engine as browser import. The storage path is shown below; source files stay under your control."));
   const storePath = (state.workspace.detail || {}).store_path;
   const command = el("pre", "engineer-command", "agr --store " + (storePath ? '"' + storePath + '"' : "<project-store>") + " ingest-from --adapter <source> <capture-file>"); host.append(command);
+  if (!state.serverReadOnly) {
+    const danger = el("section", "engineer-card project-danger");
+    danger.append(el("h2", null, "Project availability"), el("p", null,
+      project.archived ? "Restore this project to add runs and save actions again."
+        : "Archiving hides this project from the switcher and pauses edits. Its runs and saved actions are retained; you can restore it here."));
+    const archive = workspaceButton(project.archived ? "Restore project" : "Archive project", () => workspaceAction(async () => {
+      const result = await apiPatch(projectPath(""), { archived: !project.archived });
+      state.projects = state.projects.map(p => p.id === result.id ? result : p);
+      state.readOnly = state.serverReadOnly || !!result.sample || result.archived;
+    }));
+    if (!project.archived) archive.classList.add("danger");
+    danger.append(archive); host.append(danger);
+  }
 }
 
 function renderInvestigationComposer(host) {
   if (state.loading || state.readOnly || !state.review) return;
-  const disclosure = el("details", "engineer-action-composer"); disclosure.append(el("summary", null, "Save next action"));
+  const disclosure = el("details", "engineer-action-composer");
+  const summary = el("summary", "button"); summary.append(icon("bookmark"), document.createTextNode("Save next action")); disclosure.append(summary);
   const form = el("form"); const runId = state.runId, projectId = state.projectId, captureId = state.review.capture.capture_id;
   const draft = { title: "", action: "" };
   form.append(el("p", "engineer-hint", "Pin this capture and the selected finding to an action you can revisit. Saving does not execute a change or approve an experiment."));
@@ -823,7 +838,7 @@ function renderDemoStartHere(host, guide) {
   for (const [index, story] of guide.stories.entries()) {
     const card = el("article", "engineer-card demo-story");
     card.append(el("h3", null, (index + 1) + ". " + story.title), el("p", null, story.description));
-    const link = el("a", "button", "Open this story");
+    const link = el("a", "button", "Open this story"); link.append(icon("arrow-right"));
     // Generated local links carry stable run/configuration selectors; normal
     // navigation exercises the same shared-link route a video viewer follows.
     link.href = story.href;

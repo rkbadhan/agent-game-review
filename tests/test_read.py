@@ -806,3 +806,26 @@ def test_an_uncategorised_deterministic_moment_stays_uncategorised(tmp_path):
                     if m["detector"] == "required_artifact_absent")
     assert artifact["category"] is None
     assert artifact["basis"] is None
+
+
+def test_finding_summary_carries_its_linked_check_name_without_rewriting_text(tmp_path):
+    store = _store_with(tmp_path, "ignored_failure.atif.json")
+    row = read.list_runs(store)[0]
+    assert row["main_finding_checks"] == [{"check_id": "C1", "name": "Binary exists at /app/bin"}]
+    assert row["main_finding"].startswith("Requirement check C1")
+    review = read.get_review(store, row["run_id"])
+    assert row["main_finding"] in [m["summary"] for m in review["moments"]]
+
+
+def test_run_summaries_tolerate_null_finding_check_links(tmp_path, monkeypatch):
+    store = _store_with(tmp_path, "ignored_failure.atif.json")
+    original = read._run_moments
+
+    def null_links(*args, **kwargs):
+        moments, reviews, other = original(*args, **kwargs)
+        return [{**moment, "affected_checks": None} for moment in moments], reviews, other
+
+    monkeypatch.setattr(read, "_run_moments", null_links)
+    row = read.list_runs(store)[0]
+    assert row["main_finding"]
+    assert row["main_finding_checks"] == []
