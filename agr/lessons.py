@@ -39,7 +39,7 @@ import time
 from typing import Optional
 
 from . import taxonomy, version
-from .store import Store
+from .store import Store, run_locked
 
 LESSONS_RECORD = "lessons.json"
 
@@ -168,6 +168,7 @@ def _find(lessons: list[dict], lesson_id: str) -> Optional[dict]:
 # --- writes ------------------------------------------------------------------
 
 
+@run_locked
 def create_lesson(
     store: Store,
     run_id: str,
@@ -265,6 +266,7 @@ def _bump(lesson: dict, *, actor: Optional[str], now: str,
     })
 
 
+@run_locked
 def set_lesson_status(
     store: Store,
     run_id: str,
@@ -359,6 +361,7 @@ def _experiment_proposal(lesson: dict) -> dict:
     }
 
 
+@run_locked
 def propose_experiment(
     store: Store,
     run_id: str,
@@ -393,6 +396,7 @@ def propose_experiment(
     return lesson
 
 
+@run_locked
 def approve_experiment(
     store: Store,
     run_id: str,
@@ -434,6 +438,7 @@ def approve_experiment(
 EXPERIMENT_RESULTS = ("validated", "failed", "inconclusive")
 
 
+@run_locked
 def record_experiment_outcome(
     store: Store,
     run_id: str,

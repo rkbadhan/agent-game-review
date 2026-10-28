@@ -214,3 +214,34 @@ def test_cli_ingest_langfuse_api_fetches_and_ingests(monkeypatch, tmp_path):
     ])
     assert rc == 0
     assert calls == {"trace_id": "trace-live-1", "host": "http://localhost:3000"}
+
+
+# --- trace-list previews are a redaction boundary -----------------------------
+
+def test_trace_previews_redact_secrets_before_truncating():
+    from agr import langfuse_v2
+    secret = "sk-proj-AbCdEfGhIj_KlMnOp-QrStUvWxYz0123456789abcdEFGH"
+    # The secret straddles the 160-char preview cut: truncating first would leave a prefix.
+    straddling = "x" * 150 + " " + secret
+    row = {
+        "input": {"messages": [{"role": "user", "content": f"use {secret}"}], "password": "hunter2-fake"},
+        "output": straddling,
+        "metadata": {"OPENAI_API_KEY": "hunter2-fake", "note": f"token={secret}", secret: "k"},
+    }
+    extras = langfuse_v2.trace_extras(row, (), ())
+    dumped = json.dumps(extras)
+    assert secret not in dumped and "sk-proj" not in dumped and "hunter2-fake" not in dumped
+    assert "[REDACTED:openai_key]" in extras["input_preview"]
+    assert extras["metadata"]["OPENAI_API_KEY"] == "[REDACTED:credential_assignment]"
+    assert langfuse_v2.metadata_summary(json.dumps({"password": "hunter2-fake"})) == {
+        "password": "[REDACTED:credential_assignment]"}
+
+
+def test_trace_previews_leave_ordinary_content_alone():
+    from agr import langfuse_v2
+    row = {"input": "fix the failing test in app.py", "output": {"ok": True, "n": 3},
+           "metadata": {"model": "claude", "max_tokens": 4096}}
+    extras = langfuse_v2.trace_extras(row, (), ())
+    assert extras["input_preview"] == "fix the failing test in app.py"
+    assert extras["output_preview"] == '{"ok": true, "n": 3}'
+    assert extras["metadata"] == {"model": "claude", "max_tokens": "4096"}

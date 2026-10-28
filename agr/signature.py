@@ -12,6 +12,7 @@ model-enriched signatures and does not appear in this deterministic core.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 # Result / interpretation vocabularies kept aligned with the spec example.
@@ -53,14 +54,19 @@ class SignatureRow:
 def _requirement_rows(checks) -> list[SignatureRow]:
     rows: list[SignatureRow] = []
     for c in checks:
-        if c.status == "passed":
+        # AGR-02: the CURRENT (reconciled) view, as outcome() reads it. A check
+        # a later same-scope observation superseded has no effective status, and
+        # a pass made stale by a later mutation demotes to "unknown"; neither is
+        # current signature evidence, and neither may be scored as a pass/fail.
+        status = c.effective_status
+        if status == "passed":
             result, interp = RESULT_SUCCESS, INTERP_POSITIVE
-        elif c.status == "failed":
+        elif status == "failed":
             result, interp = RESULT_FAILED, INTERP_NEGATIVE
         else:
-            continue  # skipped/unknown checks are not signature evidence
+            continue  # superseded/stale/skipped/unknown checks are not signature evidence
         observed = c.name
-        if c.status == "failed" and c.expected is not None:
+        if status == "failed" and c.expected is not None:
             observed = f"expected {c.expected}, observed {c.observed}"
         rows.append(SignatureRow(
             ability=c.name,
@@ -118,6 +124,92 @@ def _recovery_row(analysis) -> SignatureRow:
     )
 
 
+# What counts as a verification action: a tool call that RUNS a test runner,
+# linter, type checker, verifier script or compare/hash command. The command is
+# split into its simple commands and classified by what it executes, so naming
+# a tool (`which pytest`, `pip install mypy`) or a file (`cat test.py`,
+# `git checkout`) is not verification.
+_COMMAND_SPLIT_RE = re.compile(r"&&|\|\||[;|\n]")
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_]\w*=")
+_RUNNER_WRAPPERS = (("uv", "run"), ("poetry", "run"), ("pipenv", "run"), ("pnpm", "exec"), ("bundle", "exec"))
+_SKIPPED_WORDS = {"sudo", "time", "nohup", "xargs", "npx", "bunx"}
+_VERIFY_EXECUTABLES = {
+    "pytest", "py.test", "nosetests", "tox", "nox", "jest", "vitest", "mocha", "rspec", "phpunit", "ctest",
+    "mypy", "pyright", "tsc", "eslint", "ruff", "flake8", "pylint", "shellcheck",
+    "diff", "cmp", "sha1sum", "sha256sum", "md5sum",
+}
+_VERIFY_SUBCOMMANDS = {
+    "npm": {"test", "check", "lint", "verify"}, "yarn": {"test", "check", "lint", "verify"},
+    "pnpm": {"test", "check", "lint", "verify"},
+    "cargo": {"test", "check", "clippy"}, "go": {"test", "vet"},
+    "bun": {"test"}, "deno": {"test"},
+    "mvn": {"test", "verify"}, "gradle": {"test", "check"}, "gradlew": {"test", "check"},
+    "dotnet": {"test"},
+}
+_PYTHON_RE = re.compile(r"^python[\d.]*$")
+_SCRIPT_INTERPRETERS = {"bash", "sh", "zsh", "node", "ruby", "perl"}
+# A script whose name says what it does: check.sh, verify_output.py, run_tests.sh.
+_VERIFY_SCRIPT_RE = re.compile(
+    r"^(?:run[_-]?)?(?:check|verify|validate|grade|tests?)[\w.-]*\.(?:py|sh|js|ts|rb)$|^run[_-]?tests?\.\w+$")
+# A tool whose own name says it verifies, e.g. run_tests or verify_answer.
+_VERIFY_TOOL_RE = re.compile(r"^(?:run_)?(?:tests?|pytest|unittests?)$|^(?:verify|validate|verifier|validator)(?:_\w+)?$")
+
+
+def _is_verification_command(command: str) -> bool:
+    for simple in _COMMAND_SPLIT_RE.split(command):
+        words = simple.split()
+        while words:
+            if words[0] in _SKIPPED_WORDS or _ENV_ASSIGNMENT_RE.match(words[0]):
+                words = words[1:]
+            elif tuple(words[:2]) in _RUNNER_WRAPPERS and len(words) > 2:
+                words = words[2:]
+            else:
+                break
+        if not words:
+            continue
+        head = words[0].rsplit("/", 1)[-1].lower()
+        rest = [w for w in words[1:] if not w.startswith("-")]
+        if head in _VERIFY_EXECUTABLES:
+            return True
+        if head in _VERIFY_SUBCOMMANDS:
+            sub = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else (rest[0] if rest else "")
+            if sub in _VERIFY_SUBCOMMANDS[head]:
+                return True
+        elif head == "make":
+            if {"test", "tests", "check", "verify"} & set(rest):
+                return True
+        elif head in ("test", "[") and words[1:2] and words[1] in ("-e", "-f", "-s", "-d"):
+            return True
+        elif _PYTHON_RE.match(head):
+            if words[1:3] and words[1] == "-m" and words[2] in ("pytest", "unittest", "doctest"):
+                return True
+            if rest and _VERIFY_SCRIPT_RE.match(rest[0].rsplit("/", 1)[-1].lower()):
+                return True
+        elif head in _SCRIPT_INTERPRETERS:
+            if rest and _VERIFY_SCRIPT_RE.match(rest[0].rsplit("/", 1)[-1].lower()):
+                return True
+        elif (words[0].startswith(("./", "/")) or words[0].endswith(".sh")) and _VERIFY_SCRIPT_RE.match(head):
+            return True  # a script run directly, e.g. ./check.sh
+    return False
+
+
+def _is_verification_action(event) -> bool:
+    if event.event_type == "verifier_check":
+        return True
+    # Only the call states what was run; a result's output can mention anything
+    # ("check" in a log line, a path) without a verification having happened.
+    if event.event_type != "tool_call":
+        return False
+    tool = event.payload.get("tool")
+    if isinstance(tool, str):
+        # camelCase and kebab-case tool names normalise to snake_case words.
+        name = re.sub(r"[^a-z0-9]+", "_", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", tool).lower()).strip("_")
+        if _VERIFY_TOOL_RE.match(name):
+            return True
+    command = event.payload.get("content")
+    return isinstance(command, str) and _is_verification_command(command)
+
+
 def _verification_row(analysis) -> SignatureRow:
     verify_opp = next((o for o in analysis.opportunities if o.trigger == "required_artifact_exists"), None)
     if verify_opp is None:
@@ -128,16 +220,13 @@ def _verification_row(analysis) -> SignatureRow:
             interpretation=INTERP_NOT_MEASURED,
             measured=False,
         )
-    # A verification action = a verifier_check event, or a tool call re-reading
-    # the artifact, occurring within the opportunity window.
+    # A verification action = a verifier_check event, or a tool call that runs
+    # a test/check/compare command, occurring within the opportunity window.
     ids = [e.event_id for e in analysis.events]
     start, end = ids.index(verify_opp.start_event_id), ids.index(verify_opp.end_event_id)
     window = analysis.events[start:end + 1]
-    verified = any(
-        e.event_type == "verifier_check"
-        or (e.event_type in ("tool_call", "tool_result") and "check" in e.text().lower())
-        for e in window
-    )
+    verifying = next((e for e in window if _is_verification_action(e)), None)
+    verified = verifying is not None
     # AGR-02: the CURRENT view — an obsolete, reconciled failure must not
     # still read as "this run failed" once a later same-scope check passed.
     any_failed = any(c.effective_status == "failed" for c in analysis.checks)
@@ -148,7 +237,7 @@ def _verification_row(analysis) -> SignatureRow:
             result=RESULT_SUCCESS,
             interpretation=INTERP_POSITIVE,
             measured=True,
-            evidence=[verify_opp.start_event_id, verify_opp.end_event_id],
+            evidence=[verifying.event_id, verify_opp.start_event_id, verify_opp.end_event_id],
         )
     # AGR-05: verification is scored independently of the final outcome. A
     # passing run with no observed verification action provides NO positive

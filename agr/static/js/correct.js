@@ -139,7 +139,7 @@ async function saveCorrection(moment, draft, evInput) {
     root_cause_candidates: moment.root_cause_candidates || [],
   };
   try {
-    await apiPost("/runs/" + encodeURIComponent(state.runId) + "/feedback", {
+    await apiPost("/runs/" + encodeURIComponent(requireRunId()) + "/feedback", {
       mutation_id: uid(), moment_id: moment.moment_id, kind: "structured_correction",
       actor: state.reviewer, correction: draft, generated, evidence_event_ids: evidence,
     });
@@ -164,7 +164,7 @@ function openModal(sel) {
   modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
   modal.setAttribute("aria-label", sel === "#help-modal" ? "Help" : modal.querySelector("h2")?.textContent || "Dialog");
   $("#workspace").inert = true;
-  const first = [...modal.querySelectorAll("button, input, select, textarea, a[href]")].find(n => !n.disabled && n.getClientRects().length);
+  const first = [...modal.querySelectorAll("button, input, select, textarea, a[href]")].find(n => !n.matches(":disabled") && n.getClientRects().length);
   if (first) first.focus(); else { modal.tabIndex = -1; modal.focus(); }
 }
 function closeModals() {
@@ -181,7 +181,7 @@ document.addEventListener("keydown", e => {
   if (!modal) return;
   if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeModals(); return; }
   if (e.key !== "Tab") return;
-  const items = [...modal.querySelectorAll("button, input, select, textarea, a[href], summary, [tabindex]")].filter(n => !n.disabled && n.tabIndex >= 0 && n.getClientRects().length);
+  const items = [.../** @type {NodeListOf<HTMLElement>} */ (modal.querySelectorAll("button, input, select, textarea, a[href], summary, [tabindex]"))].filter(n => !n.matches(":disabled") && n.tabIndex >= 0 && n.getClientRects().length);
   const first = items[0], last = items[items.length - 1];
   if (!first) { e.preventDefault(); return; }
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

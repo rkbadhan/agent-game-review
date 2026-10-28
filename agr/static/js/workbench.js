@@ -81,7 +81,7 @@ async function startFocusedReview(runId, evidenceStep, fromHome = false) {
       const saved = Object.assign({}, state.focusedQueue); delete saved.runs;
       localStorage.setItem(frozenStorageKey(saved.project, id), JSON.stringify(saved));
       const prefix = "agr-review-queue-" + saved.project + "-";
-      const createdAt = key => { try { return JSON.parse(localStorage.getItem(key)).created_at || 0; } catch (_) { return 0; } };
+      const createdAt = key => { try { return JSON.parse(localStorage.getItem(key) || "null").created_at || 0; } catch (_) { return 0; } };
       const keys = Object.keys(localStorage).filter(key => key.startsWith(prefix) && key !== frozenStorageKey(saved.project, id))
         .sort((a, b) => createdAt(a) - createdAt(b));
       for (const key of keys.slice(0, Math.max(0, keys.length - 19))) localStorage.removeItem(key);
@@ -129,7 +129,7 @@ function renderWorklistActions(host) {
 }
 function refreshWorklistActions() {
   const host = $("#worklist-actions"); if (host) renderWorklistActions(host);
-  for (const box of document.querySelectorAll("[data-select-run]")) box.checked = state.runsSelected.has(box.dataset.selectRun);
+  for (const box of /** @type {NodeListOf<HTMLInputElement>} */ (document.querySelectorAll("[data-select-run]"))) box.checked = state.runsSelected.has(box.dataset.selectRun || "");
 }
 async function openRunInspector(runId, restorePosition = false) {
   const selected = state.inspector, token = ++selected.token, project = state.projectId;
@@ -157,7 +157,7 @@ function closeRunInspector() {
   const id = state.inspector.runId;
   state.inspector.token++; state.inspector.runId = null; state.inspector.data = null;
   render();
-  requestAnimationFrame(() => { const row = document.querySelector('.runs-row[data-run-id="' + CSS.escape(id || "") + '"]'); if (row) { const target = row.checkVisibility() ? row : row.closest("details")?.querySelector("summary"); if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: "nearest" }); } } });
+  requestAnimationFrame(() => { const row = /** @type {HTMLElement | null} */ (document.querySelector('.runs-row[data-run-id="' + CSS.escape(id || "") + '"]')); if (row) { const target = row.checkVisibility() ? row : row.closest("details")?.querySelector("summary"); if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: "nearest" }); } } });
 }
 function renderTraceInspector(host) {
   const previous = host.querySelector(".trace-inspector"), scroll = previous ? previous.scrollTop : 0;
@@ -245,12 +245,17 @@ function queueErrorNotice() {
 function paintWorklistQueue() {
   const table = $("#runs-table-host");
   if (!table) { render(); return; }
-  for (const chip of document.querySelectorAll(".runs-controls-row .fchip[data-filter]")) {
-    const key = chip.dataset.filter, count = (state.queue.filter_counts || {})[key];
+  for (const chip of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(".runs-controls-row .fchip[data-filter]"))) {
+    const key = chip.dataset.filter;
+    if (!key) continue;
+    const count = (state.queue.filter_counts || {})[key];
     chip.classList.toggle("on", state.filters.has(key)); chip.setAttribute("aria-pressed", String(state.filters.has(key)));
     chip.classList.toggle("is-empty", count === 0);
     let badge = chip.querySelector(".fchip-count");
-    if (count) { if (!badge) { badge = el("span", "fchip-count"); chip.append(badge); } badge.textContent = String(count); }
+    if (count) {
+      if (!badge) { badge = document.createElement("span"); badge.className = "fchip-count"; chip.append(badge); }
+      badge.textContent = String(count);
+    }
     else if (badge) badge.remove();
   }
   const stat = $(".runs-stat-line"); if (stat) stat.replaceWith(renderRunsStatLine());

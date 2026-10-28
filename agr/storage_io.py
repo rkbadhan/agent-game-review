@@ -75,16 +75,22 @@ def file_lock(path):
                     fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def atomic_json(path, value):
+def atomic_text(path, text):
+    """Replace ``path`` with ``text`` via a temp file, so a reader or a crash
+    mid-write sees the old file or the complete new one, never a truncated one."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".write-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
-            json.dump(value, out, ensure_ascii=False, indent=2)
+            out.write(text)
             out.flush()
             os.fsync(out.fileno())
         sharing_retry(lambda: os.replace(name, path))
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def atomic_json(path, value):
+    atomic_text(path, json.dumps(value, ensure_ascii=False, indent=2))

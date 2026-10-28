@@ -155,7 +155,7 @@ async function boot() {
       state.workspace.unavailable = true;
       state.projects = [{ id: "existing", name: "Local runs", sample: state.serverReadOnly }];
       state.projectId = null; state.readOnly = state.serverReadOnly;
-      if (want.project === "existing") delete want.project;
+      if (want.project === "existing") want.project = null;
       if (!want.run && !want.view) want.view = "runs";
       syncProjectChrome();
       toast("Workspace settings are unavailable. Existing runs can still be reviewed; repair workspace.json to restore project tools.");

@@ -259,6 +259,16 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
                 annotated["status"] = check.status
                 annotated["expected"] = check.expected
                 annotated["observed"] = check.observed
+            # The group statement interpolates total_checks, and the attribution
+            # gate does not scan rendered statements, so recompute both group
+            # fields from the run rather than trusting the proposal.
+            annotated["total_checks"] = sum(1 for c in ctx.checks if c.effective_status is not None)
+            if "last_agent_action_captured" in fact:
+                terminal = next((e for e in ctx.events if e.event_type in _TERMINAL_FAILURE_TYPES), None)
+                last_agent = next((e for e in reversed(ctx.events) if e.actor == "main_agent"), None)
+                annotated["last_agent_action_captured"] = bool(
+                    terminal is not None and last_agent is not None
+                    and last_agent.event_id != terminal.event_id)
         elif ftype == "absence":
             artifact = fact.get("declared_artifact")
             if artifact not in declared_artifacts:
@@ -408,6 +418,12 @@ def validate_facts(candidate: Candidate, ctx: ReviewerContext) -> list[dict]:
                     annotated["resolution_event"] = ep.resolution_event_id
                 annotated["strategy_changed"] = ep.strategy_changed
                 annotated["changed_action"] = ep.changed_action
+                # The rendered statement interpolates these, and the attribution
+                # gate no longer scans it, so they must come from the episode
+                # (as agr.detectors builds them), never from a model proposal.
+                for key in ("tool", "error_signature", "error_signature_basis",
+                            "failure_diagnostic", "raw_failure_text", "raw_failure_text_truncated"):
+                    annotated[key] = getattr(ep, key, None)
         elif ftype == "event_support":
             # Semantic-moment grounding: every named event must exist AND a
             # nonempty quoted span must actually appear in that event's text
@@ -765,19 +781,75 @@ def attribution_ceiling_for(candidate: Candidate, slices: list[EvidenceSlice]) -
     return ceiling
 
 
-# Causal phrases and the minimum attribution level each one implies (spec §8.9).
-_IMPLIES = {
-    "counterfactually_supported": ("would have", "in the replay", "had it ", "changed c"),
-    "direct": ("produced", "caused", "resulted in", "because it", "made the"),
-    "dependency_linked": ("linked to", "linked with"),
-}
+# Causal phrasing and the minimum attribution level each pattern implies (spec §8.9).
+# Phrase matching is a heuristic: it catches common wordings, not every
+# paraphrase, and cannot tell whether a causal claim is *true*. Where unsure the
+# patterns lean toward flagging, because under-flagging is the worse failure.
+# Mirrors agr.detectors.TerminalFailureWithFailingChecks._TERMINAL_FAILURE_TYPES.
+_TERMINAL_FAILURE_TYPES = {"run_timed_out", "run_failed"}
+
+_COUNTERFACTUAL = re.compile(
+    r"\bwould(?:n't)?\b"                        # would pass / would not have / would have
+    r"|\b(?:could|might|should)(?: not|n't)? have\b"
+    r"|\bif\b[^.]{0,80}?\b(?:had|ran|re-?ran|re-?runs?|re-?running|would|will)\b"  # if the agent had re-run tests, ...
+    r"|\bif (?:only|not)\b|\botherwise\b|\b(?:in|on|under|during) (?:the )?replay\b"
+    r"|\b(?:but for|(?:without|absent) (?:the|this|that|it|these|those))\b|\bwere (?:the|it|they|we)\b[^.]{0,40}\bto\b"
+    # Sentence/line/clause-initial "Had the agent ...": needs a determiner or
+    # pronoun, so "Had no effect" and "; had 0 lines" do not match.
+    r"|(?:^|[.!?:;]\s+|[(\[\x22\x27*-]\s*|,\s+)had\s+(?:the|it|they|he|she|we|you|I|this|that|these|those|our|its|their|\w+\x27s)\b"
+    r"|\bhad it\b|\bin the replay\b|\bchanged c\d+\b",
+    re.I | re.M,
+)
+_DIRECT = re.compile(
+    r"\bcauses?\b|\bcaus(?:ed|ing)\b"
+    r"|\b(?:led|leads?|leading)\b[^.;]{0,30}?\bto\b"
+    r"|\bresult(?:s|ed|ing)? (?:in|from)\b|\bresult of\b|\bas a result\b|\bconsequently\b"
+    r"|\b(?:responsible|accountable|attributable) for\b|\battributable to\b"
+    r"|\b(?:is|was|are|were) (?:likely |probably )?(?:why|the reason)\b"
+    r"|\b(?:due|owing|thanks) to\b|\bbecause\b"
+    r"|\b(?:stem|stems|stemmed|contribut(?:e|es|ed|ing)) (?:from|to)\b"
+    r"|\bprevent(?:s|ed|ing)?\b[^.;]{0,40}?\bfrom\b"
+    r"|\bbrok(?:e|en)\b|\bbreak(?:s|ing)?\b"
+    r"|\b(?:drove|driven|drives?|driving)\b"
+    r"|\btrigger(?:s|ed|ing)?\b"
+    r"|\bproduc(?:e|es|ed|ing)\b"
+    r"|\b(?:made|makes?|making)\b[^.;]{0,40}?\b(?:fail|failing|break|crash|succeed)\b|\b(?:made|makes?|making)\b[^.;]{0,40}?(?<!\ba )(?<!\ban )\bpass(?:ing)?\b|\bmade the\b",
+    re.I,
+)
+_DEPENDENCY = re.compile(
+    r"\blinked (?:to|with)\b|\b(?:associated|connected|tied|related|correlated) (?:to|with)\b"
+    r"|\bcorrelat(?:es|ed|ion)\b",
+    re.I,
+)
+# "produced by chance" mentions a causal verb while denying causation. Only the
+# plain chance/coincidence form is stripped, never when negated ("not caused by
+# chance" asserts a cause), and "accident" is not stripped (accidental
+# causation is still causation).
+_NON_CAUSAL = re.compile(r"\b(?:produced|caused|created|happened) by (?:chance|coincidence)\b", re.I)
+_NEGATION = re.compile(r"\b(?:not|never|no)\b|n't", re.I)
+
+
+def _strip_non_causal(text: str) -> str:
+    """Drop "produced by chance" unless a negation shortly before it flips the meaning."""
+    def repl(m: re.Match) -> str:
+        return m.group(0) if _NEGATION.search(text[max(0, m.start() - 30):m.start()]) else ""
+    return _NON_CAUSAL.sub(repl, text)
 
 
 def implied_attribution(statement: str) -> str:
-    """The strongest attribution level the wording of ``statement`` implies."""
-    low = statement.lower()
-    for level in ("counterfactually_supported", "direct", "dependency_linked"):
-        if any(phrase in low for phrase in _IMPLIES[level]):
+    """The strongest attribution level the wording of ``statement`` implies.
+
+    A displayed flag from phrase matching, not proof: it cannot establish that
+    a causal claim is correct, nor catch every paraphrase.
+    """
+    text = statement.replace("\u2019", "'").replace("\u02bc", "'")  # curly apostrophes
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\b(would|could|should|was|is|did|does|do)nt\b", r"\1n't", text, flags=re.I)
+    text = _strip_non_causal(text)
+    for level, pattern in (("counterfactually_supported", _COUNTERFACTUAL),
+                           ("direct", _DIRECT),
+                           ("dependency_linked", _DEPENDENCY)):
+        if pattern.search(text):
             return level
     return "hypothesized"
 
@@ -787,7 +859,10 @@ def attribution_gate(statement: str, ceiling: str) -> tuple[bool, str]:
 
     Returns ``(ok, implied_level)``. The deterministic renderer builds statements
     at or below the ceiling by construction, so this always passes for its own
-    output; it is the enforcement point a future model statement must clear.
+    output. Production does not run it on rendered statements (they interpolate
+    record text such as tool errors); model-written prose is checked through
+    ``_explanation_attribution``, and ``validate_facts`` canonicalises every field
+    a rendered statement interpolates.
     """
     implied = implied_attribution(statement)
     ok = _ATTR_RANK.get(implied, 0) <= _ATTR_RANK.get(ceiling, 0)
@@ -1590,7 +1665,14 @@ def run_reviewer(ctx: ReviewerContext, reviewer: Optional[Reviewer] = None,
             statement = render(primary, ceiling, cand.polarity,
                                observation_scope=observation_scope) if primary else \
                 "No deterministic evidence supports this finding."
-        gate_ok, _ = attribution_gate(statement, ceiling)
+        # The deterministic renderer builds `statement` from controlled templates
+        # at or below the ceiling by construction (tests/test_attribution_gate.py
+        # checks every template). Gating the rendered string would also scan
+        # interpolated record text (tool errors, paths, tool names), where
+        # ordinary words like "would be overwritten" or "due to" are not
+        # claims, and would drop valid cards. Model prose is gated through
+        # _explanation_attribution instead.
+        gate_ok = True
         enr = proposal.enrichment
         better_action = (
             "model_provided" if (enr and enr.better_action) else "not_available_deterministic"

@@ -5,6 +5,7 @@
 const phaseLabelObserver = new ResizeObserver(entries => {
   for (const { target: band } of entries) {
     const label = band.firstElementChild;
+    if (!(label instanceof HTMLElement)) continue;
     label.style.visibility = label.scrollWidth > label.clientWidth ? "hidden" : "visible";
   }
 });

@@ -14,10 +14,12 @@ function consumeLaunchSession() {
 }
 consumeLaunchSession();
 window.addEventListener("hashchange", () => { if (consumeLaunchSession()) location.reload(); });
+/** @param {Record<string, string>} [headers] @returns {Record<string, string>} */
 function sessionHeaders(headers = {}) {
   return Object.assign({}, headers, workspaceSession ? { authorization: "Bearer " + workspaceSession } : {});
 }
 
+/** @param {*} sel @param {Document | Element} [root] */
 const $ = (sel, root = document) => (/^#[\w-]+$/.test(sel) && root === document) ? document.getElementById(sel.slice(1)) : root.querySelector(sel);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 function projectHeaders(path) {
@@ -32,11 +34,19 @@ async function requestJSON(path, method = "GET", body) {
   if (body !== undefined) headers["content-type"] = "application/json";
   const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   let data = null; try { data = await r.json(); } catch (_) {}
-  if (!r.ok) { const detail = data && data.detail; const e = new Error(typeof detail === "string" ? detail : detail && detail.message || "The request could not complete. Try again."); e.status = r.status; e.data = data; throw e; }
+  if (!r.ok) { const detail = data && data.detail; const e = new Error(typeof detail === "string" ? detail : detail && detail.message || "The request could not complete. Try again."); throw Object.assign(e, { status: r.status, data }); }
   return data;
 }
 async function api(path) { return requestJSON(path); }
 async function apiPost(path, body = {}) { return requestJSON(path, "POST", body); }
 async function apiPatch(path, body) { return requestJSON(path, "PATCH", body); }
 async function apiDelete(path) { return requestJSON(path, "DELETE"); }
+function requireRunId() {
+  if (!state.runId) throw new Error("Select a run first.");
+  return state.runId;
+}
+function requireProjectId() {
+  if (!state.projectId) throw new Error("Select a project first.");
+  return state.projectId;
+}
 function uid() { return "m_" + Math.random().toString(36).slice(2) + Date.now().toString(36); }

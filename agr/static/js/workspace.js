@@ -4,7 +4,7 @@ const ENGINEER_VIEWS = ["welcome", "home", "sources", "add-runs", "import", "inv
 function isEngineerView(view) { return ENGINEER_VIEWS.includes(view); }
 function engineerViewTitle(view) { return ({ welcome: "Welcome", home: "Home", sources: "Sources", "add-runs": "Add runs", import: "Import", investigations: "Investigations", settings: "Settings", "ai-review": "AI review" })[view]; }
 function activeProject() { return state.projects.find(p => p.id === state.projectId); }
-function projectPath(suffix) { return "/projects/" + encodeURIComponent(state.projectId) + suffix; }
+function projectPath(suffix) { return "/projects/" + encodeURIComponent(requireProjectId()) + suffix; }
 function workspaceButton(text, callback, primary = false) {
   const button = el("button", "button" + (primary ? " primary" : ""), text);
   button.type = "button";
@@ -126,7 +126,7 @@ async function switchProject(projectId, navigate = true) {
 }
 async function loadEngineerData() {
   if (state.workspace.unavailable) return;
-  const projectId = state.projectId, token = ++state.workspace.token;
+  const projectId = requireProjectId(), token = ++state.workspace.token;
   const prefix = "/projects/" + encodeURIComponent(projectId);
   const [detail, connections, investigations, startHere] = await Promise.all([api(prefix), api(prefix + "/connections"), api(prefix + "/investigations"), api("/demo/start-here")]);
   if (projectId !== state.projectId || token !== state.workspace.token) return;
@@ -352,7 +352,7 @@ function receiveFiles(fileList) {
   state.workspace.error = null; state.workspace.preview = null; render();
 }
 async function uploadAndPreview(isCurrent) {
-  const ws = state.workspace, files = ws.files.filter(f => f.selected), projectId = state.projectId;
+  const ws = state.workspace, files = ws.files.filter(f => f.selected), projectId = requireProjectId();
   if (!files.length) throw new Error("Select at least one file.");
   const prefix = "/projects/" + encodeURIComponent(projectId);
   const preview = await apiPost(prefix + "/import-previews", { source: ws.source, options: ws.options || {} });
@@ -376,7 +376,7 @@ function cleanupPreviewNavigation() {
     const entries = Object.keys(sessionStorage).filter(k => k.startsWith("agr-preview-"));
     const kept = [];
     for (const key of entries) {
-      let saved; try { saved = JSON.parse(sessionStorage.getItem(key)); } catch (_) {}
+      let saved; try { saved = JSON.parse(sessionStorage.getItem(key) || "null"); } catch (_) {}
       if (!saved?.savedAt || Date.now() - saved.savedAt > 86400e3) sessionStorage.removeItem(key);
       else kept.push([key, saved.savedAt]);
     }
@@ -395,7 +395,7 @@ function rememberPreviewNavigation() {
 function restorePreviewNavigation(preview) {
   const ws = state.workspace;
   let saved;
-  try { saved = JSON.parse(sessionStorage.getItem("agr-preview-" + state.projectId + ":" + preview.id)); } catch (_) {}
+  try { saved = JSON.parse(sessionStorage.getItem("agr-preview-" + state.projectId + ":" + preview.id) || "null"); } catch (_) {}
   const valid = preview.items.filter(i => i.status !== "invalid").map(i => i.id);
   const recommended = preview.items.filter(i => i.status !== "invalid" && i.selected_by_default !== false).map(i => i.id);
   ws.preview = preview; ws.source = preview.source;
@@ -426,6 +426,7 @@ function showImportPreview(preview) {
   state.workspace.selected = new Set(preview.items.filter(i => i.status !== "invalid" && i.selected_by_default !== false).map(i => i.id));
   rememberPreviewNavigation();
 }
+/** @type {[string, string, number][]} */
 const LANGFUSE_WINDOWS = [["1h", "Last hour", 3600e3], ["24h", "Last 24 hours", 86400e3], ["7d", "Last 7 days", 7 * 86400e3], ["30d", "Last 30 days", 30 * 86400e3], ["custom", "Custom range (UTC)", 0]];
 function langfuseState() {
   const ws = state.workspace;
@@ -443,8 +444,8 @@ function markLangfuseImported(job) {
   for (const trace of lf.result.traces) if (imported.has(runId(trace.trace_id))) { trace.already_imported = true; lf.picked.delete(trace.trace_id); }
 }
 function langfuseWindow(lf) {
-  const preset = LANGFUSE_WINDOWS.find(w => w[0] === lf.preset);
-  if (preset[2]) { const to = new Date(); return { from_time: new Date(to - preset[2]).toISOString(), to_time: to.toISOString() }; }
+  const preset = LANGFUSE_WINDOWS.find(w => w[0] === lf.preset) || LANGFUSE_WINDOWS[1];
+  if (preset[2]) { const to = new Date(); return { from_time: new Date(to.getTime() - preset[2]).toISOString(), to_time: to.toISOString() }; }
   return { from_time: new Date(lf.from + "Z").toISOString(), to_time: new Date(lf.to + "Z").toISOString() };
 }
 function langfuseSelect(host, label, value, options, onchange) {
@@ -455,6 +456,7 @@ function langfuseSelect(host, label, value, options, onchange) {
 function langfuseWhen(iso) { return typeof iso === "string" && iso ? iso.replace("T", " ").replace(/\.\d+/, "").replace(/(Z|\+00:00)$/, "").slice(0, 19) : "—"; }
 function langfuseMoney(value) { return typeof value === "number" ? "$" + (value >= 0.01 ? value.toFixed(2) : value.toFixed(4)) : "—"; }
 function langfuseDuration(value) { return typeof value === "number" ? (value < 10 ? value.toFixed(2) : value.toFixed(1)) + " s" : "—"; }
+/** @type {[string, string, (string | null)?, (string | null)?][]} */
 const LANGFUSE_FILTERS = [["trace_id", "Trace ID", "Any part of an ID. Searches the last 400 days, ignoring the time range above.", "lf-ids"], ["name", "Trace name (exact)", null, "lf-names"], ["environment", "Environment", null, "lf-environments"],
   ["user_id", "User ID", null, "lf-users"], ["session_id", "Session ID", null, "lf-sessions"], ["tag", "Tag", null, "lf-tags"], ["metadata_key", "Metadata key", null, null], ["metadata_value", "Metadata value (exact)", null, null]];
 function renderLangfuseFetch(host) {
@@ -499,7 +501,7 @@ function renderLangfuseFetch(host) {
       advanced.append(el("p", "engineer-hint", "If both project keys are configured on the AGR server for this exact host, you can leave both key fields empty.")); connect.append(advanced);
     }
     connect.addEventListener("submit", e => { e.preventDefault(); workspaceAction(async () => {
-      const projectId = state.projectId, base = "/projects/" + encodeURIComponent(projectId);
+      const projectId = requireProjectId(), base = "/projects/" + encodeURIComponent(projectId);
       let connection;
       if (ws.connectionId) connection = await apiPatch(base + "/connections/" + ws.connectionId + "/credentials", { public_key: values.public_key, secret_key: values.secret_key });
       else {
@@ -537,7 +539,9 @@ function renderLangfuseFetch(host) {
     if (hint) input.parentElement.append(el("span", "engineer-hint", hint));
   }
   // Values already seen in this project's traces, offered as suggestions as Langfuse's own filter menus do.
-  if (lf.result) for (const [listId, getter] of [["lf-ids", t => t.trace_id], ["lf-names", t => t.name], ["lf-environments", t => t.environment], ["lf-users", t => t.user_id], ["lf-sessions", t => t.session_id], ["lf-tags", t => t.tags]]) {
+  /** @type {[string, (trace: any) => any][]} */
+  const suggestions = [["lf-ids", t => t.trace_id], ["lf-names", t => t.name], ["lf-environments", t => t.environment], ["lf-users", t => t.user_id], ["lf-sessions", t => t.session_id], ["lf-tags", t => t.tags]];
+  if (lf.result) for (const [listId, getter] of suggestions) {
     const list = el("datalist"); list.id = listId; const seen = new Set();
     for (const trace of lf.result.traces) for (const value of [].concat(getter(trace) || [])) if (value && !seen.has(value) && seen.size < 200) { seen.add(value); const option = el("option"); option.value = value; list.append(option); }
     grid.append(list);
@@ -562,11 +566,12 @@ function renderLangfuseFetch(host) {
   renderLangfuseTraceId(host, lf);
 }
 // Facets the way Langfuse's filter sidebar groups them; each is the set of values present in the listed traces.
+/** @type {[string, string, (trace: any) => any[]][]} */
 const LANGFUSE_FACETS = [["environment", "Environment", t => [t.environment]], ["tag", "Tags", t => t.tags || []], ["name", "Name", t => [t.name]], ["user", "User", t => [t.user_id]]];
 function langfuseVisible(lf) {
   const view = lf.view || (lf.view = { search: "", facets: {} }), needle = (view.search || "").trim().toLowerCase();
   return lf.result.traces.filter(trace => {
-    for (const [key, , getter] of LANGFUSE_FACETS) { const chosen = view.facets[key]; if (chosen && chosen.size && ![].concat(getter(trace)).some(v => chosen.has(v))) return false; }
+    for (const [key, , getter] of LANGFUSE_FACETS) { const chosen = view.facets[key]; if (chosen && chosen.size && !getter(trace).some(v => chosen.has(v))) return false; }
     if (!needle) return true;
     const haystack = [trace.trace_id, trace.name, trace.user_id, trace.session_id, trace.environment, trace.release, trace.version, (trace.tags || []).join(" "), trace.input_preview, trace.output_preview, Object.entries(trace.metadata || {}).map(([k, v]) => k + " " + v).join(" ")].join(" ").toLowerCase();
     return haystack.includes(needle);
@@ -585,7 +590,7 @@ function renderLangfuseResults(host, lf) {
   search.setAttribute("aria-label", "Filter the listed traces"); search.value = view.search || ""; quick.append(search); card.append(quick);
   const facetBox = el("div", "lf-facets");
   for (const [key, label, getter] of LANGFUSE_FACETS) {
-    const counts = new Map(); for (const trace of traces) for (const value of new Set([].concat(getter(trace)))) if (value) counts.set(value, (counts.get(value) || 0) + 1);
+    const counts = new Map(); for (const trace of traces) for (const value of new Set(getter(trace))) if (value) counts.set(value, (counts.get(value) || 0) + 1);
     if (counts.size < 2 && !(view.facets[key] && view.facets[key].size)) continue;
     const group = el("div", "lf-facet"); group.append(el("span", "lf-facet-label", label));
     for (const [value, count] of [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 12)) {
@@ -777,7 +782,7 @@ let importPollTimer;
 async function pollImport() {
   clearTimeout(importPollTimer);
   const job = state.workspace.job, projectId = state.projectId;
-  if (!job) return;
+  if (!job || !projectId) return;
   try {
     const result = await api("/projects/" + encodeURIComponent(projectId) + "/imports/" + job.id);
     if (projectId !== state.projectId || !state.workspace.job || state.workspace.job.id !== job.id) return;
@@ -870,7 +875,7 @@ function renderWorkspaceSettings(host) {
 }
 
 function renderInvestigationComposer(host) {
-  if (state.loading || state.readOnly || !state.review) return;
+  if (state.loading || state.readOnly || !state.review || !state.projectId) return;
   const disclosure = el("details", "engineer-action-composer");
   const summary = el("summary", "button"); summary.append(icon("bookmark"), document.createTextNode("Save next action")); disclosure.append(summary);
   const form = el("form"); const runId = state.runId, projectId = state.projectId, captureId = state.review.capture.capture_id;

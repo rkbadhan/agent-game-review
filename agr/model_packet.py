@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 
 from . import version
-from ._util import evidence_projection, structured_input
+from ._util import _PACKET_INPUT_CHARS, bound_text, evidence_projection, structured_input
 from .argument_shapes import argument_shapes_for_events
 from .redaction import redact, redact_all, redact_value
 from .reviewer import ReviewerContext, _linked_slices, attribution_ceiling_for
@@ -240,7 +240,9 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
         # R2: the structured tool input travels as its own redacted section so
         # the reviewer can retrieve an Edit's old/new strings or a Write's
         # content — display excerpts stay separate from this retained evidence.
-        si = structured_input(e)
+        # The FULL input is redacted and only then bounded (below): truncating
+        # first would cut secrets mid-token, past what any pattern can match.
+        si = structured_input(e, max_chars=_UNBOUNDED)
         if si is not None:
             raw_sections[f"event_input::{e.event_id}"] = si
     if ctx.contract is not None:
@@ -260,11 +262,18 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
         if isinstance(log, dict) and log.get("content"):
             log_sections[f"log::{i}"] = str(log.get("content"))
     redacted, red_result = redact_all({**raw_sections, **log_sections})
+    for key, raw in raw_sections.items():
+        # Only an input that was over the bound is cut; redaction markers are
+        # longer than many secrets, so a redacted-but-in-bounds input must not
+        # lose its tail just because the markers pushed it past the bound.
+        if key.startswith("event_input::") and len(raw) > _PACKET_INPUT_CHARS:
+            redacted[key] = bound_text(redacted[key], _PACKET_INPUT_CHARS)
 
     # AGR-06: measure the trace against the reviewer's input budget. Traces
     # that fit are sent with FULL event text (no unnecessary truncation);
     # oversized traces fall back to the 220-char per-event digest.
-    trace_chars = sum(len(v) for v in raw_sections.values())
+    trace_chars = sum(min(len(v), _PACKET_INPUT_CHARS) if k.startswith("event_input::") else len(v)
+                      for k, v in raw_sections.items())
     if trace_chars <= budget_chars:
         excerpt_chars = 1_000_000  # full text — the digest keeps everything
     else:
@@ -464,6 +473,7 @@ def build_packet(ctx: ReviewerContext, budget_chars: int = _PACKET_BUDGET_CHARS,
 # AGR-06: bounds on the single expansion round.
 _EXPANSION_MAX_EVENTS = 20
 _EXPANSION_MAX_CHARS = 16_384
+_UNBOUNDED = 10**9  # redact first, bound after (see ``bound_text``)
 
 
 def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
@@ -529,8 +539,10 @@ def resolve_expansion(ctx: ReviewerContext, requests: list) -> dict:
         # _PACKET_INPUT_CHARS bound (that bound is for the always-sent packet
         # excerpt); reusing it here would silently truncate the "full" input
         # the round promises for anything longer than that excerpt.
-        raw_input = structured_input(e, max_chars=_EXPANSION_MAX_CHARS)
+        raw_input = structured_input(e, max_chars=_UNBOUNDED)
         tool_input = redact(raw_input).text if raw_input is not None else None
+        if tool_input is not None and len(raw_input) > _EXPANSION_MAX_CHARS:
+            tool_input = bound_text(tool_input, _EXPANSION_MAX_CHARS)
         combined_len = len(text) + len(tool_input or "")
         if total + combined_len > _EXPANSION_MAX_CHARS:
             rejected.append({"event_id": eid, "reason": "expansion size cap reached"})

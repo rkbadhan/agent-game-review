@@ -133,7 +133,10 @@ MODEL_REVIEWER_VERSION = "reviewer-model-0.7"
 # (spec §7.4, §16.1). The redaction map records what was removed and why, stamped
 # with this version so the model-visible representation is reproducible.
 # 0.2: dictionary keys are redacted too (data-map keys can be content).
-REDACTION_VERSION = "redaction-0.2"
+# 0.3: vendor key formats (sk-proj/svcacct/or/lf, github_pat, Slack, Google,
+#      Hugging Face), Basic auth, URL credentials, and NAME=value credential
+#      assignments.
+REDACTION_VERSION = "redaction-0.3"
 
 # Task & Verifier Audit (spec §11). The audit is deterministic: it maps
 # already-derived signals — task-contract items and warnings, verifier-check

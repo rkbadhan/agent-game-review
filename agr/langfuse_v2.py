@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 from .imports import ImportProblem, MAX_FILE, MAX_SPANS
+from .redaction import redact, redact_value
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -168,7 +169,12 @@ def preview_text(value, limit=160):
     """A short single-line look at an input, output or metadata value of any shape."""
     if value is None:
         return None
-    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False, separators=(", ", ": "))
+    # Redact the whole value BEFORE it is cut to the preview length: truncating first
+    # would leave a secret's prefix that no pattern can match.
+    if isinstance(value, str):
+        text = redact(value).text
+    else:
+        text = json.dumps(redact_value(value)[0], default=str, ensure_ascii=False, separators=(", ", ": "))
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1] + "\u2026"
 
@@ -182,6 +188,7 @@ def metadata_summary(value, keys=20):
             return {}
     if not isinstance(value, dict):
         return {}
+    value = redact_value(value)[0]  # keys and values, before either is shortened
     return {str(k)[:60]: preview_text(v, 120) or "" for k, v in list(value.items())[:keys]}
 
 

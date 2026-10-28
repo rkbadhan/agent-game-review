@@ -102,7 +102,7 @@ document.addEventListener("keydown", e => {
 // one being opened is not yet in [open] and only the others close.
 document.addEventListener("click", e => {
   document.querySelectorAll(".review-nav details[open]").forEach(d => {
-    if (!d.contains(e.target)) d.removeAttribute("open");
+    if (!(e.target instanceof Node) || !d.contains(e.target)) d.removeAttribute("open");
   });
 });
 // UX audit finding #3: the Runs "More filters" popover (inbox.js's
@@ -117,7 +117,7 @@ document.addEventListener("click", e => {
 // it with the same click that would otherwise land on a blocked row.
 document.addEventListener("click", e => {
   document.querySelectorAll("details.more-filters[open]").forEach(d => {
-    if (!d.contains(e.target)) d.removeAttribute("open");
+    if (!(e.target instanceof Node) || !d.contains(e.target)) d.removeAttribute("open");
   });
 });
 // "Runs" (U1): the global triage workspace, distinct from a run's investigation
@@ -142,7 +142,7 @@ async function goToRuns() {
   } else render();
 }
 
-document.addEventListener("click", e => { if (!e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
+document.addEventListener("click", e => { if (!(e.target instanceof Element) || !e.target.closest(".disp-wrap")) { state.dispOpen = false; const m = $("#disp-menu"); if (m) m.classList.remove("open"); } });
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
@@ -152,6 +152,7 @@ document.addEventListener("keydown", e => {
   if (runPickerDialog.open) return;
   // AltGr (Ctrl+Alt) and Option can produce bracket characters on non-US
   // layouts. Keep those character shortcuts, but ignore command chords.
+  if (!(e.target instanceof HTMLElement)) return;
   if (((e.ctrlKey || e.metaKey) && !e.altKey) || e.target.isContentEditable) return;
   if (document.querySelector(".modal-shade.open")) return;
   if (e.target.matches("input, select, textarea")) return;

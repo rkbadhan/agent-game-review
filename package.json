@@ -1,0 +1,11 @@
+{
+  "name": "agr-ui-checks",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "axe-core": "4.14.0",
+    "typescript": "5.9.3"
+  }
+}

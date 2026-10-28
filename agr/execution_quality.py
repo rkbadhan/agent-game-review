@@ -151,6 +151,25 @@ def generation_usage_capability(steps: Iterable[dict]) -> str:
     return "complete" if all(present) else "partial" if any(present) else "unavailable"
 
 
+def generation_timestamps_capability(steps: Iterable[dict]) -> str:
+    """Coverage level for adapter-supplied per-generation wall times.
+
+    A generation counts only when it has BOTH ends and they yield a
+    non-negative duration (the same test ``generation_wall_ms`` applies
+    downstream), so a declared ``complete`` can never contradict the detector.
+    """
+    materialized = list(steps)
+    marked = [step for step in materialized if step.get("generation_event") is True]
+    generations = marked or [step for step in materialized if step.get("kind") == "model_output"]
+    if not generations:
+        return "unavailable"
+    present = [
+        generation_wall_ms(step.get("start_time"), step.get("end_time")) is not None
+        for step in generations
+    ]
+    return "complete" if all(present) else "partial" if any(present) else "unavailable"
+
+
 def normalized_generation_usage(events: Iterable[DerivedEvent]) -> list[GenerationUsage]:
     """Return one authoritative usage record per model-generation event."""
     records: list[GenerationUsage] = []

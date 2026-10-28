@@ -6,6 +6,17 @@ on:
   pull_request:
 
 jobs:
+  ui-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
   test:
     # windows-latest guards the cp1252-console encoding path natively; the
     # subprocess tests reproduce it on Linux too, so both legs must stay green.
@@ -126,6 +137,15 @@ jobs:
           python-version: "3.11"
           enable-cache: true
 
+      - name: Set up Node for browser test assets
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install axe-core (development only)
+        run: npm ci
+
       - name: Install dependencies (with the browser group)
         run: uv sync --frozen --group browser
 
@@ -133,4 +153,4 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       - name: Run the browser suite
-        run: uv run pytest tests/test_sidebar_ui.py tests/test_runs_worklist_ui.py tests/test_review_workspace_ui.py tests/test_ui.py tests/test_demo_leaderboard.py tests/test_langfuse_browse_ui.py tests/test_ai_review_ui.py
+        run: uv run pytest tests/test_accessibility_ui.py tests/test_sidebar_ui.py tests/test_runs_worklist_ui.py tests/test_review_workspace_ui.py tests/test_ui.py tests/test_trace_ui.py tests/test_demo_leaderboard.py tests/test_langfuse_browse_ui.py tests/test_ai_review_ui.py

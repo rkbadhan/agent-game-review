@@ -9,14 +9,15 @@
 const PANEL_LIMITS = { queue: [220, 520, 240], evidence: [260, 620, 358] };
 function panelWidth(name) {
   const [min, max, fallback] = PANEL_LIMITS[name];
-  const stored = Number(localStorage.getItem("agr-" + name + "-w"));
+  let stored = 0;
+  try { stored = Number(localStorage.getItem("agr-" + name + "-w")); } catch (_) {}
   return stored ? Math.min(max, Math.max(min, stored)) : fallback;
 }
 function setPanelWidth(name, px, persist) {
   const [min, max] = PANEL_LIMITS[name];
   const width = Math.min(max, Math.max(min, Math.round(px)));
   document.documentElement.style.setProperty("--" + name + "-w", width + "px");
-  if (persist) localStorage.setItem("agr-" + name + "-w", String(width));
+  if (persist) { try { localStorage.setItem("agr-" + name + "-w", String(width)); } catch (_) {} }
   return width;
 }
 function initResizer(id, name, measure) {
@@ -43,7 +44,7 @@ function initResizer(id, name, measure) {
     e.preventDefault();
   });
   handle.addEventListener("dblclick", () => {
-    localStorage.removeItem("agr-" + name + "-w");
+    try { localStorage.removeItem("agr-" + name + "-w"); } catch (_) {}
     setPanelWidth(name, PANEL_LIMITS[name][2], false);
   });
 }

@@ -318,19 +318,277 @@ def test_full_session_ids_never_collide_on_a_prefix(tmp_path):
     assert a.doc["run"]["task_id"] != b.doc["run"]["task_id"]
 
 
-def test_pending_tool_call_means_partial_tool_result_coverage(tmp_path):
-    """A saved session ending in an unanswered tool call warns AND downgrades
-    tool-result coverage — it never declares results complete (R3)."""
+def _call(tid, cmd="pytest", ts=None, msg_id=None):
+    entry = {"type": "assistant", "message": {"role": "assistant", "model": "m",
+             "content": [{"type": "tool_use", "id": tid, "name": "Bash",
+                          "input": {"command": cmd}}]}}
+    if ts:
+        entry["timestamp"] = ts
+    if msg_id:
+        entry["message"]["id"] = msg_id
+    return entry
+
+
+def _result(tid, text="ok", ts=None, is_error=False):
+    entry = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": is_error}]}}
+    if ts:
+        entry["timestamp"] = ts
+    return entry
+
+
+def _user(text="go", ts=None):
+    entry = {"type": "user", "sessionId": "sess-x", "message": {"role": "user", "content": text}}
+    if ts:
+        entry["timestamp"] = ts
+    return entry
+
+
+def test_trailing_pending_call_keeps_result_coverage_complete_but_unresolved(tmp_path):
+    """A capture ending on an unanswered call is fully paired up to that call:
+    coverage stays complete, and the call itself is explicitly unresolved."""
+    lines = [_user(), _call("t1", "ls"), _result("t1", "a b"), _call("t2", "pytest")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "complete"
+    assert res.doc["run"]["session_completion"] == "unobserved"
+    assert any("trailing tool call" in w and "never observed a result" in w for w in res.warnings)
+    calls = {s["tool_use_id"]: s for s in res.doc["steps"] if s["kind"] == "tool_call"}
+    assert calls["t2"]["result_unobserved"] is True
+    assert "result_unobserved" not in calls["t1"]
+    # Never fabricated into a result: exactly one tool_result step exists.
+    assert [s["kind"] for s in res.doc["steps"]].count("tool_result") == 1
+
+
+def test_trailing_pending_call_lets_detectors_evaluate_without_concluding(tmp_path):
+    lines = [_user(), _call("t1", "pytest"), _result("t1", "1 failed", is_error=True),
+             _call("t2", "pytest")]
+    analysis = analyze(convert(_write_session(tmp_path, lines)).doc, Store(_mkdir(tmp_path / "db")))
+    by_name = {r.detector: r for r in analysis.detector_results}
+    for name in ("unresolved_requirement_at_submission", "ignored_tool_failure",
+                 "repeated_action_no_new_info", "successful_recovery_via_strategy_change"):
+        assert by_name[name].evaluated, name
+    # t2 is unresolved: it is not a repeat of t1 with equal output, and no
+    # candidate anchors on it.
+    assert not by_name["repeated_action_no_new_info"].candidates
+    t2_events = {e.event_id for e in analysis.events
+                 if e.payload.get("tool_use_id") == "t2"}
+    assert t2_events
+    for r in analysis.detector_results:
+        for c in r.candidates:
+            assert not (t2_events & set(c.anchor_event_ids)), r.detector
+
+
+def test_mid_transcript_pending_call_still_makes_tool_results_partial(tmp_path):
+    lines = [_user(), _call("t1", "ls"), _call("t2", "pwd"), _result("t2", "/x"),
+             _call("t3", "pytest"), _result("t3", "ok")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "partial"
+    assert any("never observed a result" in w and "coverage is partial" in w for w in res.warnings)
+    assert not any(s.get("result_unobserved") for s in res.doc["steps"])
+
+
+def test_abandoned_call_followed_by_more_turns_is_a_gap_not_trailing(tmp_path):
+    """The session carried on after the unanswered call, so the transcript does
+    not end on it: it is a real gap, never reported as trailing/complete."""
+    lines = [_user(), _call("t1", "ls"),
+             {"type": "assistant", "message": {"role": "assistant", "model": "m",
+              "content": [{"type": "text", "text": "never mind"}]}},
+             _user("ok next"),
+             {"type": "assistant", "message": {"role": "assistant", "model": "m",
+              "content": [{"type": "text", "text": "done"}]}}]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "partial"
+    assert not any(s.get("result_unobserved") for s in res.doc["steps"])
+
+
+def test_parallel_call_cut_off_between_results_is_trailing(tmp_path):
+    lines = [_user(),
+             {"type": "assistant", "message": {"role": "assistant", "model": "m", "id": "m1",
+              "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "ls"}},
+                          {"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "pwd"}}]}},
+             _result("a")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "complete"
+    marked = {s["tool_use_id"]: s.get("result_unobserved") for s in res.doc["steps"]
+              if s["kind"] == "tool_call"}
+    assert marked == {"a": None, "b": True}
+
+
+def test_parallel_call_unanswered_before_a_later_turn_is_a_gap(tmp_path):
+    lines = [_user(),
+             {"type": "assistant", "message": {"role": "assistant", "model": "m", "id": "m1",
+              "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "ls"}},
+                          {"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "pwd"}}]}},
+             _result("a"), _call("c", "id"), _result("c")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "partial"
+
+
+def test_meta_and_sidechain_entries_after_trailing_call(tmp_path):
+    """isMeta and subagent entries are not conversation turns: a call they
+    follow is still trailing."""
+    lines = [_user(), _call("t1", "ls"),
+             {"type": "user", "isMeta": True, "message": {"role": "user", "content": "x"}},
+             {"type": "assistant", "isSidechain": True, "message": {"role": "assistant",
+              "model": "m", "content": [{"type": "text", "text": "sub"}]}}]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "complete"
+    assert [s.get("result_unobserved") for s in res.doc["steps"] if s["kind"] == "tool_call"] == [True]
+
+
+def test_attachment_and_timestampless_bookkeeping_do_not_disturb_generation_timing(tmp_path):
+    """Real transcripts write an attachment entry at the reply's own instant and
+    timestamp-less bookkeeping lines; neither may collapse or erase the span."""
     lines = [
-        {"type": "user", "sessionId": "sess-pend-1",
-         "message": {"role": "user", "content": "go"}},
-        {"type": "assistant", "message": {"role": "assistant", "model": "m",
-         "content": [{"type": "tool_use", "id": "t1", "name": "Bash",
-                      "input": {"command": "pytest"}}]}},
+        _user(ts="2026-09-08T10:00:00.000Z"),
+        _call("t1", "ls", ts="2026-09-08T10:00:03.000Z", msg_id="m1"),
+        _result("t1", ts="2026-09-08T10:00:04.000Z"),
+        {"type": "attachment", "timestamp": "2026-09-08T10:00:07.001Z",
+         "attachment": {"type": "deferred_tools_record"}},
+        {"type": "tools-used"},
+        {"type": "mode", "message": "plain string"},
+        {"type": "assistant", "timestamp": "2026-09-08T10:00:07.000Z",
+         "message": {"role": "assistant", "model": "m", "id": "m2",
+                     "content": [{"type": "text", "text": "done"}]}},
+    ]
+    doc = convert(_write_session(tmp_path, lines)).doc
+    gens = [s for s in doc["steps"] if s.get("generation_event")]
+    assert (gens[1]["start_time"], gens[1]["end_time"]) == (
+        "2026-09-08T10:00:04.000Z", "2026-09-08T10:00:07.000Z")
+    assert doc["capabilities"]["generation_timestamps"] == "complete"
+
+
+def test_earlier_result_record_does_not_hide_a_later_trailing_call(tmp_path):
+    lines = [_user("one"), _call("a", "ls"), _result("a"),
+             {"type": "result", "subtype": "success", "is_error": False, "result": "ok",
+              "session_id": "s"},
+             _user("two"), _call("b", "pwd")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "complete"
+    assert [s.get("result_unobserved") for s in res.doc["steps"] if s["kind"] == "tool_call"] == [None, True]
+
+
+def test_unrelated_trailing_call_does_not_excuse_an_ignored_failure(tmp_path):
+    lines = [_user("go"), _call("f1", "pytest"),
+             _result("f1", "1 failed", is_error=True)]
+    for i in range(6):
+        lines += [_call(f"c{i}", f"cat docs/file{i}.md"), _result(f"c{i}", "text")]
+    lines.append(_call("tr", "cat README.md"))
+    analysis = analyze(convert(_write_session(tmp_path, lines)).doc, Store(_mkdir(tmp_path / "db")))
+    ignored = {r.detector: r for r in analysis.detector_results}["ignored_tool_failure"]
+    assert len(ignored.candidates) == 1
+
+
+def test_excess_latency_not_triggered_by_non_model_gap_end_to_end(tmp_path):
+    lines = [
+        _user(ts="2026-09-08T10:00:00Z"),
+        _call("t1", "ls", ts="2026-09-08T10:00:03Z", msg_id="m1"),
+        _result("t1", ts="2026-09-08T10:00:04Z"),
+        {"type": "user", "isMeta": True, "timestamp": "2026-09-08T10:05:00Z",
+         "message": {"role": "user", "content": "injected"}},
+        {"type": "assistant", "timestamp": "2026-09-08T10:05:03Z",
+         "message": {"role": "assistant", "model": "m", "id": "m2",
+                     "content": [{"type": "text", "text": "done"}]}},
+    ]
+    analysis = analyze(convert(_write_session(tmp_path, lines)).doc, Store(_mkdir(tmp_path / "db")))
+    latency = {r.detector: r for r in analysis.detector_results}["excess_latency"]
+    assert latency.evaluated and not latency.candidates
+
+
+def test_ignored_tool_failure_not_flagged_while_trailing_call_is_in_flight(tmp_path):
+    lines = [_user("fix tests"), _call("t1", "pytest"),
+             _result("t1", "E AssertionError: 1 failed", is_error=True),
+             _call("t2", "pytest -x tests/test_a.py")]
+    analysis = analyze(convert(_write_session(tmp_path, lines)).doc, Store(_mkdir(tmp_path / "db")))
+    by_name = {r.detector: r for r in analysis.detector_results}
+    assert by_name["ignored_tool_failure"].evaluated
+    assert not by_name["ignored_tool_failure"].candidates
+
+
+def test_meta_entry_between_turns_does_not_inflate_generation_time(tmp_path):
+    lines = [
+        _user(ts="2026-09-08T10:00:00Z"),
+        {"type": "assistant", "timestamp": "2026-09-08T10:00:03Z",
+         "message": {"role": "assistant", "model": "m", "id": "m1",
+                     "content": [{"type": "text", "text": "a"}]}},
+        {"type": "user", "isMeta": True, "timestamp": "2026-09-08T10:03:00Z",
+         "message": {"role": "user", "content": "injected"}},
+        {"type": "assistant", "timestamp": "2026-09-08T10:03:04Z",
+         "message": {"role": "assistant", "model": "m", "id": "m2",
+                     "content": [{"type": "text", "text": "b"}]}},
+    ]
+    gens = [s for s in convert(_write_session(tmp_path, lines)).doc["steps"]
+            if s.get("generation_event")]
+    assert (gens[1]["start_time"], gens[1]["end_time"]) == (
+        "2026-09-08T10:03:00Z", "2026-09-08T10:03:04Z")
+
+
+def test_pending_call_in_a_session_with_terminal_result_is_a_gap(tmp_path):
+    lines = [_user(), _call("t1", "ls"),
+             {"type": "result", "subtype": "success", "is_error": False, "result": "done",
+              "session_id": "s"}]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["tool_results"] == "partial"
+
+
+def test_timestamps_on_every_entry_declare_generation_timestamps_complete(tmp_path):
+    lines = [
+        _user(ts="2026-09-08T10:00:00Z"),
+        _call("t1", "ls", ts="2026-09-08T10:00:04Z", msg_id="m1"),
+        _result("t1", ts="2026-09-08T10:00:05Z"),
+        _call("t2", "pwd", ts="2026-09-08T10:00:12Z", msg_id="m2"),
+        _result("t2", ts="2026-09-08T10:00:13Z"),
+    ]
+    doc = convert(_write_session(tmp_path, lines)).doc
+    assert doc["capabilities"]["generation_timestamps"] == "complete"
+    gens = [s for s in doc["steps"] if s.get("generation_event")]
+    assert [(g["start_time"], g["end_time"]) for g in gens] == [
+        ("2026-09-08T10:00:00Z", "2026-09-08T10:00:04Z"),
+        ("2026-09-08T10:00:05Z", "2026-09-08T10:00:12Z"),
+    ]
+    assert doc["adapter_version"] == "claude-adapter-0.9"
+
+
+def test_later_block_of_same_message_extends_generation_end(tmp_path):
+    lines = [
+        _user(ts="2026-09-08T10:00:00Z"),
+        {"type": "assistant", "timestamp": "2026-09-08T10:00:03Z",
+         "message": {"role": "assistant", "model": "m", "id": "m1",
+                     "content": [{"type": "thinking", "thinking": "hm"}]}},
+        {"type": "assistant", "timestamp": "2026-09-08T10:00:09Z",
+         "message": {"role": "assistant", "model": "m", "id": "m1",
+                     "content": [{"type": "text", "text": "done"}]}},
+    ]
+    doc = convert(_write_session(tmp_path, lines)).doc
+    gens = [s for s in doc["steps"] if s.get("generation_event")]
+    assert len(gens) == 1 and gens[0]["end_time"] == "2026-09-08T10:00:09Z"
+    assert doc["capabilities"]["generation_timestamps"] == "complete"
+
+
+def test_missing_timestamps_downgrade_generation_timestamps(tmp_path):
+    lines = [
+        _user(ts="2026-09-08T10:00:00Z"),
+        _call("t1", "ls", ts="2026-09-08T10:00:04Z", msg_id="m1"),
+        _result("t1"),                                   # no timestamp
+        _call("t2", "pwd", ts="2026-09-08T10:00:12Z", msg_id="m2"),  # start missing
+        _result("t2", ts="2026-09-08T10:00:13Z"),
+        _call("t3", "id", msg_id="m3"),                  # end missing
     ]
     res = convert(_write_session(tmp_path, lines))
-    assert any("never observed a result" in w for w in res.warnings)
-    assert res.doc["capabilities"]["tool_results"] == "partial"
+    caps = res.doc["capabilities"]
+    assert caps["generation_timestamps"] == "partial"
+    gens = [s for s in res.doc["steps"] if s.get("generation_event")]
+    assert "start_time" in gens[0] and "end_time" in gens[0]
+    # An incomplete generation gets NEITHER end, never a false 0 ms duration.
+    for g in gens[1:]:
+        assert "start_time" not in g and "end_time" not in g
+    assert any("generation_timestamps" in w for w in res.warnings)
+
+
+def test_no_timestamps_at_all_is_unavailable(tmp_path):
+    lines = [_user(), _call("t1"), _result("t1")]
+    res = convert(_write_session(tmp_path, lines))
+    assert res.doc["capabilities"]["generation_timestamps"] == "unavailable"
 
 
 def test_api_error_ending_does_not_claim_completion(tmp_path):

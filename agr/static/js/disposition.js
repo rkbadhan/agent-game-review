@@ -54,7 +54,7 @@ async function setDisposition(disposition) {
   if (saved && state.focusedQueue && state.runId === runId && !isWorkspaceView(state.view)) await gotoNextUnhandled();
 }
 async function writeWorkflow(fields, btn, okMsg) {
-  if (state.loading || state.readOnly || !state.review || isWorkspaceView(state.view)) return false;
+  if (state.loading || state.readOnly || !state.review || !state.runId || isWorkspaceView(state.view)) return false;
   const runId = state.runId, project = state.projectId, token = state.loadToken;
   const key = project + ":" + runId;
   const pending = state.workflowWrites || (state.workflowWrites = new Set());

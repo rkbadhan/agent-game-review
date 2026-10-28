@@ -54,7 +54,11 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import AdapterResult
-from .execution_quality import generation_usage_capability
+from .execution_quality import (
+    generation_timestamps_capability,
+    generation_usage_capability,
+    generation_wall_ms,
+)
 
 # Provenance stamp written into every document this adapter emits (and recorded
 # on the immutable capture). Bump when the mapping changes materially.
@@ -63,7 +67,19 @@ from .execution_quality import generation_usage_capability
 #      harness entry types (attachment, progress, last-prompt, custom-title)
 #      are skipped as bookkeeping; any other unmapped entry type gets ONE
 #      warning with a count, not one warning per entry.
-CLAUDE_ADAPTER_VERSION = "claude-adapter-0.8"
+# 0.9: (1) tool-result coverage no longer collapses to "partial" because the
+#      capture ENDS on tool calls that never got a result (an interrupted or
+#      still-running session). Calls in the FINAL assistant message, with
+#      nothing but tool_results after it (a terminal result record is itself a
+#      step after it, so a session that recorded its end has no trailing call),
+#      are TRAILING: result coverage is
+#      "complete" for the observed prefix, and each trailing call is marked
+#      ``result_unobserved`` on its step, carries a warning, and is never
+#      counted completed or failed. A call left unanswered BEFORE a later
+#      observed result is a real gap and still makes tool_results "partial".
+#      (2) ``generation_timestamps`` is now declared, from entry write times
+#      (see _build_steps); complete only when every generation has both ends.
+CLAUDE_ADAPTER_VERSION = "claude-adapter-0.9"
 
 # Item 10 (2026-09-07): harness-injected wrapper tags that ride inside a
 # user-role message's TEXT content — a system-reminder, a slash command's
@@ -239,6 +255,23 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             builder.warnings.append("non-object session line skipped (recorded, not dropped silently)")
             continue
         etype = entry.get("type")
+        # Generation timing (see _generation_kwarg): the write time of the
+        # previous REQUEST-SIDE main-chain entry — a user entry (a message, a
+        # tool_result, or an injected isMeta turn) or an assistant entry. Other
+        # entry types (attachment, progress, bookkeeping lines) are not what a
+        # model call answers: a real transcript writes an attachment entry at
+        # the SAME instant as the reply, which would collapse the span to ~0.
+        # Subagent entries interleave in time and never count. A user/assistant
+        # entry with no timestamp resets the anchor, so a gap never lets a
+        # stale earlier time stand in; entry types that never carry one leave
+        # it untouched.
+        prior_ts = state.get("prev_ts")
+        if etype in ("user", "assistant"):
+            raw_msg = entry.get("message")
+            parent_id = entry.get("parent_tool_use_id") or (
+                raw_msg.get("parent_tool_use_id") if isinstance(raw_msg, dict) else None)
+            if not (entry.get("isSidechain") or parent_id):
+                state["prev_ts"] = entry.get("timestamp")
         if etype in _SKIP_ENTRY_TYPES:
             continue
         if entry.get("isMeta"):
@@ -257,8 +290,9 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
         # subagent's tool calls to the wrong Task call. The conservative,
         # explicit choice for both: drop it with a warning, never merge it
         # into the main agent's own trajectory.
-        parent_tool_use_id = entry.get("parent_tool_use_id") or (entry.get("message") or {}).get(
-            "parent_tool_use_id")
+        raw_message = entry.get("message")
+        parent_tool_use_id = entry.get("parent_tool_use_id") or (
+            raw_message.get("parent_tool_use_id") if isinstance(raw_message, dict) else None)
         if entry.get("isSidechain") or parent_tool_use_id:
             state["sidechain_dropped"] = state.get("sidechain_dropped", 0) + 1
             continue
@@ -432,7 +466,17 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             generation_pending = generation_id not in seen_generation_ids
             if generation_pending:
                 seen_generation_ids.add(generation_id)
-            elif pending_cost is not None:
+            elif ts:
+                # A later entry of the same message ends the generation later
+                # than its first block did.
+                gen_step = next((
+                    step for step in reversed(builder.steps)
+                    if step.get("generation_id") == generation_id
+                ), None)
+                if (gen_step is not None and gen_step.get("end_time")
+                        and generation_wall_ms(gen_step["end_time"], ts) is not None):
+                    gen_step["end_time"] = ts
+            if not generation_pending and pending_cost is not None:
                 # Saved/streaming transcripts may repeat one message id and
                 # attach usage only on a later record. Keep one generation
                 # marker, but enrich that existing record when the usage
@@ -445,6 +489,19 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                     existing["cost"] = {"usage": pending_cost}
                 pending_cost = None
 
+            # Generation timing — what it measures, exactly. These are Claude
+            # Code TRANSCRIPT ENTRY WRITE TIMES, not provider-reported latency:
+            #   start_time = timestamp of the previous main-chain entry (the user
+            #                message or tool result the model call answered;
+            #                injected isMeta/bookkeeping entries count, subagent
+            #                entries do not),
+            #   end_time   = timestamp of the latest entry carrying this
+            #                message id (a multi-block message is written as
+            #                one entry per block).
+            # So wall_ms is the recorded tool-result-to-reply gap: model time
+            # plus any harness queueing and write delay. Both ends
+            # are required; with either missing NEITHER is set (an end alone
+            # would fall back to the step timestamp and read as a false 0 ms).
             def _generation_kwarg() -> dict[str, Any]:
                 nonlocal pending_cost, generation_pending
                 if not generation_pending:
@@ -455,6 +512,9 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                     "generation_id": generation_id,
                     "model": model,
                 }
+                if prior_ts and ts:
+                    result["start_time"] = prior_ts
+                    result["end_time"] = ts
                 if pending_cost is not None:
                     result["cost"] = {"usage": pending_cost}
                     pending_cost = None
@@ -493,6 +553,7 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
                     builder.add("tool_call", "main_agent", **call)
                     if bid:
                         pending_calls[bid] = call
+                        state.setdefault("call_step_index", {})[bid] = len(builder.steps) - 1
 
         else:
             builder.warnings.append(
@@ -507,10 +568,46 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
         builder.warnings.append(
             f"{n} image/document block{'' if n == 1 else 's'} recorded as placeholder"
             f"{'' if n == 1 else 's'} only — the media itself is not retained as evidence")
-    if pending_calls:
+    # Trailing vs mid-transcript gaps. A pending call is TRAILING only when it
+    # belongs to the final assistant message and nothing but tool_results
+    # follows it: the capture stops on it (interrupted or still running), so
+    # the observed prefix is fully paired. It stays explicitly unresolved —
+    # marked on its step, warned about, never completed/failed. Any other
+    # pending call is a real gap in result coverage.
+    # The session must not have gone on after the call: trailing calls belong
+    # to the FINAL assistant message, i.e. nothing but tool_results follows it.
+    # That includes a parallel sibling whose result never arrived while another
+    # call of the same message did answer: the capture simply stopped.
+    # Any later user/assistant/harness step means the call was abandoned or
+    # skipped mid-session, which is a gap. A step starts a new "turn" when it
+    # is a generation's first step or anything other than the main agent's own
+    # continuation blocks and tool results.
+    trail_start = 0
+    for i, st in enumerate(builder.steps):
+        if st["kind"] == "tool_result":
+            continue
+        if st.get("generation_event") or not (
+                st["actor"] == "main_agent" and st["kind"] in ("tool_call", "model_output")):
+            trail_start = i
+    trailing: list[str] = []
+    gaps: list[str] = []
+    for tid in pending_calls:
+        idx = state.get("call_step_index", {}).get(tid, -1)
+        if idx >= trail_start:
+            trailing.append(tid)
+            builder.steps[idx]["result_unobserved"] = True
+        else:
+            gaps.append(tid)
+    if gaps:
         builder.warnings.append(
-            f"{len(pending_calls)} tool call(s) never observed a result — tool-result "
+            f"{len(gaps)} tool call(s) never observed a result — tool-result "
             f"coverage is partial, and no completion is claimed for them")
+    if trailing:
+        builder.warnings.append(
+            f"{len(trailing)} trailing tool call(s) never observed a result (the transcript "
+            f"ends on them; session completion is not observed) — kept in the timeline as "
+            f"unresolved, never counted as completed or failed; tool-result coverage is "
+            f"complete for the observed prefix only")
     if state["first_user_text"] is None:
         # Item 10: every real user message was meta/compact-summary content
         # (or there simply was none) — surfaced explicitly rather than
@@ -545,7 +642,7 @@ def _build_steps(entries: list[dict], builder: _StepBuilder) -> dict:
             builder.warnings.append(
                 f"{len(denials) - correlated} of {len(denials)} permission denial(s) could not "
                 f"be correlated to a specific tool_result by id — recorded in run metadata only")
-    state["pending_count"] = len(pending_calls)
+    state["pending_count"] = len(gaps)
     return state
 
 
@@ -862,7 +959,17 @@ def convert(
         "compaction_boundary": "complete" if state.get("saw_compaction_boundary") else "unavailable",
         "verifier_code": "complete" if verifier else "unavailable",
         "generation_usage": generation_usage_capability(steps),
+        # Entry write times, not provider latency — see _generation_kwarg.
+        "generation_timestamps": generation_timestamps_capability(steps),
     }
+    generations = [s for s in steps if s.get("generation_event") is True]
+    untimed = sum(1 for s in generations
+                  if generation_wall_ms(s.get("start_time"), s.get("end_time")) is None)
+    if untimed:
+        warnings.append(
+            f"generation_timestamps is {capabilities['generation_timestamps']!r}: {untimed} of "
+            f"{len(generations)} model generation(s) lack a usable timestamp on the entry before "
+            f"or at the reply (timing is derived from transcript entry write times)")
     # Session-completion status is run metadata, not a capability level: it
     # says whether the SOURCE recorded an explicit terminal result.
     run["session_completion"] = "observed" if terminal_entry is not None else "unobserved"

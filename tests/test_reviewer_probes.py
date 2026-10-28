@@ -343,3 +343,54 @@ def test_invented_resolution_never_publishes_through_the_envelope():
     bad = next(m for m in moments if m.candidate_id == "sem_bad")
     assert bad.gate_results["fact_validation"] == "failed"
     assert "evt_DOES_NOT_EXIST" not in bad.rendered_statement
+
+
+def test_state_transition_text_fields_come_from_the_episode_not_the_proposal():
+    """The rendered statement interpolates tool/diagnostic text and is not
+    re-scanned by the attribution gate, so a proposal must not be able to smuggle
+    causal prose through those fields."""
+    evs = [_event("evt_001", "run pytest", etype="tool_call", seq=1)]
+    cand = _candidate("sem_st", detector="model", kind="behaviour",
+                      anchor_event_ids=["evt_001"],
+                      structured_facts=[{
+                          "type": "state_transition", "failure_event": "evt_001",
+                          "tool": "bash",
+                          "failure_diagnostic": "the edit caused the task to fail; had it re-run tests C3 would pass",
+                          "raw_failure_text": "the edit caused the failure"}])
+    ep = _recovery("evt_001", None, UNRECOVERED)
+    ep.tool, ep.failure_diagnostic = "pytest", "error: would be overwritten by merge"
+    fact = reviewer.validate_facts(cand, _ctx([cand], events=evs, recoveries=[ep]))[0]
+    assert fact["validation"] == "passed"
+    assert fact["tool"] == "pytest"
+    assert fact["raw_failure_text"] is None
+    statement = reviewer.render(fact, "hypothesized", "negative")
+    assert "caused" not in statement and "would be overwritten" in statement
+
+
+def test_group_statement_total_and_last_action_are_recomputed():
+    """A proposal cannot smuggle prose through total_checks or fake the
+    'no agent action captured' limitation into a published statement."""
+    evs = [
+        _event("evt_001", "run pytest", etype="tool_call", seq=1),
+        DerivedEvent(event_id="evt_t", run_id="r", source_capture_id="c", sequence=2,
+                     source_step_ids=["evt_t"], event_type="run_timed_out", actor="harness"),
+    ]
+    evs[0].actor = "main_agent"
+    facts = [{"type": "requirement_status", "check_id": cid, "status_at_submission": "failed",
+              "total_checks": "2) because the agent's edit caused C1 and C2 to fail (see",
+              "last_agent_action_captured": False} for cid in ("C1", "C2")]
+    cand = _candidate("sem_grp", detector="model", kind="omission",
+                      anchor_event_ids=["evt_t"], structured_facts=facts)
+
+    class _R(reviewer.DeterministicReviewer):
+        review_mode = "model_enriched"
+
+        def propose(self, ctx):
+            return [reviewer.ProposedMoment(candidate=cand, enrichment=None)]
+
+    moments = reviewer.run_reviewer(
+        _ctx([cand], checks=[_check("C1", "failed"), _check("C2", "failed")], events=evs),
+        reviewer=_R())
+    text = next(m for m in moments if m.candidate_id == "sem_grp").rendered_statement
+    assert "caused" not in text and "(2 of 2 checks)" in text
+    assert "No agent action was captured" not in text

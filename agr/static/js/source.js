@@ -3,7 +3,7 @@
 // --- Source view -------------------------------------------------------------
 async function renderSource(main) {
   const wrap = el("div", "section"); wrap.append(el("div", "subline", "Loading immutable source…")); main.append(wrap);
-  let src; try { src = await api("/runs/" + encodeURIComponent(state.runId) + "/source"); }
+  let src; try { src = await api("/runs/" + encodeURIComponent(requireRunId()) + "/source"); }
   catch (e) { wrap.textContent = ""; wrap.append(el("div", "empty", "Failed: " + e.message)); return; }
   wrap.textContent = "";
   const ok = src.verified;

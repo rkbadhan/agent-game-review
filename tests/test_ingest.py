@@ -244,3 +244,54 @@ def test_ingest_preserves_legitimate_namespaced_run_ids(tmp_path):
     result = ingest(doc, store)
     assert result.run_source.run_id == namespaced
     assert store.read_source(namespaced, result.run_source.source_capture_id) == doc
+
+
+# --- adapter-version identity (review 2026-10-02 #4) --------------------------
+
+
+def test_new_adapter_version_registers_a_distinct_capture_and_keeps_old_provenance(tmp_path):
+    store = Store(str(tmp_path / "store"))
+    doc = load_fixture()
+
+    first = ingest(doc, store, adapter_version="adapter-v1").run_source
+    second = ingest(doc, store, adapter_version="adapter-v2").run_source
+
+    assert second.source_capture_id != first.source_capture_id
+    assert second.capture_revision == 2
+    assert second.supersedes_source_capture_id == first.source_capture_id
+    assert second.supersedes_source_capture_id != second.source_capture_id
+    # The earlier capture's persisted provenance is not overwritten.
+    run_id = first.run_id
+    assert store.read_derived(run_id, first.source_capture_id, "run_source.json")["adapter_version"] == "adapter-v1"
+    assert store.read_derived(run_id, second.source_capture_id, "run_source.json")["adapter_version"] == "adapter-v2"
+    # The source bytes are the same document under both.
+    assert canonical_bytes(store.read_source(run_id, first.source_capture_id)) == canonical_bytes(doc)
+    assert canonical_bytes(store.read_source(run_id, second.source_capture_id)) == canonical_bytes(doc)
+
+    ids = [e["capture_id"] for e in store.read_index(run_id)]
+    assert len(ids) == len(set(ids)) == 2
+
+    # Re-ingesting an earlier (hash, adapter) pair is still an idempotent no-op.
+    again = ingest(doc, store, adapter_version="adapter-v1")
+    assert again.idempotent is True
+    assert again.run_source.source_capture_id == first.source_capture_id
+    assert len(store.read_index(run_id)) == 2
+
+
+def test_capture_registered_under_the_old_hash_only_id_is_reused(tmp_path):
+    """A store written before the adapter version joined the capture id keeps working."""
+    from agr.store import source_hash
+    from agr.version import RAW_ATIF_IMPORT_VERSION
+
+    store = Store(str(tmp_path / "store"))
+    doc = load_fixture()
+    hash_str = source_hash(doc)
+    legacy_id = "capture_" + hash_str.split(":", 1)[1][:12]
+    run_id = doc["run"]["logical_run_id"]
+    store.register_capture(run_id, legacy_id, hash_str, RAW_ATIF_IMPORT_VERSION, "complete")
+
+    result = ingest(doc, store)
+
+    assert result.idempotent is True
+    assert result.run_source.source_capture_id == legacy_id
+    assert os.listdir(os.path.join(store.root, "runs", run_id, "captures")) == [legacy_id]

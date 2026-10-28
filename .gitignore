@@ -27,3 +27,6 @@ jobs/
 experiments/terminal_bench/analyze-batch-logs/
 experiments/terminal_bench/gold-drafts/
 terminal_bench\run_analyze_batch.sheval-runs/agr-serve.log
+
+# Frontend developer tools
+node_modules/

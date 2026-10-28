@@ -28,7 +28,7 @@ from typing import Optional
 
 from . import taxonomy, version
 from .schema import ATTRIBUTION_LEVELS, AUDIT_DIMENSIONS, CONCERN_ASSESSMENTS
-from .store import Store
+from .store import Store, run_locked
 
 WORKFLOW_RECORD = "workflow.json"
 FEEDBACK_RECORD = "feedback.json"
@@ -177,6 +177,7 @@ def _touch_in_progress(wf: dict) -> bool:
     return False
 
 
+@run_locked
 def set_workflow(
     store: Store,
     run_id: str,
@@ -202,6 +203,8 @@ def set_workflow(
 
     The write is optimistic: ``base_version`` must equal the current
     ``workflow_version`` or :class:`VersionConflict` is raised with the live state.
+    The read, that check and the write run under the run's lock, so two
+    concurrent edits at the same base version cannot both succeed.
     """
     now = now or _now()
     capture_id = _require_capture(store, run_id)
@@ -334,6 +337,7 @@ def _validate_correction(correction: dict, evidence_event_ids: list[str]) -> dic
     return clean
 
 
+@run_locked
 def add_feedback(
     store: Store,
     run_id: str,

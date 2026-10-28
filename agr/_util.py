@@ -244,6 +244,13 @@ def structured_input(event: DerivedEvent, max_chars: int = _PACKET_INPUT_CHARS) 
     if ti is None:
         return None
     s = json.dumps(ti, ensure_ascii=False, sort_keys=True)
+    return bound_text(s, max_chars)
+
+
+def bound_text(s: str, max_chars: int) -> str:
+    """Cap ``s`` at ``max_chars``, marking the cut. Callers that redact must
+    redact BEFORE bounding: a secret cut mid-token no longer matches its
+    pattern, so truncating first would leak the surviving prefix."""
     if len(s) > max_chars:
         s = s[:max_chars] + " …[truncated]"
     return s

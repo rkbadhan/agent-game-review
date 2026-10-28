@@ -905,16 +905,12 @@ def test_workspace_and_full_trace(server):
         # 12 capabilities: the ten observability axes plus the execution-quality
         # generation_usage / generation_timestamps added alongside the detectors.
         assert len(page.query_selector_all("#trace-body .caps .cap")) == 12
-        assert len(page.query_selector_all("#trace-body .fsteps .step")) == 9
+        assert len(page.query_selector_all("#trace-body .fsteps .step")) == 8  # one paired exchange
 
         # P0-2: no panel body ever renders a stringified DOM node.
         assert "[object " not in page.query_selector("#trace-body").inner_text()
-        # The drawer opens with the first step already selected and its own
-        # panel lit (agent_message for s1) — not four "Select a step."
-        # placeholders — so a reader sees real content immediately; the other
-        # panes collapse to their header only, per the existing "collapse
-        # empty panels" behaviour.
-        assert page.query_selector("#trace-body .step.active").get_attribute("data-step-id") == "s1"
+        # The drawer opens on the current omission moment's submission anchor.
+        assert page.query_selector("#trace-body .step.active").get_attribute("data-step-id") == "s8"
         lit0 = page.query_selector("#trace-body .pane.lit")
         assert lit0.get_attribute("data-panel") == "agent_message"
         placeholders = page.query_selector_all("#trace-body .panels .pane.empty .pb .dim")
@@ -2534,4 +2530,32 @@ def test_moment_card_preserves_the_review_verdict_beside_a_distinct_kind(server)
         assert "Strategy drift" in page.locator(".moment-mark").first.get_attribute("title")
         page.evaluate("() => { currentMoment().summary = 'Strategy drift caused the plan to be abandoned.'; render(); }")
         expect(page.locator(".moment-verdict")).to_have_count(0)
+        browser.close()
+
+
+def test_blocked_browser_storage_does_not_break_state_initialisation(server):
+    """Review 2026-10-02 #8: localStorage throwing (blocked site data, some
+    private windows) must leave the app booting on its defaults."""
+    blocked = """
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() { throw new DOMException('The operation is insecure.', 'SecurityError'); },
+      });
+    """
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = _page(browser)
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.add_init_script(blocked)
+        _open_review(page, server)
+        page.wait_for_selector(".run")
+        assert page.evaluate("() => state.entryPref") == "outcome"
+
+        # The stored-preference and panel-width paths also tolerate the throw.
+        page.click(".queue-filter-disclosure summary")
+        page.select_option('.sort-row:has-text("Open at") select', "first_moment")
+        assert page.evaluate("() => state.entryPref") == "first_moment"
+        page.evaluate("() => { setPanelWidth('queue', 300, true); return panelWidth('queue'); }")
+        assert errors == []
         browser.close()

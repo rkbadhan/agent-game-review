@@ -18,7 +18,7 @@ async function renderSiblingDivergence(main) {
   }
   wrap.append(el("div", "subline", "Finding a passing sibling…"));
   try {
-    const data = await api("/runs/" + encodeURIComponent(state.runId) + "/divergence");
+    const data = await api("/runs/" + encodeURIComponent(requireRunId()) + "/divergence");
     state.sibling = { runId: state.runId, data };
     wrap.textContent = "";
     wrap.append(renderSiblingReport(data));

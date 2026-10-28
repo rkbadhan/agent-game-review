@@ -412,7 +412,7 @@ function renderRunsTable(host, groupRuns = null) {
     const tr = el("tr", "runs-row" + (r.run_id === (state.inspector.runId || state.runsAnchorId || state.runId) ? " active" : ""));
     tr.tabIndex = 0;
     tr.setAttribute("role", "link");
-    tr.setAttribute("aria-label", "Inspect " + (runDisplayName(r)));
+    tr.title = "Inspect " + runDisplayName(r);
     tr.dataset.runId = r.run_id;
 
     tr.append(runsIdentityCell(r));
@@ -440,7 +440,7 @@ function renderRunsTable(host, groupRuns = null) {
     } else if (r.main_finding) {
       // The generated "Grounded in quoted run evidence (evt_…)" summary: say
       // what it is rather than repeat a list of event ids in the table.
-      const n = groundedBoilerplateIds(r.main_finding).length;
+      const n = (groundedBoilerplateIds(r.main_finding) || []).length;
       const finding = el("span", "runs-finding-text runs-finding-neg",
         "Evidence-grounded finding · " + n + (n === 1 ? " quoted event" : " quoted events"));
       finding.title = r.main_finding;

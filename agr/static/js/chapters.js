@@ -873,14 +873,14 @@ function experimentProposalCard(lesson) {
 async function ensureLesson(moment) {
   const existing = persistedLesson(moment);
   if (existing) return existing;
-  const r = await apiPost("/runs/" + encodeURIComponent(state.runId) + "/lessons",
+  const r = await apiPost("/runs/" + encodeURIComponent(requireRunId()) + "/lessons",
     { mutation_id: uid(), moment_id: moment.moment_id, actor: state.reviewer });
   track("lesson_created", { run_id: state.runId, moment_id: moment.moment_id,
     lesson_id: r.lesson.lesson_id });
   return r.lesson;
 }
 function lessonPath(lesson, suffix) {
-  return "/runs/" + encodeURIComponent(state.runId) + "/lessons/" + encodeURIComponent(lesson.lesson_id) + (suffix || "");
+  return "/runs/" + encodeURIComponent(requireRunId()) + "/lessons/" + encodeURIComponent(lesson.lesson_id) + (suffix || "");
 }
 async function lessonGuard(fn, okMsg) {
   try { await fn(); await refreshRun(); if (okMsg) toast(okMsg); }

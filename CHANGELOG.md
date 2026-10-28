@@ -12,6 +12,20 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
 
 ### Added
 
+- **Claude Code adapter 0.9.** A transcript that ends on tool calls with no
+  result no longer marks `tool_results` partial for the whole run: trailing
+  calls (after the last observed result, completion unobserved) are marked
+  `result_unobserved`, warned about, and never counted completed or failed,
+  while a call left unanswered mid-transcript still makes coverage partial.
+  The adapter also declares `generation_timestamps` from transcript entry
+  write times (not provider latency), so `excess_latency` can evaluate.
+
+- **Searchable full trace.** Timeline entries preview commands and results,
+  group matched tool exchanges, and hide execution echoes by default with a
+  toggle to reveal them. Search covers full captured text and source-step IDs.
+  Trace opens at the selected evidence or moment, and shared result links keep
+  their original source identity. Evidence excerpts preserve line breaks and
+  state how many characters are displayed.
 - **Inspect and review from Runs.** Rows open a redacted inspector with linked
   evidence and captured input/output. Start review freezes the selected or
   filtered result, including search, AI status and import/pattern scope. A compact
@@ -60,6 +74,35 @@ follow-up), closing out acceptance gaps AGR-01 through AGR-18.
   environment, tag, name and user without asking Langfuse again.
 
 ### Fixed
+
+- **Redaction covers more credential formats** (review 2026-10-02 P1 finding 1,
+  `REDACTION_VERSION` 0.3). `sk-proj-`/`sk-svcacct-`/`sk-admin-` (hyphens in the
+  body), `sk-or-v1-` (OpenRouter), `sk-lf-` (Langfuse), `github_pat_`, Slack
+  `xox[abeprs]-`, Google `AIza`, Hugging Face `hf_`, `Authorization: Basic`,
+  and URL credentials (`scheme://user:pass@host`, now masked by its own
+  `url_credentials` rule rather than the email pattern). A new
+  `credential_assignment` rule redacts the VALUE of `NAME = value` where NAME
+  ends in password/secret/token/…key (env dumps, config, JSON), leaving code
+  references, placeholders and prose intact; `redact_value` also redacts the
+  string value of a credential-named dict key. `sk-` rules no longer match
+  inside words such as `disk-…`. The rules also match tokens/assignments that
+  follow a JSON-escaped `\n`/`\t` (structured tool input is `json.dumps`ed),
+  JSON inside a JSON string, quoted values containing quotes/backslashes, and
+  camelCase names; placeholders (`'<pad>'`), type words, code references and
+  prose are left alone. Structured tool input is now redacted in full BEFORE
+  being bounded for the packet, so a secret straddling the bound can no longer
+  survive as a partial prefix. Also covered: GitLab `glpat-`, Stripe
+  `sk_live_`/`rk_`, npm, Slack `xapp-` and webhook URLs, AWS `ASIA`, JWTs,
+  `curl -u user:pass`, `mysql -pPASS` and `--password <value>`; the email rule
+  is now linear-time on long runs without an `@`. Second review round: quoted
+  values of any length (700+ char AWS session tokens), `curl`/`mysql`/
+  `--password` after a JSON-escaped newline, quoted command-line credentials,
+  idempotent URL/CLI rules, command rules that no longer span pipes or `&&`,
+  the legacy `sk-` form anchored against word starts (`task-<hex>-…` IDs),
+  a linear private-key scan, and in-bounds tool input no longer cut short by
+  longer redaction markers. Langfuse trace-list previews (`input_preview`,
+  `output_preview`, metadata keys and values) are redacted before they are
+  shortened.
 
 - **Review navigation displays fetched evidence immediately.** Starting a load
   replaces the previous run's content. Opening human work and refreshing queue

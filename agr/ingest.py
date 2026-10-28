@@ -122,8 +122,14 @@ def _ingest(doc: dict, store: Store, adapter_version: str | None = None) -> Inge
     run = doc["run"]
     run_id = run["logical_run_id"]
     hash_str = source_hash(doc)
-    capture_id = capture_id_for(hash_str)
     completeness = doc.get("capture_completeness", "complete")
+
+    # An already-registered (hash, adapter) pair keeps the directory it was
+    # first given, which for a store written before the adapter version joined
+    # the id is the old hash-only id.
+    existing = store.find_capture(run_id, hash_str, resolved_adapter_version)
+    capture_id = (existing["capture_id"] if existing
+                  else capture_id_for(hash_str, resolved_adapter_version))
 
     entry = store.register_capture(run_id, capture_id, hash_str, resolved_adapter_version, completeness)
     idempotent = bool(entry.get("idempotent"))

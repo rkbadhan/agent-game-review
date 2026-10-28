@@ -18,12 +18,14 @@
 // chips (agr/queue.py's outcome_bucket). "Ground truth" / "Analysis only"
 // filter on the §6.2 verifier-evidence capability, not on the status string, so
 // a run that carries a verifier can still be evaluated even if it is not clean.
+/** @type {[string, [string, string][]][]} */
 const FILTER_GROUPS = [
   ["Outcome", [["failed", "Failed"], ["passed", "Passed"],
     ["undetermined", "Undetermined"], ["unverified", "Unverified"],
     ["operational_error", "Operational error"]]],
   ["Review status", [["unreviewed", "Unreviewed"], ["in_progress", "In progress"], ["handled", "Reviewed"]]],
 ];
+/** @type {[string, string][]} */
 const MORE_FILTER_CHIPS = [["needs_attention", "Needs attention"], ["recovered", "Recovered"],
   ["plausible_recovery", "Plausible recovery"], ["verifier_concern", "Verifier concern"],
   ["ground_truth", "Ground truth"], ["analysis_only", "Analysis only"]];
@@ -53,15 +55,15 @@ const ENTRY_OPTIONS = [["outcome","Overview"],["first_moment","First key moment"
 function entryPreference() { return state.entryPref === "outcome" ? "outcome" : "first_moment"; }
 function setEntryPreference(v) {
   state.entryPref = v === "outcome" ? "outcome" : "first_moment";
-  localStorage.setItem("agr-entry-pref", state.entryPref);
+  try { localStorage.setItem("agr-entry-pref", state.entryPref); } catch (_) {}
 }
 // Position of the current run within the active frozen queue, for the §4.2 header.
 // One-based for display; null when the run is not part of the current queue view.
 function activeQueueIds() {
   if (state.focusedQueue) return state.focusedQueue.run_ids;
   const ids = (state.queue && state.queue.run_ids) || [];
-  const patternIds = state.patternRunIds ? ids.filter(id => state.patternRunIds.has(id)) : ids;
-  return state.importRunIds ? patternIds.filter(id => state.importRunIds.has(id)) : patternIds;
+  const patternIds = state.patternRunIds ? ids.filter(id => state.patternRunIds?.has(id)) : ids;
+  return state.importRunIds ? patternIds.filter(id => state.importRunIds?.has(id)) : patternIds;
 }
 function queuePosition() {
   const ids = activeQueueIds();
@@ -361,7 +363,6 @@ function renderRunList() {
     delete list.dataset.revealed;
     list.append(el("div", "empty", state.focusedQueue && state.focusSearch ? "No runs match Find. Clear the search to see this queue." : "No runs match this queue.")); return;
   }
-  let activeRow = null;
   function rowButton(r) {
     const btn = el("button", "run" + (r.run_id === state.runId ? " active" : ""));
     btn.dataset.runId = r.run_id;
@@ -405,7 +406,6 @@ function renderRunList() {
     btn.append(el("span", "sr-only run-meta", bits.join(" · ")));
 
     btn.addEventListener("click", () => selectRun(r.run_id));
-    if (r.run_id === state.runId) activeRow = btn;
     return btn;
   }
   const pages = state.focusPages || (state.focusPages = new Map());
@@ -456,6 +456,7 @@ function renderRunList() {
   // re-render.
   // Filtering the active run out invalidates its reveal, so clearing the
   // filter brings it back into view even though the selected id is unchanged.
+  const activeRow = list.querySelector(".run.active");
   if (!activeRow) delete list.dataset.revealed;
   if (activeRow && list.dataset.revealed !== state.runId) {
     list.dataset.revealed = state.runId;

@@ -40,9 +40,11 @@ KIND_TO_EVENT = {
 # match results to the call they answer instead of guessing by adjacency.
 # ``tool_input`` (R2): the COMPLETE structured tool input the source recorded —
 # display excerpts stay separate; the evidence retains the full content.
+# ``result_unobserved``: a trailing tool_call the capture ended on before any
+# result arrived — explicitly unresolved, neither completed nor failed.
 # ``status``: tool-result status (ok|error) where the source records a flag
 # rather than an OS exit code.
-_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason", "tool_use_id", "tool_input", "status", "status_source", "tool_use_result", "compactMetadata", "compaction_summary", "heuristic_status", "heuristic_status_source", "permission_denied", "timestamp", "start_time", "end_time", "provider", "model", "generation_event", "generation_id", "submission_control_response")
+_PAYLOAD_KEYS = ("content", "data", "path", "artifact_path", "tool", "exit_code", "summary", "provenance", "termination_reason", "tool_use_id", "tool_input", "status", "status_source", "tool_use_result", "compactMetadata", "compaction_summary", "heuristic_status", "heuristic_status_source", "permission_denied", "timestamp", "start_time", "end_time", "provider", "model", "generation_event", "generation_id", "submission_control_response", "result_unobserved")
 
 
 class EventDerivationError(ValueError):

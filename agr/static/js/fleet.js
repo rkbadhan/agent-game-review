@@ -57,13 +57,13 @@ async function loadFleetEpisodes(opts) {
     const url = "/fleet/episodes?group_by=" + encodeURIComponent(groupBy)
       + "&limit=" + FLEET_PAGE_SIZE + "&offset=" + offset;
     const r = await fetch(url, { headers: Object.assign({ accept: "application/json" }, projectHeaders(url)) });
-    if (!r.ok) { const e = new Error(url + " -> " + r.status); e.status = r.status; throw e; }
+    if (!r.ok) { const e = new Error(url + " -> " + r.status); throw Object.assign(e, { status: r.status }); }
     const page = await r.json();
     if (token !== fl.loadToken) return;  // superseded by a newer grouping change or page
     const totalHeader = r.headers.get("X-Total-Count");
     fl.total = totalHeader != null ? Number(totalHeader) : page.length;
     fl.episodes = append ? fl.episodes.concat(page) : page;
-    fl.hasMore = fl.episodes.length < fl.total;
+    fl.hasMore = fl.episodes.length < (fl.total ?? 0);
   } catch (e) {
     if (token === fl.loadToken) fl.error = e.message || "failed to load";
   } finally {
@@ -1139,7 +1139,7 @@ async function renderTestFailurePatterns(main) {
     table.append(row);
   }
   card.append(table); wrap.append(card);
-  if (fl.testGroups.length < fl.testTotal) {
+  if (fl.testGroups.length < (fl.testTotal ?? 0)) {
     const more = el("button", "seg", fl.testPending ? "Loading…" : "Load more test failures");
     more.disabled = !!fl.testPending;
     more.addEventListener("click", () => { loadTestFailurePatterns(true).then(render); render(); });

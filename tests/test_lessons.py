@@ -334,3 +334,23 @@ def test_no_experiment_means_no_validated_alternative(tmp_path, load_fixture):
     store = _enriched_store(tmp_path, load_fixture)
     _lesson(store)  # a lesson, but no experiment proposal
     assert lessons.validated_alternative(store, RUN) is None
+
+
+# --- concurrent writers (review 2026-10-02 #3) --------------------------------
+
+
+def test_concurrent_lesson_creation_keeps_every_lesson(tmp_path, load_fixture, race_after_read, run_concurrently):
+    store = _enriched_store(tmp_path, load_fixture)
+    moment = _moment(store)
+    race_after_read(lessons, "read_lessons")
+
+    def create(moment_id):
+        return lambda: lessons.create_lesson(
+            store, RUN, moment={**moment, "moment_id": moment_id},
+            actor="alice", mutation_id="mut-" + moment_id)
+
+    outcomes = run_concurrently(create("m_one"), create("m_two"))
+
+    assert [err for _, err in outcomes] == [None, None]
+    assert sorted(ln["lesson_id"] for ln in lessons.read_lessons(store, RUN)) == [
+        "lesson_m_one", "lesson_m_two"]

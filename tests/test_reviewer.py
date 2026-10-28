@@ -168,7 +168,9 @@ def test_aggregate_requirement_status_candidate_renders_one_joint_statement():
 
 
 def test_aggregate_statement_states_the_check_denominator():
-    checks = [_check("C1", "failed"), _check("C2", "failed")]
+    # The denominator is recomputed from the run's checks, not read from the fact.
+    checks = [_check("C1", "failed"), _check("C2", "failed"),
+              _check("C3", "passed"), _check("C4", "passed"), _check("C5", "passed")]
     cand = _candidate(
         "cand_agg", detector="unresolved_requirement_at_submission",
         affected_checks=["C1", "C2"],

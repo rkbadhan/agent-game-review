@@ -17,13 +17,13 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import version
-from ._util import action_signature, is_mutation, paired_result
+from ._util import action_signature, is_mutation, paired_call, paired_result
 from .execution_quality import (
     ExecutionQualityConfig,
     nearest_rank,
     normalized_generation_usage,
 )
-from .recovery import GOOD_RECOVERY, UNRECOVERED, episode_limits
+from .recovery import GOOD_RECOVERY, UNRECOVERED, _operation_key, _plausible_operation_match, episode_limits
 from .review_protocol import completion_confirmation_pairs
 from .schema import (
     Candidate,
@@ -302,9 +302,31 @@ class IgnoredToolFailure(Detector):
     def _run(self, ctx):
         submit = ctx.submission()
         out = []
+        ids = [e.event_id for e in ctx.events]
         for ep in ctx.recoveries:
             if ep.classification != UNRECOVERED:
                 continue
+            # A trailing call the capture ended on (result_unobserved) may be
+            # the agent's very attempt to resolve this failure: its outcome is
+            # unobserved, so "left unresolved" is not established. Only a
+            # trailing call that could plausibly be that attempt (a state
+            # mutation, or the same tool and executable the failed call used) holds the
+            # finding back; an unrelated trailing call does not excuse a
+            # failure that was otherwise ignored.
+            if submit is None and ep.failure_event_id in ids:
+                fi = ids.index(ep.failure_event_id)
+                failed_call = paired_call(ctx.events, fi)
+                failed_sig = action_signature(failed_call) if failed_call is not None else None
+                if any(
+                    e.event_type == "tool_call" and e.payload.get("result_unobserved")
+                    and (is_mutation(e)
+                         or _plausible_operation_match(action_signature(e), failed_sig)
+                         or (failed_sig is not None
+                             and _operation_key(action_signature(e))[:2]
+                             == _operation_key(failed_sig)[:2]))
+                    for e in ctx.events[fi + 1:]
+                ):
+                    continue
             # Item 33 (2026-09-11 audit): a raw non-zero result stays a raw
             # non-zero result — ``classify_recoveries`` still opened this
             # UNRECOVERED episode with its true evidence intact — but an
@@ -407,6 +429,8 @@ class RepeatedActionNoNewInfo(ExecutionQualityDetector):
             # not captured here, so mutations never emit a no-new-info claim.
             if is_mutation(b["call"]):
                 continue
+            if b["call"].payload.get("result_unobserved"):
+                continue  # trailing call, no result yet: nothing to conclude from it
             window_start = max(0, current_index - config.redundancy_window)
             previous = next((
                 (index, candidate)
@@ -414,6 +438,7 @@ class RepeatedActionNoNewInfo(ExecutionQualityDetector):
                 if candidate["strategy_epoch"] == b["strategy_epoch"]
                 and action_signature(candidate["call"]) == action_signature(b["call"])
                 and not is_mutation(candidate["call"])
+                and not candidate["call"].payload.get("result_unobserved")
             ), None)
             if previous is None:
                 continue

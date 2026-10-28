@@ -39,7 +39,7 @@ async function renderCompare(main) {
   const wrap = el("div", "section");
   wrap.append(el("div", "subline", "Loading comparison…")); main.append(wrap);
   let cmp; try {
-    cmp = await api("/runs/" + encodeURIComponent(state.runId) +
+    cmp = await api("/runs/" + encodeURIComponent(requireRunId()) +
       "/compare?left=" + encodeURIComponent(left) + "&right=" + encodeURIComponent(right));
   } catch (e) { wrap.textContent = ""; wrap.append(el("div", "empty", "Failed: " + e.message)); return; }
   wrap.textContent = "";

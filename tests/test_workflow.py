@@ -269,3 +269,43 @@ def test_correction_does_not_mutate_the_generated_record(tmp_path):
     before = store.read_review_slot(RUN, capture, "deterministic")
     _correct(store, {"behaviour_tags": ["lost_requirement"]})
     assert store.read_review_slot(RUN, capture, "deterministic") == before
+
+
+# --- concurrent writers (review 2026-10-02 #3) --------------------------------
+
+
+def test_concurrent_workflow_edits_cannot_both_win_the_same_base_version(tmp_path, race_after_read, run_concurrently):
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    race_after_read(workflow, "read_workflow")
+
+    outcomes = run_concurrently(
+        lambda: workflow.set_workflow(store, RUN, actor="alice", base_version=0,
+                                      disposition="diagnosis_accepted", note="alice"),
+        lambda: workflow.set_workflow(store, RUN, actor="bob", base_version=0,
+                                      disposition="needs_followup", note="bob"),
+    )
+
+    errors = [err for _, err in outcomes if err is not None]
+    winners = [val for val, err in outcomes if err is None]
+    assert len(winners) == 1 and len(errors) == 1
+    assert isinstance(errors[0], workflow.VersionConflict)
+    stored = workflow.read_workflow(store, RUN)
+    assert stored["workflow_version"] == 1
+    assert [r["actor"] for r in stored["revisions"]] == [winners[0]["revisions"][-1]["actor"]]
+    assert stored["note"] == winners[0]["note"]
+
+
+def test_concurrent_feedback_appends_are_all_kept(tmp_path, race_after_read, run_concurrently):
+    store = _store_with(tmp_path, "chess_best_move.atif.json")
+    moment_id = read.get_review(store, RUN)["moments"][0]["moment_id"]
+    race_after_read(workflow, "read_feedback")
+
+    def agree(mutation_id):
+        return lambda: workflow.add_feedback(
+            store, RUN, actor=mutation_id, mutation_id=mutation_id,
+            moment_id=moment_id, kind="agree")
+
+    outcomes = run_concurrently(agree("m-1"), agree("m-2"))
+
+    assert [err for _, err in outcomes] == [None, None]
+    assert sorted(f["mutation_id"] for f in workflow.read_feedback(store, RUN)) == ["m-1", "m-2"]

@@ -241,6 +241,6 @@ eval-runs/  The published Terminal-Bench pilot corpus (real runs, immutable
             source record — see eval-runs/README.md).
 experiments/  The pilot gallery and gate evaluation record.
 tests/      Acceptance tests for the deterministic core.
-archive/    Synthetic fixtures and gold labels used by the tests and the demo's
-            comparison slice.
+archive/    Synthetic fixtures used by the tests and the demo's comparison slice.
+legacy/     Parked evaluation tooling and the synthetic gold labels (see legacy/README.md).
 ```

@@ -4,7 +4,18 @@
 // P0-5: read-only demo mode (set from /healthz during boot) hides write
 // controls (Agree, disposition, lessons); the server enforces the same
 // restriction independently, so this is a UI convenience, not the boundary.
-const state = { readOnly: false, runId: null, view: "review", chapter: "moments", forensic: null, review: null,
+// Storage can throw (a private window, blocked site data); a preference that
+// cannot be read is simply not set, and must not stop `state` from existing.
+function readEntryPreference() {
+  try { return localStorage.getItem("agr-entry-pref") === "first_moment" ? "first_moment" : "outcome"; }
+  catch (_) { return "outcome"; }
+}
+/** @type {AppState} */
+const state = {
+  // Settings are user defaults; review selections and jobs belong to one project.
+  ai: { settings: null, draft: null, error: null, selected: new Set(), plan: null, job: null, jobs: [],
+    force: false, token: 0, requestId: null, filter: "", pollToken: 0, watching: new Set() },
+  readOnly: false, runId: null, view: "review", chapter: "moments", forensic: null, review: null,
   // F4: bumped on every run or reviewer selection so an out-of-order response
   // to an EARLIER selection can tell it is stale (its captured token no
   // longer matches state.loadToken) and discard itself instead of overwriting
@@ -55,7 +66,7 @@ const state = { readOnly: false, runId: null, view: "review", chapter: "moments"
   // should land on the synthesis (what happened + main finding) and understand
   // the run in one pass, rather than dropping into moment 1. A reviewer doing
   // fast repeat triage can switch to "First key moment"; that choice is kept.
-  entryPref: (localStorage.getItem("agr-entry-pref") === "first_moment" ? "first_moment" : "outcome"),
+  entryPref: readEntryPreference(),
   // §4.16 version comparison: a surface of its own, so its state does not ride
   // on the selected run the way the per-run reviewer diff does.
   versions: { configurations: null, baseline: null, candidate: null,
@@ -155,7 +166,7 @@ function syncUrl() {
     p.set("view", "versions");
     const v = state.versions;
     if (v.savedId) p.set("comparison", v.savedId);
-    else if (v.result) { p.set("baseline", v.baseline); p.set("candidate", v.candidate); p.set("axis", v.axis); }
+    else if (v.result) { if (v.baseline) p.set("baseline", v.baseline); if (v.candidate) p.set("candidate", v.candidate); p.set("axis", v.axis); }
     _commitUrl(p.toString());
     return;
   }
@@ -196,14 +207,15 @@ function syncUrl() {
 function readUrl() {
   const p = new URLSearchParams(location.search);
   const sort = p.get("sort");
-  state.sort = SORT_OPTIONS.some(([v]) => v === sort) ? sort : "triage";
+  state.sort = SORT_OPTIONS.some(([v]) => v === sort) ? sort || "triage" : "triage";
   state.filters = new Set(p.getAll("filter").filter(f => FILTER_CHIPS.some(([k]) => k === f)));
   state.runsSearch = p.get("q") || "";
-  state.runsGrouping = ["task", "session"].includes(p.get("run_group")) ? p.get("run_group") : "none";
-  state.ai.filter = ["none", "active", "reviewed", "failed"].includes(p.get("ai_status")) ? p.get("ai_status") : "";
+  const grouping = p.get("run_group") || "", aiStatus = p.get("ai_status") || "";
+  state.runsGrouping = ["task", "session"].includes(grouping) ? grouping : "none";
+  state.ai.filter = ["none", "active", "reviewed", "failed"].includes(aiStatus) ? aiStatus : "";
   let testPattern = null;
   try {
-    const parsed = JSON.parse(p.get("test_pattern"));
+    const parsed = JSON.parse(p.get("test_pattern") || "null");
     if (parsed && Array.isArray(parsed.key) && Array.isArray(parsed.group_by)
         && parsed.group_by.every(d => ["task", "test", "signature"].includes(d))
         && Array.isArray(parsed.task_cohorts)) testPattern = parsed;
@@ -211,7 +223,7 @@ function readUrl() {
   const left = p.get("left"), right = p.get("right");
   state.compare = (left && right) ? { left, right } : null;
   const v = state.versions;
-  if (p.get("axis")) v.axis = p.get("axis");
+  v.axis = p.get("axis") || v.axis;
   if (p.get("baseline")) v.baseline = p.get("baseline");
   if (p.get("candidate")) v.candidate = p.get("candidate");
   return { inspector: p.get("inspect"), frozenId: p.get("review_queue"), source: p.get("source"), connection: p.get("connection"), previewId: p.get("preview"), project: p.get("project"), capture: p.get("capture"), importId: p.get("import"), reviewJobId: p.get("review_job"), run: p.get("run"), view: p.get("view"), chapter: p.get("chapter"),

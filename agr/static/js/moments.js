@@ -495,7 +495,7 @@ function renderMomentActions(moment) {
 }
 async function submitFeedback(moment, fields, btn, okMsg) {
   try {
-    await apiPost("/runs/" + encodeURIComponent(state.runId) + "/feedback",
+    await apiPost("/runs/" + encodeURIComponent(requireRunId()) + "/feedback",
       Object.assign({ mutation_id: uid(), moment_id: moment.moment_id, actor: state.reviewer }, fields));
     track("feedback_submitted", { run_id: state.runId, moment_id: moment.moment_id, kind: fields.kind });
     await refreshRun(); toast(okMsg || "Saved");

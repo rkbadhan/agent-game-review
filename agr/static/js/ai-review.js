@@ -1,10 +1,5 @@
 "use strict";
 
-// Settings are user defaults; review selections and jobs belong to one project.
-// Keys live only in this form until transmitted to the server session.
-state.ai = { settings: null, draft: null, error: null, selected: new Set(),
-  plan: null, job: null, jobs: [], force: false, token: 0, requestId: null, filter: "", pollToken: 0, watching: new Set() };
-
 // ---- Where AI review stands: one source of truth for the sidebar badge, the Runs page and the AI review page ----
 const AI_ACTIVE = ["queued", "running", "cancelling"];
 const aiJobActive = job => AI_ACTIVE.includes(job.status);
@@ -29,7 +24,7 @@ async function announceAIFinished(finished) {
 // never drops the keyboard focus from a button or makes a screen reader read an unchanged status again.
 function aiPaint(host, signature, build) {
   if (host._aiSignature === signature) return;
-  const focused = host.contains(document.activeElement) && document.activeElement !== host ? document.activeElement : null;
+  const focused = document.activeElement instanceof HTMLElement && host.contains(document.activeElement) && document.activeElement !== host ? document.activeElement : null;
   const key = focused && focused.dataset.aiKey;
   host._aiSignature = signature; build();
   // Only a control with a stable key gets focus back, and always the same one: its label or its position may have changed.
@@ -82,14 +77,14 @@ function renderAIBadge() {
 // In-place updates for everything that shows AI state, so polling never rebuilds a page the reader is using.
 function refreshAIViews() {
   renderAIBadge();
-  document.querySelectorAll("[data-ai-run]").forEach(chip => paintAIChip(chip, aiRunState(chip.dataset.aiRun, ((state.queue && state.queue.runs) || []).find(r => r.run_id === chip.dataset.aiRun)), null));
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-ai-run]")).forEach(chip => paintAIChip(chip, aiRunState(chip.dataset.aiRun, ((state.queue && state.queue.runs) || []).find(r => r.run_id === chip.dataset.aiRun)), null));
   document.querySelectorAll(".ai-strip-host").forEach(renderAIStrip);
   const attention = $("#home-attention"); if (attention) renderHomeAttention(attention, (state.workspace.detail || {}).runs || []);
   if (state.view === "runs") { refreshWorklistActions(); const host = $("#runs-table-host"); if (host && state.ai.filter) renderRunsTable(host); }
   const activity = $("#ai-activity"); if (activity) renderAIActivity(activity);
   const job = $("#ai-job"); if (job && state.ai.job) renderAIJob(job, state.ai.job);
 }
-function aiWhen(iso) { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""; }
+function aiWhen(iso) { const d = iso ? new Date(iso) : null; return d && !isNaN(d.getTime()) ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""; }
 function aiJobSummary(job) {
   const results = job.results || [], reviewed = results.filter(r => ["completed", "skipped"].includes(r.status)).length, failed = results.filter(r => ["failed", "incomplete"].includes(r.status)).length;
   const waiting = aiJobActive(job) ? Math.max(0, job.total - results.length) : 0;
@@ -431,6 +426,7 @@ let aiPollTimer;
 async function pollAIReview() {
   clearTimeout(aiPollTimer);
   const project = state.projectId, token = ++state.ai.pollToken;
+  if (!project) return;
   // The job in hand is the newest copy the server returned (a retry or cancel answer); it wins over the list's older one.
   if (state.ai.job) state.ai.jobs = sortAIJobs([state.ai.job, ...state.ai.jobs.filter(j => j.id !== state.ai.job.id)]);
   state.ai.jobs.filter(aiJobActive).forEach(j => state.ai.watching.add(j.id));

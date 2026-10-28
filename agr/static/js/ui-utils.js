@@ -237,6 +237,7 @@ function leadFinding(text, limit) {
 // Never applied to a value that could be mistaken for an exact count a reader
 // would want to compare precisely (checks passed, run counts stay exact) —
 // only to large aggregate magnitudes like token usage.
+/** @type {[number, string][]} */
 const _COMPACT_SCALES = [[1e3, "K"], [1e6, "M"], [1e9, "B"], [1e12, "T"]];
 function fmtCompact(n) {
   if (n == null) return "—";

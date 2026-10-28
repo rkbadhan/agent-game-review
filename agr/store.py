@@ -13,14 +13,19 @@ enough logic to justify them.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import re
-from .storage_io import atomic_json, file_lock, read_json
+from .storage_io import atomic_json, atomic_text, file_lock, read_json
 import time
 from typing import Any, Optional
 from urllib.parse import quote, unquote
+
+
+# Chunk size for scanning back to the start of an event log's last line.
+_TAIL_SCAN_CHUNK = 8192
 
 
 class InvalidRunId(ValueError):
@@ -71,9 +76,30 @@ def source_hash(doc: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(doc)).hexdigest()
 
 
-def capture_id_for(hash_str: str) -> str:
-    digest = hash_str.split(":", 1)[-1]
+def capture_id_for(hash_str: str, adapter_version: str) -> str:
+    """The capture directory id for one (source bytes, adapter version) pair.
+
+    Registration keys on both, so the directory identity must too: with the
+    hash alone, a second adapter version over identical bytes would share the
+    first one's directory and overwrite its provenance.
+    """
+    digest = hashlib.sha256(f"{hash_str}\0{adapter_version}".encode("utf-8")).hexdigest()
     return "capture_" + digest[:12]
+
+
+def run_locked(fn):
+    """Run a ``(store, run_id, ...)`` read-modify-write under the run's lock.
+
+    Workflow, feedback and lesson records are whole-file JSON, so two writers
+    that both read before either writes would silently drop one edit. The lock
+    is the same reentrant per-run lock ingest holds, so it also keeps the
+    ``latest_capture_id`` the write targets from changing underneath it.
+    """
+    @functools.wraps(fn)
+    def locked(store, run_id, *args, **kwargs):
+        with store.index_lock(run_id):
+            return fn(store, run_id, *args, **kwargs)
+    return locked
 
 
 class Store:
@@ -141,6 +167,13 @@ class Store:
         if existing is not None:
             existing["idempotent"] = True
             return existing
+        if any(e["capture_id"] == capture_id for e in index):
+            # A new (hash, adapter) pair must never land in a directory an
+            # earlier capture owns: it would "supersede" itself and replace
+            # that capture's derived provenance.
+            raise ValueError(
+                f"capture {capture_id!r} of run {run_id!r} is already registered "
+                f"for a different source hash or adapter version")
 
         revision = (max((e["capture_revision"] for e in index), default=0) + 1)
         supersedes = index[-1]["capture_id"] if index else None
@@ -168,8 +201,9 @@ class Store:
         path = os.path.join(cap_dir, "source.json")
         if os.path.exists(path):
             return  # immutable: never rewrite
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(canonical_bytes(doc).decode("utf-8"))
+        # Atomic, so a crash cannot leave a truncated source.json that the
+        # exists() check above would then treat as the immutable original.
+        atomic_text(path, canonical_bytes(doc).decode("utf-8"))
         self._write_seq += 1
 
     def read_source(self, run_id: str, capture_id: str) -> Any:
@@ -182,9 +216,7 @@ class Store:
         path = os.path.join(cap_dir, name)
         # Nested names (e.g. ``review_telemetry/att_0001.json``) create their
         # subdirectory; flat names are unchanged.
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+        atomic_json(path, payload)
         self._write_seq += 1
 
     def read_derived(self, run_id: str, capture_id: str, name: str) -> Any:
@@ -210,15 +242,57 @@ class Store:
     def append_event(self, entry: Any) -> None:
         path = self._events_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+        # The torn-line repair is check-then-truncate, so appenders must not interleave.
+        with file_lock(os.path.join(os.path.dirname(path), ".events.lock")), \
+                open(path, "a+b") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            if size:
+                fh.seek(size - 1)
+                if fh.read(1) != b"\n":
+                    cut = self._last_line_start(fh, size)
+                    fh.seek(cut)
+                    try:
+                        json.loads(fh.read().decode("utf-8"))
+                        fh.seek(0, os.SEEK_END)
+                        fh.write(b"\n")  # complete record missing only its newline
+                    except ValueError:
+                        fh.truncate(cut)
+            fh.seek(0, os.SEEK_END)
+            fh.write((json.dumps(entry, sort_keys=True) + "\n").encode("utf-8"))
+
+    @staticmethod
+    def _last_line_start(fh, size: int) -> int:
+        """Offset just past the last newline, scanning back in chunks."""
+        end = size
+        while end > 0:
+            start = max(0, end - _TAIL_SCAN_CHUNK)
+            fh.seek(start)
+            idx = fh.read(end - start).rfind(b"\n")
+            if idx >= 0:
+                return start + idx + 1
+            end = start
+        return 0
 
     def read_events(self) -> list[dict]:
         path = self._events_path()
         if not os.path.exists(path):
             return []
-        with open(path, encoding="utf-8") as fh:
-            return [json.loads(line) for line in fh if line.strip()]
+        events = []
+        # Binary iteration splits only on "\n", and only the last line can
+        # lack one, so an unterminated unparseable line is the torn tail.
+        with open(path, "rb") as fh:
+            for raw in fh:
+                if not raw.strip():
+                    continue
+                try:
+                    events.append(json.loads(raw.decode("utf-8")))
+                except ValueError:  # JSONDecodeError and UnicodeDecodeError
+                    # A crash mid-append can leave a torn final line; earlier
+                    # corruption is not that failure mode, so still raise.
+                    if not raw.endswith(b"\n"):
+                        break
+                    raise
+        return events
 
     # --- saved comparison definitions (§4.16.1) ------------------------------
     #
@@ -232,9 +306,7 @@ class Store:
 
     def write_comparison(self, comparison_id: str, payload: Any) -> None:
         path = self._comparison_path(comparison_id)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+        atomic_json(path, payload)
 
     def read_comparison(self, comparison_id: str) -> Any:
         with open(self._comparison_path(comparison_id), encoding="utf-8") as fh:
@@ -274,9 +346,7 @@ class Store:
     def write_review(self, run_id: str, capture_id: str, reviewer_key: str, payload: Any) -> None:
         """Write one reviewer's snapshot to its own slot (never overwrites another)."""
         d = self._reviews_dir(run_id, capture_id)
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, self._review_filename(reviewer_key)), "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+        atomic_json(os.path.join(d, self._review_filename(reviewer_key)), payload)
 
     def review_slot_path(self, run_id: str, capture_id: str, reviewer_key: str) -> str:
         """Filesystem path of one reviewer's snapshot slot (it may not exist).
